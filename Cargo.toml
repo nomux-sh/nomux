@@ -26,6 +26,9 @@ base64 = "0.22.1"
 clap = { version = "4.6.10", features = ["derive"] }
 getrandom = "0.4.3"
 libc = "0.2.191"
+# The safe encoder and the safe decoder, without the frame format: the journal has
+# its own framing.
+lz4_flex = { version = "0.14.2", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
 nomux-proto = "0.3.0"
 prost = "0.14.6"
 rustix = "1.1.6"

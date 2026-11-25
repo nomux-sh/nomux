@@ -14,6 +14,10 @@
 //!   notifications), and its encoding in shared memory.
 //! - [`discovery`]: the discovery files of a holder, and the scan that tells
 //!   a live holder from a stale directory.
+//! - [`session_state`]: the directory that a session keeps on disk, and its
+//!   metadata file.
+//! - [`journal`]: the format of the output of a session on disk, its reader
+//!   and the encoder of its records.
 //!
 //! A holder that runs is never replaced. Thus each item here is a contract
 //! with all the holders that already run: a change must be an addition.
@@ -26,9 +30,11 @@
 //! - This crate does not open a PTY and does not start a process.
 
 pub mod discovery;
+pub mod journal;
 pub mod program_reports;
 pub mod redraw;
 pub mod ring;
+pub mod session_state;
 pub mod wire;
 
 mod mapping;
