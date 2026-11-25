@@ -12,7 +12,17 @@ pub struct WindowSize {
 }
 
 impl WindowSize {
+    /// The largest number of cells of a window. The holder keeps the screen
+    /// state in memory, and refuses a window that has more cells.
+    pub const MAX_CELLS: u32 = 1 << 20;
+
     pub(super) const ENCODED_LENGTH: usize = 4;
+
+    /// The number of cells: rows times columns.
+    #[must_use]
+    pub fn cells(self) -> u32 {
+        u32::from(self.rows) * u32::from(self.columns)
+    }
 
     pub(super) fn encode(self) -> [u8; Self::ENCODED_LENGTH] {
         let [rows_low, rows_high] = self.rows.to_le_bytes();

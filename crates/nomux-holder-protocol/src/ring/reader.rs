@@ -10,7 +10,7 @@ use super::layout::{
     CAPACITY_OFFSET, CLAIMED_OFFSET, COMMITTED_OFFSET, DATA_OFFSET_OFFSET, HEADER_LENGTH,
     LAYOUT_VERSION, LAYOUT_VERSION_OFFSET, MAGIC, MAGIC_OFFSET, is_valid_capacity,
 };
-use super::mapping::Mapping;
+use crate::mapping::Mapping;
 
 /// The writer wrote over bytes that the reader did not read yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +89,15 @@ impl RingReader {
     #[must_use]
     pub fn position(&self) -> u64 {
         self.position
+    }
+
+    /// Moves the reader to `position`, for example to the position of a
+    /// [`Reply::Redraw`](crate::wire::Reply::Redraw). A position after the
+    /// committed position becomes the committed position. If the ring buffer
+    /// does not have the bytes at `position` any more, the next
+    /// [`read`](Self::read) returns [`Overrun`].
+    pub fn seek(&mut self, position: u64) {
+        self.position = position.min(self.write_position());
     }
 
     /// The committed position of the writer.

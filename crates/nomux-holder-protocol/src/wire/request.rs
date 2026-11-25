@@ -8,6 +8,7 @@
 //! 0x0104  Signal        signal (1): 1 hangup, 2 interrupt, 3 terminate, 4 kill
 //! 0x0105  Status        empty
 //! 0x0106  WaitOutput    write position that the daemon already has (8)
+//! 0x0107  Redraw        empty; since protocol version 1.1
 //! ```
 
 use super::frame::Frame;
@@ -20,6 +21,7 @@ const RESIZE: u16 = 0x0103;
 const SIGNAL: u16 = 0x0104;
 const STATUS: u16 = 0x0105;
 const WAIT_OUTPUT: u16 = 0x0106;
+const REDRAW: u16 = 0x0107;
 
 /// A signal that the daemon can send to the child command.
 ///
@@ -78,6 +80,10 @@ pub enum Request<'payload> {
         /// The write position that the daemon already has.
         after: u64,
     },
+    /// Give the redraw sequence of the current screen and the position of
+    /// the ring buffer that the screen corresponds to. Since protocol version
+    /// 1.1.
+    Redraw,
 }
 
 impl<'payload> Request<'payload> {
@@ -105,6 +111,7 @@ impl<'payload> Request<'payload> {
                 fields = after.to_le_bytes();
                 (WAIT_OUTPUT, &fields)
             }
+            Self::Redraw => (REDRAW, &[]),
         };
         let frame = Frame {
             kind,
@@ -131,7 +138,21 @@ impl<'payload> Request<'payload> {
             WAIT_OUTPUT => Ok(Self::WaitOutput {
                 after: reader.u64()?,
             }),
+            REDRAW => Ok(Self::Redraw),
             kind => Err(DecodeError::UnknownKind(kind)),
+        }
+    }
+
+    /// The minor version of protocol version 1 that added the request.
+    pub(super) fn minor_version(&self) -> u16 {
+        match self {
+            Self::AcquireLease
+            | Self::Input(_)
+            | Self::Resize(_)
+            | Self::Signal(_)
+            | Self::Status
+            | Self::WaitOutput { .. } => 0,
+            Self::Redraw => 1,
         }
     }
 }

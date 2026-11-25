@@ -134,6 +134,25 @@ fn a_new_reader_starts_at_the_oldest_byte_that_the_ring_buffer_has() {
 }
 
 #[test]
+fn a_reader_continues_from_the_position_that_it_seeks() {
+    let (mut writer, mut reader) = ring();
+    write_all(&mut writer, &pattern(0, 3000));
+    assert_eq!(read_all(&mut reader).unwrap(), pattern(0, 3000));
+
+    reader.seek(1000);
+    assert_eq!(read_all(&mut reader).unwrap(), pattern(1000, 2000));
+
+    // A position that the writer did not reach is the write position.
+    reader.seek(5000);
+    assert_eq!(reader.position(), 3000);
+
+    // The second write wraps: position 1000 is not in the ring buffer.
+    write_all(&mut writer, &pattern(3000, 3000));
+    reader.seek(1000);
+    assert_eq!(read_all(&mut reader), Err(Overrun { lost: 5000 }));
+}
+
+#[test]
 fn a_region_without_the_header_is_rejected() {
     let error = RingReader::map(shared_memory()).unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::InvalidData);

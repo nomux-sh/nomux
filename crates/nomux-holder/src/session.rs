@@ -1,4 +1,5 @@
-//! The session: the terminal, the child command and the ring buffer.
+//! The session: the terminal, the child command, the ring buffer and the
+//! screen state.
 
 use std::io;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
@@ -8,6 +9,7 @@ use nomux_holder_protocol::ring::RingWriter;
 use nomux_holder_protocol::wire::{
     ChildSignal, ChildStatus, ErrorCode, Hello, ProtocolVersion, WindowSize,
 };
+use nomux_term::{Size, Terminal};
 use rustix::event::PollFlags;
 use rustix::io::Errno;
 
@@ -33,6 +35,9 @@ pub(crate) struct Session {
     terminal_readable: bool,
     child: ChildProcess,
     ring: RingWriter,
+    /// The state of the screen after each byte that the ring buffer got. It
+    /// keeps no scrollback.
+    screen: Terminal,
     input: InputQueue,
     size: WindowSize,
 }
@@ -40,6 +45,7 @@ pub(crate) struct Session {
 impl Session {
     /// Opens the pseudoterminal and starts the child command.
     pub(crate) fn start(arguments: &SessionArguments, ring: RingWriter) -> io::Result<Self> {
+        let screen_size = screen_size(arguments.size).ok_or(io::ErrorKind::InvalidInput)?;
         let pty = pty::open(arguments.size)?;
         let child = ChildProcess::spawn(
             &arguments.program,
@@ -53,6 +59,7 @@ impl Session {
             terminal_readable: true,
             child,
             ring,
+            screen: Terminal::new(screen_size),
             input: InputQueue::default(),
             size: arguments.size,
         })
@@ -80,15 +87,20 @@ impl Session {
         (!interest.is_empty()).then_some((terminal.as_fd(), interest))
     }
 
-    /// Moves one chunk of output from the terminal into the ring buffer.
-    /// Returns `false` if the terminal had no bytes.
+    /// Moves one chunk of output from the terminal into the ring buffer and
+    /// gives the same bytes to the screen state. Returns `false` if the
+    /// terminal had no bytes.
     pub(crate) fn read_output(&mut self) -> io::Result<bool> {
         let Some(terminal) = &self.terminal else {
             return Ok(false);
         };
-        let read = self
-            .ring
-            .write_with(OUTPUT_CHUNK, |chunk| rustix::io::read(terminal, chunk));
+        let screen = &mut self.screen;
+        let read = self.ring.write_with(OUTPUT_CHUNK, |chunk| {
+            let count = rustix::io::read(terminal, &mut *chunk)?;
+            // The unhandled OSC sequences have no reader yet.
+            screen.feed(&chunk[..count], |_| {});
+            Ok::<_, Errno>(count)
+        });
         match read {
             // No process has the slave side open: Linux reports `EIO`, macOS
             // reports the end of the file.
@@ -104,6 +116,23 @@ impl Session {
 
     pub(crate) fn write_position(&self) -> u64 {
         self.ring.position()
+    }
+
+    /// The position of the ring buffer that the screen corresponds to: the
+    /// write position, or the start of the escape sequence or the UTF-8
+    /// character that the output ends in. The bytes of a sequence that is
+    /// not complete did not change the screen.
+    pub(crate) fn redraw_position(&self) -> u64 {
+        let incomplete_tail = self.screen.incomplete_tail() as u64;
+        self.ring.position().saturating_sub(incomplete_tail)
+    }
+
+    /// The byte sequence that makes the current screen in a new terminal.
+    /// The screen corresponds to [`redraw_position`](Self::redraw_position).
+    pub(crate) fn redraw_sequence(&mut self) -> Vec<u8> {
+        let mut sequence = Vec::new();
+        self.screen.write_redraw(&mut sequence);
+        sequence
     }
 
     pub(crate) fn input_backlogged(&self) -> bool {
@@ -131,7 +160,9 @@ impl Session {
 
     pub(crate) fn resize(&mut self, size: WindowSize) -> Result<(), ErrorCode> {
         let terminal = self.terminal.as_ref().ok_or(ErrorCode::ChildExited)?;
+        let screen_size = screen_size(size).ok_or(ErrorCode::InvalidPayload)?;
         pty::resize(terminal, size).map_err(|_| ErrorCode::Failed)?;
+        self.screen.resize(screen_size);
         self.size = size;
         Ok(())
     }
@@ -167,4 +198,13 @@ impl Session {
         self.input.clear();
         Ok(true)
     }
+}
+
+/// The size of the screen state for a window. `None` if the window has no
+/// cell, or more cells than the holder keeps in memory.
+fn screen_size(size: WindowSize) -> Option<Size> {
+    if size.cells() > WindowSize::MAX_CELLS {
+        return None;
+    }
+    Size::new(size.rows, size.columns)
 }

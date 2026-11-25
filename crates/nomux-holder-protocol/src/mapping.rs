@@ -1,6 +1,6 @@
-//! The memory mapping of a ring buffer region. All the `unsafe` code of the
-//! ring buffer is in this file. Each function checks its range, thus the
-//! callers are safe code.
+//! The memory mapping of a region of shared memory. All the `unsafe` code
+//! for the shared memory is in this file. Each function checks its range,
+//! thus the callers are safe code.
 
 use std::ffi::c_void;
 use std::io;
@@ -11,18 +11,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use rustix::mm::{MapFlags, ProtFlags, mmap, munmap};
 
 #[derive(Debug)]
-pub(super) struct Mapping {
+pub(crate) struct Mapping {
     base: NonNull<u8>,
     length: usize,
     writable: bool,
 }
 
 impl Mapping {
-    pub(super) fn read_only(memory: BorrowedFd<'_>, length: usize) -> io::Result<Self> {
+    pub(crate) fn read_only(memory: BorrowedFd<'_>, length: usize) -> io::Result<Self> {
         Self::map(memory, length, false)
     }
 
-    pub(super) fn writable(memory: BorrowedFd<'_>, length: usize) -> io::Result<Self> {
+    pub(crate) fn writable(memory: BorrowedFd<'_>, length: usize) -> io::Result<Self> {
         Self::map(memory, length, true)
     }
 
@@ -56,11 +56,11 @@ impl Mapping {
         })
     }
 
-    pub(super) fn load_u64(&self, offset: usize) -> u64 {
+    pub(crate) fn load_u64(&self, offset: usize) -> u64 {
         self.atomic(offset).load(Ordering::Acquire)
     }
 
-    pub(super) fn store_u64(&mut self, offset: usize, value: u64) {
+    pub(crate) fn store_u64(&mut self, offset: usize, value: u64) {
         assert!(self.writable, "the mapping is read-only");
         self.atomic(offset).store(value, Ordering::Release);
     }
@@ -79,7 +79,7 @@ impl Mapping {
     /// Copies bytes out of the mapping. A different process can change the
     /// bytes during the copy: the caller must validate the result.
     #[expect(unsafe_code)]
-    pub(super) fn copy_out(&self, offset: usize, destination: &mut [u8]) {
+    pub(crate) fn copy_out(&self, offset: usize, destination: &mut [u8]) {
         self.check_range(offset, destination.len());
         // SAFETY: the source range is inside the mapping and the destination
         // is a separate Rust slice of the same length. The copy reads through
@@ -96,7 +96,7 @@ impl Mapping {
     /// A part of the mapping that this process can write. Only the one
     /// process that owns the writable mapping calls this.
     #[expect(unsafe_code)]
-    pub(super) fn slice_mut(&mut self, offset: usize, length: usize) -> &mut [u8] {
+    pub(crate) fn slice_mut(&mut self, offset: usize, length: usize) -> &mut [u8] {
         assert!(self.writable, "the mapping is read-only");
         self.check_range(offset, length);
         // SAFETY: the range is inside the writable mapping, and `&mut self`

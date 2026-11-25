@@ -2,6 +2,7 @@
 
 mod connection;
 mod peer;
+mod redraw;
 mod server;
 
 pub(crate) use server::{ControlServer, MAX_CONNECTIONS};

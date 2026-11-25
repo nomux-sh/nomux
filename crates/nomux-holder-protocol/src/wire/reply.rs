@@ -7,6 +7,8 @@
 //! 0x0004  Status  state (1): 0 running, 1 exited, 2 killed by a signal;
 //!                 3 bytes of zero; exit code or signal number (4)
 //! 0x0005  Output  write position of the ring buffer (8)
+//! 0x0006  Redraw  position of the ring buffer (8), length of the redraw
+//!                 sequence (4); since protocol version 1.1
 //! ```
 
 use super::frame::Frame;
@@ -16,6 +18,7 @@ const DONE: u16 = 0x0002;
 const ERROR: u16 = 0x0003;
 const STATUS: u16 = 0x0004;
 const OUTPUT: u16 = 0x0005;
+const REDRAW: u16 = 0x0006;
 
 const STATE_RUNNING: u8 = 0;
 const STATE_EXITED: u8 = 1;
@@ -37,6 +40,10 @@ pub enum ErrorCode {
     WaitPending,
     /// The operating system refused the operation.
     Failed,
+    /// The redraw sequence of the screen is longer than
+    /// [`redraw::MAX_LENGTH`](crate::redraw::MAX_LENGTH). Since protocol
+    /// version 1.1.
+    RedrawTooLarge,
     /// A code from a later protocol version.
     Unrecognized(u16),
 }
@@ -50,6 +57,7 @@ impl ErrorCode {
             Self::ChildExited => 4,
             Self::WaitPending => 5,
             Self::Failed => 6,
+            Self::RedrawTooLarge => 7,
             Self::Unrecognized(code) => code,
         }
     }
@@ -62,6 +70,7 @@ impl ErrorCode {
             4 => Self::ChildExited,
             5 => Self::WaitPending,
             6 => Self::Failed,
+            7 => Self::RedrawTooLarge,
             code => Self::Unrecognized(code),
         }
     }
@@ -107,12 +116,26 @@ pub enum Reply {
         /// The write position of the ring buffer.
         write_position: u64,
     },
+    /// The answer to [`Request::Redraw`](super::Request::Redraw). It comes
+    /// with a read-only descriptor of the shared memory that has the redraw
+    /// sequence, as `SCM_RIGHTS` ancillary data.
+    /// [`redraw::read`](crate::redraw::read) reads the memory.
+    Redraw {
+        /// The position of the ring buffer that the screen corresponds to.
+        /// The redraw sequence has the effect of each byte before this
+        /// position, and of no byte from this position on. It is the write
+        /// position, or the start of the escape sequence or the UTF-8
+        /// character that the output ends in.
+        position: u64,
+        /// The number of bytes of the redraw sequence.
+        length: u32,
+    },
 }
 
 impl Reply {
     /// Appends the encoded reply frame to `output`.
     pub fn encode(&self, request_id: u32, output: &mut Vec<u8>) {
-        let mut fields = [0u8; 8];
+        let mut fields = [0u8; 12];
         let (kind, payload): (u16, &[u8]) = match *self {
             Self::Done => (DONE, &[]),
             Self::Error(code) => {
@@ -126,12 +149,17 @@ impl Reply {
                     ChildStatus::Signaled { signal } => (STATE_SIGNALED, signal),
                 };
                 fields[0] = state;
-                fields[4..].copy_from_slice(&value.to_le_bytes());
-                (STATUS, &fields)
+                fields[4..8].copy_from_slice(&value.to_le_bytes());
+                (STATUS, &fields[..8])
             }
             Self::Output { write_position } => {
-                fields = write_position.to_le_bytes();
-                (OUTPUT, &fields)
+                fields[..8].copy_from_slice(&write_position.to_le_bytes());
+                (OUTPUT, &fields[..8])
+            }
+            Self::Redraw { position, length } => {
+                fields[..8].copy_from_slice(&position.to_le_bytes());
+                fields[8..].copy_from_slice(&length.to_le_bytes());
+                (REDRAW, &fields)
             }
         };
         let frame = Frame {
@@ -166,6 +194,10 @@ impl Reply {
             }
             OUTPUT => Ok(Self::Output {
                 write_position: reader.u64()?,
+            }),
+            REDRAW => Ok(Self::Redraw {
+                position: reader.u64()?,
+                length: reader.u32()?,
             }),
             kind => Err(DecodeError::UnknownKind(kind)),
         }

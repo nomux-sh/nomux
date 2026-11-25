@@ -4,7 +4,9 @@
 //!
 //! One holder owns the PTY of one session. It starts the command of the
 //! session in a new PTY, always reads the PTY, and writes the output to a
-//! ring buffer in shared memory that the daemon reads. The daemon controls
+//! ring buffer in shared memory that the daemon reads. It gives the same
+//! output to a VT parser, thus it knows the current screen and can give the
+//! redraw sequence of that screen to the daemon. The daemon controls
 //! the holder through a Unix socket and finds it through its discovery
 //! files. The holder stays alive when the daemon stops, crashes or is
 //! updated, thus the session stays alive.
@@ -21,8 +23,8 @@
 //!
 //! # Status
 //!
-//! The holder does not have the VT state, the journal, the checkpoint and
-//! the OSC parser yet.
+//! The holder does not have the journal, the checkpoint and the OSC parser
+//! yet. It ignores the OSC sequences that the VT parser does not handle.
 
 mod arguments;
 mod child;
@@ -32,8 +34,8 @@ mod discovery_directory;
 mod event_loop;
 mod input_queue;
 mod pty;
-mod ring_memory;
 mod session;
+mod shared_memory;
 
 use std::env;
 use std::io;
@@ -71,7 +73,7 @@ fn run(arguments: &SessionArguments) -> io::Result<()> {
     leave_session_of_starter()?;
     let child_exit = ChildExitSignal::install()?;
 
-    let memory = ring_memory::create(region_length(arguments.ring_capacity))?;
+    let memory = shared_memory::create("ring", region_length(arguments.ring_capacity))?;
     let ring = RingWriter::create(&memory.writable, arguments.ring_capacity)?;
     // The mapping keeps the memory. The holder needs the descriptor no more.
     drop(memory.writable);

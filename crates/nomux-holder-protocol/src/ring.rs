@@ -49,7 +49,6 @@
 //! committed position and reports the number of bytes that it lost.
 
 mod layout;
-mod mapping;
 mod reader;
 mod writer;
 
