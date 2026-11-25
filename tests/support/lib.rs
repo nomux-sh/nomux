@@ -5,8 +5,13 @@
 //! The tests run the binaries that Cargo built into the target directory.
 //! `tests/README.md` says how to run them.
 
+mod key_latency;
+mod remote_host;
+mod ssh_server;
+mod tcp_relay;
 mod terminal_client;
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::thread;
@@ -19,6 +24,10 @@ use rustix::process::{Pid, Signal};
 use serde_json::Value;
 use tempfile::TempDir;
 
+pub use crate::key_latency::{key_to_echo, latency_row};
+pub use crate::remote_host::RemoteHost;
+pub use crate::ssh_server::{SshServer, generate_key, public_key, sshd_path};
+pub use crate::tcp_relay::{Impairment, TcpRelay};
 pub use crate::terminal_client::TerminalClient;
 
 /// The longest time that a test waits for a condition.
@@ -162,6 +171,8 @@ impl From<Output> for CliRun {
 #[derive(Debug)]
 pub struct Sandbox {
     home: TempDir,
+    /// The variables that each `nomux` process of the sandbox gets.
+    variables: Vec<(OsString, OsString)>,
 }
 
 impl Default for Sandbox {
@@ -184,7 +195,17 @@ impl Sandbox {
             .prefix("nomux")
             .tempdir_in("/tmp")
             .expect("a temporary directory can be made");
-        Self { home }
+        Self {
+            home,
+            variables: Vec::new(),
+        }
+    }
+
+    /// Gives each `nomux` process that starts after this call the variable
+    /// `name` with `value`.
+    pub fn set_variable(&mut self, name: &str, value: impl Into<OsString>) {
+        self.variables.retain(|(existing, _)| existing != name);
+        self.variables.push((name.into(), value.into()));
     }
 
     /// The runtime directory in this home directory.
@@ -236,6 +257,13 @@ impl Sandbox {
             .env("HOME", self.home.path())
             .env("SHELL", "/bin/sh")
             .env_remove("NOMUX_LOG")
+            // The configuration file, the SSH keys and the binaries for a
+            // remote host come only from the sandbox.
+            .env_remove("XDG_CONFIG_HOME")
+            .env_remove("SSH_AUTH_SOCK")
+            .env_remove("NOMUX_BOOTSTRAP_BINARIES")
+            .env_remove("NOMUX_RELEASE_DOWNLOAD_URL")
+            .envs(self.variables.iter().map(|(name, value)| (name, value)))
             .current_dir(self.home.path());
         command
     }

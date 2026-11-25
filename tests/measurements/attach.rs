@@ -8,12 +8,12 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use nomux_end_to_end::{Sandbox, TerminalClient, binary, resident_memory_kib};
+use nomux_end_to_end::{
+    Sandbox, TerminalClient, binary, key_to_echo, latency_row, resident_memory_kib,
+};
 
 /// The number of keys of one measurement.
 const KEYS: usize = 2000;
-/// A person types a key each few milliseconds at most.
-const PAUSE_BETWEEN_KEYS: Duration = Duration::from_millis(2);
 /// The daemon is idle this long before its memory is read.
 const IDLE_TIME: Duration = Duration::from_secs(2);
 
@@ -33,9 +33,9 @@ fn main() {
 
     println!("| Measurement | Median | 99th percentile | Maximum |");
     println!("|---|---|---|---|");
-    report(
+    latency_row(
         "Key to echo, no other output",
-        &key_to_echo(&mut typist, None),
+        &key_to_echo(&mut typist, None, KEYS),
     );
 
     thread::sleep(IDLE_TIME);
@@ -55,10 +55,10 @@ fn main() {
         flood.wait_for_rows("the flood", |rows| !rows[0].is_empty());
         let started = Instant::now();
         let before = flood.discard_output();
-        let latencies = key_to_echo(&mut typist, Some(&mut flood));
+        let latencies = key_to_echo(&mut typist, Some(&mut flood), KEYS);
         let megabytes = megabytes(flood.discard_output() - before);
         let rate = megabytes / started.elapsed().as_secs_f64();
-        report(
+        latency_row(
             &format!("{name} ({rate:.0} MB/s to its client)"),
             &latencies,
         );
@@ -83,43 +83,6 @@ fn main() {
 fn attach_to_new_session(sandbox: &Sandbox, command: &str) -> TerminalClient {
     let created = sandbox.nomux_ok(&["new", "--quiet", "--", "sh", "-c", command]);
     sandbox.nomux_in_terminal(&["attach", created.stdout.trim()])
-}
-
-/// Types one key at a time and measures the time until the terminal of the
-/// client has its echo. During that, takes the output of `flood` away.
-fn key_to_echo(
-    typist: &mut TerminalClient,
-    mut flood: Option<&mut TerminalClient>,
-) -> Vec<Duration> {
-    let mut latencies = Vec::with_capacity(KEYS);
-    for _ in 0..KEYS {
-        // Output from before the key is not the echo of the key.
-        typist.read_pending_output();
-        let typed = Instant::now();
-        typist.type_keys(b"k");
-        typist.wait_for_output();
-        latencies.push(typed.elapsed());
-        if let Some(flood) = flood.as_deref_mut() {
-            flood.discard_output();
-        }
-        thread::sleep(PAUSE_BETWEEN_KEYS);
-    }
-    latencies.sort_unstable();
-    latencies
-}
-
-fn report(name: &str, sorted: &[Duration]) {
-    let at = |part: usize| sorted[(sorted.len() - 1) * part / 100];
-    println!(
-        "| {name} | {:.2} ms | {:.2} ms | {:.2} ms |",
-        milliseconds(at(50)),
-        milliseconds(at(99)),
-        milliseconds(at(100)),
-    );
-}
-
-fn milliseconds(duration: Duration) -> f64 {
-    duration.as_secs_f64() * 1000.0
 }
 
 #[expect(clippy::cast_precision_loss, reason = "a size for a report")]
