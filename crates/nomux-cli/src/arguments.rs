@@ -40,6 +40,14 @@ impl Arguments {
     }
 }
 
+const ATTACH_KEYS: &str = "\
+Keys during an attach:
+  Ctrl-\\ d       Detach. The session continues
+  Ctrl-\\ Ctrl-\\  Send one Ctrl-\\ to the session
+
+Each other key goes to the session. The exit code is the exit status of the
+command if the session ends during the attach, and 0 after a detach.";
+
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// Start a new session and print its identifier
@@ -48,8 +56,12 @@ pub(crate) enum Command {
         #[arg(long, value_name = "DIR")]
         cwd: Option<PathBuf>,
 
+        /// Attach to the new session
+        #[arg(long)]
+        attach: bool,
+
         /// The command of the session and its arguments [default: the shell of the user].
-        /// All the arguments after --cmd belong to the command
+        /// Each argument after --cmd belongs to the command, also an option of nomux
         #[arg(
             long = "cmd",
             value_name = "COMMAND",
@@ -60,6 +72,17 @@ pub(crate) enum Command {
     },
     /// List the sessions
     Ls,
+    /// Show a session in this terminal. To detach, press Ctrl-\ and then d
+    #[command(after_help = ATTACH_KEYS)]
+    Attach {
+        /// The session identifier
+        id: String,
+    },
+    /// Detach the clients that are attached to a session. The session continues
+    Detach {
+        /// The session identifier
+        id: String,
+    },
     /// End a session
     Kill {
         /// The session identifier

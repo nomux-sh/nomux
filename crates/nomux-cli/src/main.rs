@@ -10,6 +10,7 @@
 //!
 //! - `arguments`: the command line.
 //! - `commands`: one call of the client library for each command.
+//! - `attach`: the `attach` command, which uses the terminal of the user.
 //! - `report`: the result of a command.
 //! - `output`: the text and the JSON form of a result and of an error.
 //! - `exit_code`: the exit codes.
@@ -18,15 +19,16 @@
 //!
 //! - The CLI contains no protocol code. The `nomux-client` crate owns it.
 //! - The CLI does not talk to a holder. It talks to the daemon only.
-//! - No command asks the user a question.
+//! - No command asks the user a question. Only `attach` reads the terminal.
 //!
 //! # Status
 //!
-//! The CLI has the commands `new`, `ls`, `kill`, `daemon status`,
-//! `daemon stop` and `version`. `attach` and the other commands are not
+//! The CLI has the commands `new`, `ls`, `attach`, `detach`, `kill`,
+//! `daemon status`, `daemon stop` and `version`. The other commands are not
 //! written yet.
 
 mod arguments;
+mod attach;
 mod commands;
 mod exit_code;
 mod output;

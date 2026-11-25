@@ -4,7 +4,7 @@ use std::env;
 use std::fmt::Write;
 use std::io::{self, IsTerminal};
 
-use nomux_client::{HostInfo, Session, SessionState};
+use nomux_client::{AttachEnd, HostInfo, Session, SessionState};
 
 use crate::report::Report;
 
@@ -38,6 +38,13 @@ pub(super) fn report(report: &Report, style: Style) -> String {
         Report::Sessions(sessions) if sessions.is_empty() => "no sessions\n".to_owned(),
         Report::Sessions(sessions) => session_table(sessions, style),
         Report::SessionKilled { id } => format!("session {id} ended\n"),
+        Report::AttachEnded { id, end } => attach_end(id, *end),
+        Report::ClientsDetached { id, clients: 1 } => {
+            format!("detached 1 client from session {id}\n")
+        }
+        Report::ClientsDetached { id, clients } => {
+            format!("detached {clients} clients from session {id}\n")
+        }
         Report::DaemonStatus(Some(info)) => daemon_status(info),
         Report::DaemonStatus(None) | Report::DaemonStopped { was_running: false } => {
             "nomuxd does not run\n".to_owned()
@@ -57,8 +64,21 @@ pub(super) fn quiet_report(report: &Report) -> String {
             .flat_map(|session| [session.id.as_str(), "\n"])
             .collect(),
         Report::Version => format!("{}\n", env!("CARGO_PKG_VERSION")),
-        Report::SessionKilled { .. } | Report::DaemonStatus(_) | Report::DaemonStopped { .. } => {
-            String::new()
+        Report::SessionKilled { .. }
+        | Report::AttachEnded { .. }
+        | Report::ClientsDetached { .. }
+        | Report::DaemonStatus(_)
+        | Report::DaemonStopped { .. } => String::new(),
+    }
+}
+
+fn attach_end(id: &str, end: AttachEnd) -> String {
+    match end {
+        AttachEnd::Detached => format!("detached from session {id}\n"),
+        AttachEnd::Exited { code } => format!("session {id} ended with exit status {code}\n"),
+        AttachEnd::Signaled { signal } => format!("session {id} ended by signal {signal}\n"),
+        AttachEnd::Lost | AttachEnd::Unknown => {
+            format!("session {id} ended; its exit status is not known\n")
         }
     }
 }

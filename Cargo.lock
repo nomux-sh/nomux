@@ -341,6 +341,7 @@ dependencies = [
  "clap",
  "nomux-client",
  "nomux-core",
+ "rustix",
  "serde",
  "serde_json",
  "tokio",
