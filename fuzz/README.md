@@ -4,8 +4,8 @@ This directory is for the `cargo-fuzz` targets of the core.
 
 ## Status
 
-Milestone M0 contains no fuzz target. There is no parser to fuzz yet.
-Milestone M1 adds the targets together with the code that they test:
+Structure only. There is no fuzz target, because there is no parser to fuzz yet.
+Each target comes together with the code that it tests. Refer to the [roadmap](https://github.com/nomux-sh/docs/blob/main/src/content/docs/project/roadmap.md). The planned targets are:
 
 - the VT parser
 - the OSC parser (OSC 7501, 133, 9, 777)

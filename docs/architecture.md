@@ -3,8 +3,8 @@
 This document shows the components of the nomux core and the responsibility of each component.
 It is an overview. The protocol specifications are in the [`proto`](https://github.com/nomux-sh/proto) repository.
 
-Milestone M0 contains the workspace structure only. No component in this document is implemented yet.
-The "Milestones" section shows which milestone adds each component.
+The repository now has the workspace structure only. No component in this document is implemented yet.
+The "State" section shows what exists and where the plan is.
 
 ## Components
 
@@ -96,17 +96,17 @@ Rules:
 
 ## Crates
 
-| Crate | Type | Responsibility |
-|---|---|---|
-| `nomux-core` | library | Shared types, errors, configuration, glossary types |
-| `nomux-term` | library | Thin abstraction over the VT library, which lets the project replace the library |
-| `nomux-holder` | binary | The holder. No async runtime |
-| `nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows |
-| `nomux-status` | library | Status resolver, rules, aggregation. Pure code without I/O |
-| `nomux-ext-host` | library | Extension host of the daemon |
-| `nomuxd` | binary | The daemon |
-| `nomux-client` | library | Protocol client for the CLI, the desktop client and the mobile clients |
-| `nomux-cli` | binary `nomux` | The CLI |
+| Crate | Type | Responsibility | State |
+|---|---|---|---|
+| `nomux-core` | library | Shared types, errors, configuration, glossary types | in use: the version output of the binaries |
+| `nomux-term` | library | Thin abstraction over the VT library, which lets the project replace the library | structure only |
+| `nomux-holder` | binary | The holder. No async runtime | prints its version only |
+| `nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows | structure only |
+| `nomux-status` | library | Status resolver, rules, aggregation. Pure code without I/O | structure only |
+| `nomux-ext-host` | library | Extension host of the daemon | structure only |
+| `nomuxd` | binary | The daemon | prints its version only |
+| `nomux-client` | library | Protocol client for the CLI, the desktop client and the mobile clients | structure only |
+| `nomux-cli` | binary `nomux` | The CLI | prints its version only |
 
 Planned direction of the dependencies:
 
@@ -116,17 +116,20 @@ Planned direction of the dependencies:
 - `nomux-client` uses `nomux-core`, `nomux-term` and `nomux-transport`.
 - `nomux-cli` uses `nomux-client`.
 
-In milestone M0, the three binaries depend on `nomux-core` only, and the libraries have no dependencies.
+Now the three binaries depend on `nomux-core` only, and the libraries have no dependencies.
 A crate gets a dependency when its code uses it.
 
-## Milestones
+## State
 
-| Milestone | Components in this repository |
-|---|---|
-| M0 | Workspace, tools, CI |
-| M1 | Holder, daemon, attach, warm pool, lazy restore, first CLI commands, VT library selection, Unix socket transport |
-| M2 | Remote hosts: SSH transport and bootstrap |
-| M3 | Extension host |
-| M4 | Agent status engine |
-| M8 | QUIC transport, port forwarding |
-| M9 | `uniffi` feature of `nomux-client` for the mobile clients |
+The repository has the Cargo workspace, the developer tools and CI. The three binaries print their version and do nothing else.
+
+The work comes in this sequence:
+
+1. The holder, the daemon, attach, the warm pool, lazy restore, the first CLI commands, the selection of the VT library and the Unix socket transport.
+2. Remote hosts: the SSH transport and the bootstrap.
+3. The extension host.
+4. The agent status engine.
+5. The QUIC transport and port forwarding.
+6. The `uniffi` feature of `nomux-client` for the mobile clients.
+
+The [roadmap](https://github.com/nomux-sh/docs/blob/main/src/content/docs/project/roadmap.md) has the plan of the full project.
