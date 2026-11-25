@@ -20,7 +20,7 @@ Rules for coding agents and for people who work in this repository. `CLAUDE.md` 
 | `crates/nomux-cli` | Binary `nomux`: the CLI. [docs/cli.md](docs/cli.md) has the commands, also the `ext` commands for extensions, the `--host` option, the keys of an attach, the JSON schema and the exit codes. |
 | `xtask` | Developer tasks. `cargo xtask ci` runs the checks. `cargo xtask fuzz` runs one fuzz target. |
 | `bench` | Performance targets and the benchmarks. Each benchmark is a Cargo workspace of its own, which `cargo xtask ci` does not build. |
-| `fuzz` | Package `nomux-fuzz`: the `cargo-fuzz` targets for the terminal state, the redraw sequence, the OSC parsers, the holder messages, the program reports and the ring buffer reader. It is a Cargo workspace of its own with a nightly toolchain, which `cargo xtask ci` does not build. [fuzz/README.md](fuzz/README.md) describes the targets. |
+| `fuzz` | Package `nomux-fuzz`: the `cargo-fuzz` targets for the terminal state, the redraw sequence, the OSC parsers, the holder messages, the program reports, the ring buffer reader and the journal reader. It is a Cargo workspace of its own with a nightly toolchain, which `cargo xtask ci` does not build. [fuzz/README.md](fuzz/README.md) describes the targets. |
 | `tests` | Package `nomux-end-to-end`: tests that run the real `nomux`, `nomuxd` and `nomux-holder` together, also in a pseudoterminal, against an SSH server that a test starts and with a test extension, and the programs that measure the attach path and a remote host. |
 | `docs` | Developer notes of the core. |
 | `Cargo.toml` | Workspace members, shared package fields, lint policy, release profile. |
