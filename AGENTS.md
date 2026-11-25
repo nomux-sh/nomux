@@ -23,7 +23,9 @@ Rules for coding agents and for people who work in this repository. `CLAUDE.md` 
 | `Cargo.toml` | Workspace members, shared package fields, lint policy, release profile. |
 | `deny.toml`, `clippy.toml`, `rust-toolchain.toml` | License and source policy, clippy settings, pinned toolchain. |
 | `cliff.toml`, `CHANGELOG.md` | Changelog configuration and the changelog. |
-| `.github/workflows` | `ci.yml` (Rust checks, repository lint) and `pull-request.yml` (sign-off, commit messages). |
+| `install.sh` | Install script for the release archives. POSIX `sh`. |
+| `scripts` | Release tools: the workspace version, the archive of one target and its check, the release notes, the test of `install.sh`. |
+| `.github/workflows` | `ci.yml` (Rust checks, repository lint, actionlint, install script), `pull-request.yml` (sign-off, commit messages) and `release.yml` (archives and GitHub release for a version tag). |
 
 ## Rules for this repository
 
@@ -61,6 +63,14 @@ cargo nextest run --workspace
 cargo test --workspace --doc
 cargo deny check
 cargo machete
+```
+
+If you changed a workflow, `install.sh` or a file in `scripts`, also run these commands. They need [actionlint](https://github.com/rhysd/actionlint) and [shellcheck](https://www.shellcheck.net):
+
+```sh
+actionlint
+shellcheck install.sh scripts/*.sh
+scripts/test-install.sh
 ```
 
 If you changed `AGENTS.md`, also run this command with a clone of the [`.github`](https://github.com/nomux-sh/.github) repository next to this repository:

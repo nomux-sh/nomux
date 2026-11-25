@@ -10,6 +10,68 @@ In development. Versions earlier than 1.0.0 are pre-releases: interfaces can cha
 
 The repository now has the Cargo workspace, the developer tools and CI. The three binaries print their version and do nothing else. The holder, the daemon and the CLI commands are the next work: refer to the [roadmap](https://github.com/nomux-sh/docs/blob/main/src/content/docs/project/roadmap.md).
 
+## Install
+
+No release exists yet. The commands in this section work from the first release.
+
+Each release has one archive for each target and a `SHA256SUMS` file. An archive contains `nomux`, `nomuxd`, `nomux-holder`, this file and the two license files.
+
+| Host | Target |
+|---|---|
+| Linux, x86_64 | `x86_64-unknown-linux-musl` |
+| Linux, aarch64 | `aarch64-unknown-linux-musl` |
+| macOS, Intel | `x86_64-apple-darwin` |
+| macOS, Apple silicon | `aarch64-apple-darwin` |
+
+The Linux binaries are static. They do not use the C library of the host.
+
+### With the install script
+
+The script finds the target of the host, downloads the archive, verifies its SHA-256 checksum and puts the three binaries into `~/.local/bin`. It does not use `sudo`.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/nomux-sh/nomux/main/install.sh | sh
+```
+
+Without options, the script installs the newest version that has no suffix. To select a version or a directory, add the options:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/nomux-sh/nomux/main/install.sh | sh -s -- --version 0.1.0 --dir ~/bin
+```
+
+### With a manual download
+
+1. Set the version and the target of the host:
+
+   ```sh
+   version=0.1.0
+   target=x86_64-unknown-linux-musl
+   ```
+
+2. Download the archive and the checksums from the [releases](https://github.com/nomux-sh/nomux/releases):
+
+   ```sh
+   curl -fsSLO "https://github.com/nomux-sh/nomux/releases/download/v$version/nomux-$version-$target.tar.gz"
+   curl -fsSLO "https://github.com/nomux-sh/nomux/releases/download/v$version/SHA256SUMS"
+   ```
+
+3. Verify the checksum. The command must print `OK`. On macOS, use `shasum -a 256 --check` as the last command.
+
+   ```sh
+   grep "nomux-$version-$target.tar.gz" SHA256SUMS | sha256sum --check
+   ```
+
+4. Extract the archive and copy the binaries to a directory that is in `PATH`:
+
+   ```sh
+   tar -xzf "nomux-$version-$target.tar.gz"
+   mkdir -p ~/.local/bin
+   cp "nomux-$version-$target/nomux" "nomux-$version-$target/nomuxd" "nomux-$version-$target/nomux-holder" ~/.local/bin/
+   nomux --version
+   ```
+
+The binaries are not signed and not notarized. Code signing and notarization start with the first stable release.
+
 ## Layout
 
 | Path | Type | Contents | State |
@@ -72,6 +134,16 @@ cargo machete        # dependencies that no code uses
 ```
 
 The lint policy is in the `[workspace.lints]` section of `Cargo.toml`. The license policy is in `deny.toml`.
+
+## Release
+
+A version tag `vX.Y.Z` on `main` starts [`.github/workflows/release.yml`](.github/workflows/release.yml). The workflow builds the archives and makes the GitHub release. The [release guide](https://github.com/nomux-sh/.github/blob/main/RELEASING.md) of the organization has the steps.
+
+To build the archives without a release, start the workflow manually with `dry-run`:
+
+```sh
+gh workflow run release.yml -f dry-run=true
+```
 
 ## Contributing
 
