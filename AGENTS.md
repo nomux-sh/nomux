@@ -18,9 +18,9 @@ Rules for coding agents and for people who work in this repository. `CLAUDE.md` 
 | `crates/nomuxd` | Binary `nomuxd`: the daemon. [docs/daemon.md](docs/daemon.md) describes it. |
 | `crates/nomux-client` | Protocol client for the CLI, the desktop client and the mobile clients: the requests, and the terminal of an attach as a stream of output and a sink for input. It has no terminal handling. |
 | `crates/nomux-cli` | Binary `nomux`: the CLI. [docs/cli.md](docs/cli.md) has the commands, the keys of an attach, the JSON schema and the exit codes. |
-| `xtask` | Developer tasks. `cargo xtask ci` runs the checks. |
+| `xtask` | Developer tasks. `cargo xtask ci` runs the checks. `cargo xtask fuzz` runs one fuzz target. |
 | `bench` | Performance targets and the benchmarks. Each benchmark is a Cargo workspace of its own, which `cargo xtask ci` does not build. |
-| `fuzz` | Fuzz targets. It has a `README.md` only. |
+| `fuzz` | Package `nomux-fuzz`: the `cargo-fuzz` targets for the terminal state, the redraw sequence, the OSC parsers, the holder messages, the program reports and the ring buffer reader. It is a Cargo workspace of its own with a nightly toolchain, which `cargo xtask ci` does not build. [fuzz/README.md](fuzz/README.md) describes the targets. |
 | `tests` | Package `nomux-end-to-end`: tests that run the real `nomux`, `nomuxd` and `nomux-holder` together, also in a pseudoterminal, and the program that measures the attach path. |
 | `docs` | Developer notes of the core. |
 | `Cargo.toml` | Workspace members, shared package fields, lint policy, release profile. |
@@ -76,6 +76,15 @@ actionlint
 shellcheck install.sh scripts/*.sh
 scripts/test-install.sh
 ```
+
+If you changed `fuzz`, `crates/nomux-term` or `crates/nomux-holder-protocol`, also run the fuzz targets of the code that you changed. [fuzz/README.md](fuzz/README.md) has the list. A target needs `cargo-fuzz`, and rustup installs the nightly toolchain of `fuzz/rust-toolchain.toml` at the first run:
+
+```sh
+cargo install --locked cargo-fuzz@0.13.2
+cargo xtask fuzz terminal_feed 60
+```
+
+The two arguments are the target and the number of seconds. If you changed `fuzz`, also run `cargo fmt --check` and `cargo clippy -- -D warnings` with `--manifest-path fuzz/Cargo.toml`.
 
 If you changed `AGENTS.md`, also run this command with a clone of the [`.github`](https://github.com/nomux-sh/.github) repository next to this repository:
 

@@ -1,0 +1,5 @@
+/target
+# The inputs that a run finds. The committed inputs are in `seeds`.
+/corpus
+/artifacts
+/coverage

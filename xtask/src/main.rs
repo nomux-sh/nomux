@@ -2,6 +2,8 @@
 //!
 //! Run a task with `cargo xtask <task>`. The alias is in `.cargo/config.toml`.
 
+mod fuzz;
+
 use std::env;
 use std::ffi::OsString;
 use std::path::Path;
@@ -11,9 +13,12 @@ const USAGE: &str = "\
 Usage: cargo xtask <task>
 
 Tasks:
-  ci    Run the checks that CI runs on each pull request:
-        cargo fmt, cargo clippy, cargo nextest, cargo test --doc,
-        cargo deny, cargo machete
+  ci                       Run the checks that CI runs on each pull request:
+                           cargo fmt, cargo clippy, cargo nextest,
+                           cargo test --doc, cargo deny, cargo machete
+  fuzz <target> <seconds>  Run one fuzz target of the `fuzz` directory.
+                           It needs cargo-fuzz and the nightly toolchain
+                           of `fuzz/rust-toolchain.toml`.
 ";
 
 /// The checks of the `ci` task, in the sequence in which they run. The
@@ -35,10 +40,12 @@ const CI_STEPS: &[&[&str]] = &[
 ];
 
 fn main() -> ExitCode {
-    let mut args = env::args().skip(1);
-    match (args.next().as_deref(), args.next()) {
-        (Some("ci"), None) => ci(),
-        (Some("help" | "--help" | "-h"), None) => {
+    let args: Vec<String> = env::args().skip(1).collect();
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    match args[..] {
+        ["ci"] => ci(),
+        ["fuzz", target, seconds] => fuzz::run(root(), target, seconds),
+        ["help" | "--help" | "-h"] => {
             print!("{USAGE}");
             ExitCode::SUCCESS
         }
@@ -49,12 +56,17 @@ fn main() -> ExitCode {
     }
 }
 
+/// The root of the repository.
+fn root() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap_or(Path::new("."))
+}
+
 fn ci() -> ExitCode {
     // Cargo sets `CARGO` to its own path when it runs this binary.
     let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap_or(Path::new("."));
+    let root = root();
 
     for step in CI_STEPS {
         eprintln!("xtask: cargo {}", step.join(" "));
