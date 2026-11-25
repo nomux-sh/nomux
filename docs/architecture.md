@@ -3,7 +3,7 @@
 This document shows the components of the nomux core and the responsibility of each component.
 It is an overview. The protocol specifications are in the [`proto`](https://github.com/nomux-sh/proto) repository.
 
-The holder, the daemon, the client library and the CLI have their first version, with attach: [holder.md](holder.md), [daemon.md](daemon.md) and [cli.md](cli.md) describe them. The other components are not implemented yet.
+The holder, the daemon, the client library and the CLI have their first version, with attach and with remote hosts through SSH: [holder.md](holder.md), [daemon.md](daemon.md), [cli.md](cli.md) and [remote.md](remote.md) describe them. The other components are not implemented yet.
 The "State" section shows what exists and where the plan is.
 
 ## Components
@@ -87,7 +87,7 @@ The client library `nomux-client` is the client side of the protocol. The CLI, t
 
 Responsibilities:
 
-The first version connects to the daemon of the local host, starts it when it does not run, does the handshake, sends the requests for sessions and for the daemon, and attaches to a session. An attach is a stream of terminal output and a sink for input: the library has no terminal handling. The second send mode, the remote transports and the attach after a disconnect with a journal are not implemented. [cli.md](cli.md) has the commands of the CLI.
+The first version connects to the daemon of the local host or of a remote host through SSH, starts the daemon when it does not run, does the handshake, sends the requests for sessions and for the daemon, and attaches to a session. For a remote host it also installs the binaries of its own version. An attach is a stream of terminal output and a sink for input: the library has no terminal handling. An attach that loses its connection connects again and continues from its epoch and sequence number. The second send mode, the QUIC transport and the attach after a disconnect with a journal are not implemented. [cli.md](cli.md) has the commands of the CLI, and [remote.md](remote.md) describes the SSH transport.
 
 - Connect to a daemon through a transport: a Unix socket on the local host, SSH or QUIC for a remote host.
 - Do the handshake: protocol version, oldest supported version and capability flags.
@@ -95,6 +95,7 @@ The first version connects to the daemon of the local host, starts it when it do
 - Receive terminal data in one of two modes. If the client keeps up, it gets the raw bytes. If the client is behind, it gets only the latest state of the screen.
 - Send input on a separate channel that has the highest priority.
 - After a disconnect, attach again with the epoch and the last sequence number.
+- Connect again with a limited number of attempts and a pause that grows. Show the user that a connection is lost.
 
 Rules:
 
@@ -105,16 +106,16 @@ Rules:
 
 | Crate | Type | Responsibility | State |
 |---|---|---|---|
-| `nomux-core` | library | Shared types, errors, configuration, glossary types | in use: the version output of the binaries, the lookup of a binary of the same installation |
+| `nomux-core` | library | Shared types, errors, configuration, glossary types | in use: the version output of the binaries, the lookup of a binary of the same installation, the hosts of the global configuration file |
 | `nomux-term` | library | Thin abstraction over the VT library (`alacritty_terminal`), which lets the project replace the library | in use by the holder: the screen state, the redraw sequence and its position, and the OSC sequences |
 | `nomux-holder-protocol` | library | Contract between a holder and the daemon: control messages, ring buffer layout, redraw memory, discovery files | in use by the holder |
 | `nomux-holder` | binary | The holder. No async runtime | owns the PTY, the ring buffer, the screen state, the control socket and the discovery files |
-| `nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows | in use: the Unix socket of the local host, the framing of the control channel and the framing of the terminal channels of an attach |
+| `nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows | in use: the Unix socket of the local host, the SSH client with its channels to the socket of a remote daemon, the framing of the control channel and the framing of the terminal channels of an attach |
 | `nomux-status` | library | Status resolver, rules, aggregation. Pure code without I/O | structure only |
 | `nomux-ext-host` | library | Extension host of the daemon | first version, described in [extensions.md](extensions.md). The daemon does not use it yet |
 | `nomuxd` | binary | The daemon | creates, lists and ends sessions; finds the holders after a restart; attaches clients to a session |
-| `nomux-client` | library | Protocol client for the CLI, the desktop client and the mobile clients | in use: connection, handshake, the requests for sessions and for the daemon, and the attach |
-| `nomux-cli` | binary `nomux` | The CLI | `new`, `ls`, `attach`, `detach`, `kill`, `daemon status`, `daemon stop`, `version` |
+| `nomux-client` | library | Protocol client for the CLI, the desktop client and the mobile clients | in use: the local host and remote hosts, the bootstrap of a remote host, the handshake, the requests for sessions and for the daemon, the attach with its reconnect, and the checks of a host |
+| `nomux-cli` | binary `nomux` | The CLI | `new`, `ls`, `attach`, `detach`, `kill`, `daemon status`, `daemon stop`, `host add`, `host ls`, `host rm`, `host doctor`, `version`, and the `--host` option |
 | `nomux-end-to-end` (in `tests`) | tests | End-to-end tests with the three binaries | in use |
 
 Planned direction of the dependencies:
@@ -128,18 +129,19 @@ Planned direction of the dependencies:
 - `nomux-cli` uses `nomux-client` and `nomux-core`. It uses no type of `nomux-proto`.
 
 Now the holder depends on `nomux-core`, `nomux-holder-protocol` and `nomux-term`. The daemon depends on `nomux-core`, `nomux-holder-protocol` and `nomux-transport`. The client library depends on `nomux-core` and `nomux-transport`, and the CLI depends on the client library and `nomux-core`. The client library does not use `nomux-term` yet: it gives the bytes of the terminal to its user. `nomux-term` depends on the VT library. `nomux-ext-host` depends on the `nomux-extension` crate, which the `extension-api` repository publishes, and has no users. `nomux-status` has no dependencies and no users.
+`nomux-transport` contains the SSH library (`russh`), which uses the `tokio` runtime. Only the client side calls it: the daemon uses the socket and the framing of the crate, and the release build removes the SSH code from `nomuxd`. `nomux-core` has a TOML library for the configuration file and no runtime.
 A crate gets a dependency when its code uses it.
 
 Two definitions exist in two crates, because the client side must not depend on the holder contract: the runtime directory `~/.nomux/run` is in `nomux-holder-protocol` (for the holders) and in `nomux-transport` (for the socket of the daemon). The daemon uses the first one for the two purposes, and an end-to-end test fails if the client looks for the socket in a different directory.
 
 ## State
 
-The repository has the Cargo workspace, the developer tools and CI. The holder runs a command in a PTY and serves the daemon side of its contract. The daemon starts holders, finds them again after a restart and serves the clients on a Unix socket. The CLI creates, lists and ends sessions, and it attaches a terminal to a session and detaches it.
+The repository has the Cargo workspace, the developer tools and CI. The holder runs a command in a PTY and serves the daemon side of its contract. The daemon starts holders, finds them again after a restart and serves the clients on a Unix socket. The CLI creates, lists and ends sessions, and it attaches a terminal to a session and detaches it, on the local host and on a remote host through SSH.
 
 The work comes in this sequence:
 
 1. The rest of the holder (journal, checkpoint, OSC parser), the warm pool, lazy restore, the state database of the daemon and the selection of the VT library.
-2. Remote hosts: the SSH transport and the bootstrap.
+2. The rest of the remote hosts: a second way for SSH servers and configurations that the SSH client does not support, and the local echo for a slow connection.
 3. The extension host.
 4. The agent status engine.
 5. The QUIC transport and port forwarding.
