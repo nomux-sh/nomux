@@ -9,11 +9,22 @@
 //! - [`Screen`] reads the visible cells, the cursor and the modes.
 //! - [`Terminal::write_redraw`] writes the byte sequence that makes the same
 //!   screen in a new terminal. The daemon sends it to a client that attaches.
+//! - [`Terminal::incomplete_tail`] is the number of bytes at the end of the
+//!   output that are a sequence or a character that is not complete.
 //! - [`Osc`] is an OSC sequence that the VT library does not handle. The
 //!   holder gets the agent status and the prompt marks from these sequences.
 //!
 //! The types of the VT library are not in this interface, thus the project
 //! can replace the library.
+//!
+//! # Redraw position
+//!
+//! The redraw sequence makes the screen, not the state of the parser. If the
+//! output ends in a sequence that is not complete, a client that gets the
+//! redraw sequence and then the next bytes of the output shows the end of
+//! that sequence as text. Thus the rule is: after the redraw sequence, the
+//! client gets the output from the start of the incomplete sequence. That
+//! position is the end of the output minus [`Terminal::incomplete_tail`].
 //!
 //! # Boundaries
 //!
@@ -45,6 +56,7 @@ mod modes;
 mod osc;
 mod redraw;
 mod screen;
+mod sequence_scanner;
 mod size;
 mod terminal;
 
