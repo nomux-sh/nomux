@@ -7,3 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [git-cliff](https://git-cliff.org) writes this file from the commit subjects.
 To see the changes that are not in a version, run `git cliff --unreleased`.
+
+## [0.1.0] - 2026-11-25
+
+### Added
+
+- Add the install script for the release archives
+- Add the holder protocol crate
+- Run a session in the holder
+- Add the terminal state API to nomux-term
+- Add the Unix socket transport of the control channel
+- Add the client library of the daemon protocol
+- Serve sessions from the daemon
+- Add the first CLI commands for sessions and the daemon
+- Find the incomplete sequence at the end of the output
+- Keep the screen state in the holder and add the redraw request
+- Parse program status, prompt marks and notifications
+- Keep the program reports in the holder and add their requests
+- Add the framing of the terminal channels to the transport
+- Attach clients to the terminal of a session in the daemon
+- Add attach and the terminal requests to the client library
+- Add the attach and detach commands and new --attach
+
+### Fixed
+
+- Accept the command of a new session after --
+
+### Changed
+
+- Reduce the shared version output to one small module
+- Read the program name with the process start time
+
+### Documentation
+
+- Add architecture overview, directory notes and changelog
+- Describe the current state and link the roadmap
+- Describe the install steps and the release workflow
+- Describe the holder and its protocol
+- Describe nomux-term and the benchmark workspace
+- Describe the daemon and the CLI
+- Describe the screen state and the redraw request of the holder
+- Describe the program reports of the holder
+- Describe attach and add a quick start with it
