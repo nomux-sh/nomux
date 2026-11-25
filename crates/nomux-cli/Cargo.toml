@@ -1,0 +1,21 @@
+[package]
+name = "nomux-cli"
+description = "The nomux command-line interface."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "nomux"
+path = "src/main.rs"
+
+[dependencies]
+nomux-core.workspace = true
+
+[lints]
+workspace = true

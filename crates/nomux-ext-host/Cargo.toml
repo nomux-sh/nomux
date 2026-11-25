@@ -1,0 +1,14 @@
+[package]
+name = "nomux-ext-host"
+description = "Daemon-side extension host of nomux."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
