@@ -1,6 +1,6 @@
 //! The JSON form of a report and of an error. `docs/cli.md` has the schema.
 
-use nomux_client::{ClientError, HostInfo, Session};
+use nomux_client::{AttachEnd, ClientError, HostInfo, Session};
 use serde::Serialize;
 
 use super::human::state_name;
@@ -25,6 +25,8 @@ enum Body<'a> {
     Session(SessionDocument<'a>),
     Sessions(Vec<SessionDocument<'a>>),
     Killed(&'a str),
+    Attach(AttachDocument<'a>),
+    Detached(DetachedDocument<'a>),
     Daemon(DaemonDocument<'a>),
     Stopped(bool),
     Version(&'a str),
@@ -46,6 +48,40 @@ impl<'a> From<&'a Session> for SessionDocument<'a> {
             pid: session.pid,
         }
     }
+}
+
+#[derive(Serialize)]
+struct AttachDocument<'a> {
+    id: &'a str,
+    end: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signal: Option<i32>,
+}
+
+impl<'a> AttachDocument<'a> {
+    fn new(id: &'a str, end: AttachEnd) -> Self {
+        let (end, exit_code, signal) = match end {
+            AttachEnd::Detached => ("detached", None, None),
+            AttachEnd::Exited { code } => ("exited", Some(code), None),
+            AttachEnd::Signaled { signal } => ("signaled", None, Some(signal)),
+            AttachEnd::Lost => ("lost", None, None),
+            AttachEnd::Unknown => ("unknown", None, None),
+        };
+        Self {
+            id,
+            end,
+            exit_code,
+            signal,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct DetachedDocument<'a> {
+    id: &'a str,
+    clients: u32,
 }
 
 #[derive(Serialize)]
@@ -84,6 +120,11 @@ pub(super) fn report(report: &Report) -> String {
             Body::Sessions(sessions.iter().map(SessionDocument::from).collect())
         }
         Report::SessionKilled { id } => Body::Killed(id),
+        Report::AttachEnded { id, end } => Body::Attach(AttachDocument::new(id, *end)),
+        Report::ClientsDetached { id, clients } => Body::Detached(DetachedDocument {
+            id,
+            clients: *clients,
+        }),
         Report::DaemonStatus(info) => Body::Daemon(info.as_ref().into()),
         Report::DaemonStopped { was_running } => Body::Stopped(*was_running),
         Report::Version => Body::Version(env!("CARGO_PKG_VERSION")),
@@ -146,6 +187,39 @@ mod tests {
                 id: "ab".to_owned()
             }),
             "{\"schema_version\":1,\"killed\":\"ab\"}\n"
+        );
+    }
+
+    #[test]
+    fn attach_and_detach_documents() {
+        let ended = |end| {
+            report(&Report::AttachEnded {
+                id: "ab".to_owned(),
+                end,
+            })
+        };
+        assert_eq!(
+            ended(AttachEnd::Detached),
+            "{\"schema_version\":1,\"attach\":{\"id\":\"ab\",\"end\":\"detached\"}}\n"
+        );
+        assert_eq!(
+            ended(AttachEnd::Exited { code: 3 }),
+            "{\"schema_version\":1,\"attach\":{\"id\":\"ab\",\"end\":\"exited\",\"exit_code\":3}}\n"
+        );
+        assert_eq!(
+            ended(AttachEnd::Signaled { signal: 9 }),
+            "{\"schema_version\":1,\"attach\":{\"id\":\"ab\",\"end\":\"signaled\",\"signal\":9}}\n"
+        );
+        assert_eq!(
+            ended(AttachEnd::Lost),
+            "{\"schema_version\":1,\"attach\":{\"id\":\"ab\",\"end\":\"lost\"}}\n"
+        );
+        assert_eq!(
+            report(&Report::ClientsDetached {
+                id: "ab".to_owned(),
+                clients: 2
+            }),
+            "{\"schema_version\":1,\"detached\":{\"id\":\"ab\",\"clients\":2}}\n"
         );
     }
 
