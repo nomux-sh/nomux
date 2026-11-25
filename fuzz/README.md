@@ -15,8 +15,14 @@ Each target is one file in `fuzz_targets`. The comment at the top of the file ha
 | `holder_wire_decode` | `FrameBuffer`, `Hello::decode`, `Request::decode` and `Reply::decode` of `nomux-holder-protocol` | A decoder panics or allocates more than the limit, or a message is different after `encode` and a second `decode`. |
 | `program_reports_decode` | `ProgramReports::decode` of `nomux-holder-protocol` | The decoder panics or allocates more than the limit, or the program reports are different after `encode` and a second `decode`. |
 | `ring_reader` | `RingReader` of `nomux-holder-protocol` | The reader panics on a region with an arbitrary header, length and positions, or a read returns a byte that is not the byte of the region at that position. |
+| `journal_reader` | `JournalReader` of `nomux-holder-protocol`, which the daemon and the holder use to read the journal | The reader panics or allocates more than the limit on segment files that were cut, changed, copied or forged, a range or a checkpoint is not a possible answer, the records before the first changed byte of a segment are not readable, or, without a forged byte, the reader returns a byte that the writer did not write at that position. |
+| `osc_records` | The parsers of `nomux_term::osc` (OSC 7501, 133, 9, 777), without the terminal | A parser panics, or a record has a field that its documentation does not permit: a text that is not one line or that is longer than its limit, a name with a byte that a name cannot have, or a `kind` or a `progress` with a state that does not have it. |
 
 `src/terminal_script.rs` has the input format that `terminal_feed` and `redraw_round_trip` share: the output of a program, with resizes between its parts.
+
+`src/journal_script.rs` has the input format of `journal_reader`: a script. The checksums of the journal stop arbitrary bytes at the first header, thus the target writes valid records with the encoder of the holder, and the script then cuts the files, changes bits, copies a file to the name of a different segment, and appends records and files of a hostile writer whose checksums are correct. `src/written_journal.rs` keeps what a reader must find after each step.
+
+`terminal_feed` also reaches the OSC parsers, but only with a payload that the terminal lets through, and it examines no record. In a measurement, `terminal_feed` did not find in 60 seconds a planted defect in the parser of OSC 7501 that `osc_records` found in less than 1 second.
 
 ## Run a target
 
@@ -60,9 +66,11 @@ No target skips a case now.
 
 `ring_reader` does not make the region shorter after the reader mapped it.
 
+`journal_reader` writes records with a payload of 512 bytes at most, because one record of the largest length makes a run 30 times slower. It does not remove a file while a reader reads.
+
 ## Seeds
 
-`seeds/<target>` has a small number of valid inputs for each target: terminal output with each kind of sequence, one frame of each message kind, program reports, and regions with a valid header.
+`seeds/<target>` has a small number of valid inputs for each target: terminal output with each kind of sequence, one frame of each message kind, program reports, regions with a valid header, journal scripts with each kind of step, and payloads of each OSC code.
 The files are small, because a run needs only one example of each structure. Do not commit a corpus that a run made.
 
 ## Dependencies
@@ -76,7 +84,7 @@ Each other dependency has a license from the list.
 
 The workflow is `.github/workflows/fuzz.yml`.
 
-- For each pull request that changes `fuzz`, `xtask`, `crates/nomux-term` or `crates/nomux-holder-protocol`: 10 seconds for each target, 60 seconds in total.
+- For each pull request that changes `fuzz`, `xtask`, `crates/nomux-term` or `crates/nomux-holder-protocol`: 10 seconds for each target, 80 seconds in total.
 - Each night: 10 minutes for each target.
 
 A failure fails the job, and the job uploads `artifacts` as the `fuzz-artifacts` artifact of the run.

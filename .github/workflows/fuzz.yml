@@ -3,7 +3,7 @@ name: Fuzz
 # The fuzz targets of the `fuzz` directory. They are not in ci.yml because
 # they need a nightly compiler and a path filter.
 #
-# - Pull requests: 10 seconds for each target, 60 seconds in total, and only
+# - Pull requests: 10 seconds for each target, 80 seconds in total, and only
 #   if the pull request changes the code that the targets use.
 # - Each night: 10 minutes for each target.
 #
