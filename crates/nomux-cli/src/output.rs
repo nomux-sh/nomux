@@ -1,6 +1,8 @@
 //! Prints the result of a command: a report on the standard output, an
 //! error on the standard error.
 
+mod extension_human;
+mod extension_json;
 mod human;
 mod json;
 
@@ -33,6 +35,9 @@ impl Format {
 }
 
 pub(crate) fn print_report(report: &Report, format: Format) -> io::Result<()> {
+    if let (Some(payload), Format::Human | Format::Quiet) = (report.call_payload(), format) {
+        return io::stdout().lock().write_all(payload);
+    }
     let text = match format {
         Format::Human => human::report(report, human::Style::of_standard_output()),
         Format::Quiet => human::quiet_report(report),

@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+use crate::extension_commands::ExtCommand;
+
 /// Sessions that stay alive on the host when the client disconnects.
 #[derive(Debug, Parser)]
 #[command(
@@ -106,6 +108,11 @@ pub(crate) enum Command {
     Host {
         #[command(subcommand)]
         command: HostCommand,
+    },
+    /// Install, list, remove and call the extensions of a host
+    Ext {
+        #[command(subcommand)]
+        command: ExtCommand,
     },
     /// Print the version
     Version,

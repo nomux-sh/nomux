@@ -4,6 +4,7 @@ use nomux_client::{AttachEnd, HostCheck, HostInfo, Installation, Session};
 use nomux_core::configuration::HostEntry;
 
 use crate::exit_code;
+use crate::extension_commands::ExtensionReport;
 
 #[derive(Debug)]
 pub(crate) enum Report {
@@ -33,6 +34,7 @@ pub(crate) enum Report {
         name: String,
     },
     HostsChecked(Vec<HostDiagnosis>),
+    Extension(ExtensionReport),
     Version,
 }
 
@@ -68,7 +70,17 @@ impl Report {
                     exit_code::ERROR
                 }
             }
+            Self::Extension(report) => report.exit_code(),
             _ => exit_code::SUCCESS,
+        }
+    }
+
+    /// The payload of the result of a method of an extension. It is bytes in
+    /// the encoding of the method, not text.
+    pub(crate) fn call_payload(&self) -> Option<&[u8]> {
+        match self {
+            Self::Extension(ExtensionReport::Called { payload, .. }) => Some(payload),
+            _ => None,
         }
     }
 }

@@ -15,9 +15,11 @@ name = "nomux"
 path = "src/main.rs"
 
 [dependencies]
+base64.workspace = true
 clap.workspace = true
 nomux-client.workspace = true
 nomux-core.workspace = true
+nomux-extension.workspace = true
 rustix = { workspace = true, features = ["termios"] }
 serde.workspace = true
 serde_json.workspace = true
