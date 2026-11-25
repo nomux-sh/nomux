@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [git-cliff](https://git-cliff.org) writes this file from the commit subjects.
 To see the changes that are not in a version, run `git cliff --unreleased`.
 
+## [0.1.1] - 2026-11-25
+
+### Fixed
+
+- Refuse a terminal of fewer than 2 columns
+- Keep the columns and the wrap of the redraw sequence correct
+- Wrap the position arithmetic of the ring buffer
+
+### Documentation
+
+- List the terminal features and the known gaps
+- Update the known gaps of the terminal
 ## [0.1.0] - 2026-11-25
 
 ### Added
