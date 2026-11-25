@@ -1,5 +1,6 @@
 //! Starts the real `nomux-holder` binary and talks to it as the daemon does:
-//! discovery files, control socket, ring buffer and redraw memory.
+//! discovery files, control socket, ring buffer, redraw memory and program
+//! reports memory.
 
 use std::io::Write;
 use std::os::fd::OwnedFd;
@@ -10,6 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use nomux_holder_protocol::discovery::{HolderState, scan};
+use nomux_holder_protocol::program_reports::{self, ProgramReports};
 use nomux_holder_protocol::redraw;
 use nomux_holder_protocol::ring::RingReader;
 use nomux_holder_protocol::wire::{
@@ -139,9 +141,16 @@ impl Client {
     }
 
     pub(crate) fn request(&mut self, request: Request<'_>) -> Reply {
+        let request_id = self.send(request);
+        self.receive(request_id)
+    }
+
+    /// Sends a request and does not wait for its reply. Returns the request
+    /// identifier for `receive`.
+    pub(crate) fn send(&mut self, request: Request<'_>) -> u32 {
         let mut encoded = Vec::new();
         request.encode(self.next_request_id, &mut encoded);
-        self.exchange(&encoded)
+        self.send_encoded(&encoded)
     }
 
     /// Sends a frame that `Request` cannot make, as a later daemon can do.
@@ -153,16 +162,21 @@ impl Client {
             payload,
         };
         frame.encode(&mut encoded);
-        self.exchange(&encoded)
+        let request_id = self.send_encoded(&encoded);
+        self.receive(request_id)
     }
 
-    /// Sends one encoded request and waits for its reply.
-    fn exchange(&mut self, encoded: &[u8]) -> Reply {
+    fn send_encoded(&mut self, encoded: &[u8]) -> u32 {
         let request_id = self.next_request_id;
         self.next_request_id += 1;
         self.stream
             .write_all(encoded)
             .expect("the test helper works");
+        request_id
+    }
+
+    /// Waits for the next reply, which must be the reply to `request_id`.
+    pub(crate) fn receive(&mut self, request_id: u32) -> Reply {
         loop {
             if let Some(frame) = self.frames.next_frame().expect("the test helper works") {
                 assert_eq!(frame.request_id, request_id);
@@ -191,6 +205,21 @@ impl Client {
             .expect("the redraw reply has a descriptor");
         let sequence = redraw::read(memory, length).expect("the test helper works");
         (position, sequence)
+    }
+
+    /// Asks for the program reports of the holder.
+    pub(crate) fn program_reports(&mut self) -> ProgramReports {
+        let reply = self.request(Request::ProgramReports);
+        let Reply::ProgramReports { revision, length } = reply else {
+            panic!("not the program reports: {reply:?}");
+        };
+        let memory = self
+            .descriptor
+            .take()
+            .expect("the program reports reply has a descriptor");
+        let reports = program_reports::read(memory, length).expect("the test helper works");
+        assert_eq!(reports.revision, revision);
+        reports
     }
 
     pub(crate) fn type_line(&mut self, line: &str) {

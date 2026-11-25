@@ -9,6 +9,9 @@
 //!   (the holder) and its reader (the daemon).
 //! - [`redraw`]: the shared memory that carries the redraw sequence of a
 //!   screen from the holder to the daemon.
+//! - [`program_reports`]: the state that a holder keeps from the reports of
+//!   the programs in the terminal output (program status, input line state,
+//!   notifications), and its encoding in shared memory.
 //! - [`discovery`]: the discovery files of a holder, and the scan that tells
 //!   a live holder from a stale directory.
 //!
@@ -23,11 +26,13 @@
 //! - This crate does not open a PTY and does not start a process.
 
 pub mod discovery;
+pub mod program_reports;
 pub mod redraw;
 pub mod ring;
 pub mod wire;
 
 mod mapping;
 mod session_id;
+mod shared_bytes;
 
 pub use session_id::{InvalidSessionId, SessionId};

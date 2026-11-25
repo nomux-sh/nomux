@@ -6,17 +6,25 @@ use std::os::unix::net::UnixStream;
 
 use nomux_holder_protocol::wire::{FrameBuffer, Reply, send_with_descriptor};
 
-/// A `WaitOutput` request that has no reply yet.
+/// A wait request that has no reply yet.
 pub(super) struct PendingWait {
     pub(super) request_id: u32,
+    /// The position or the revision that the daemon already has.
     pub(super) after: u64,
+}
+
+/// The wait requests of one connection: one of each kind at most.
+#[derive(Default)]
+pub(super) struct PendingWaits {
+    pub(super) output: Option<PendingWait>,
+    pub(super) program_reports: Option<PendingWait>,
 }
 
 pub(super) struct Connection {
     pub(super) stream: UnixStream,
     pub(super) frames: FrameBuffer,
     pub(super) outgoing: Vec<u8>,
-    pub(super) pending_wait: Option<PendingWait>,
+    pub(super) waits: PendingWaits,
 }
 
 impl Connection {
@@ -36,7 +44,7 @@ impl Connection {
             stream,
             frames: FrameBuffer::new(),
             outgoing: Vec::new(),
-            pending_wait: None,
+            waits: PendingWaits::default(),
         })
     }
 

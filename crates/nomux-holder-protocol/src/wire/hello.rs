@@ -37,7 +37,7 @@ pub struct ProtocolVersion {
 
 impl ProtocolVersion {
     /// The version that this crate implements.
-    pub const CURRENT: Self = Self { major: 1, minor: 1 };
+    pub const CURRENT: Self = Self { major: 1, minor: 2 };
 
     /// `true` if a holder of this version knows `request`. The daemon asks
     /// this before it sends a request that a minor version added.

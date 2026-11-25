@@ -14,7 +14,7 @@
 use std::io;
 use std::os::fd::AsFd;
 
-use crate::mapping::Mapping;
+use crate::shared_bytes;
 
 /// The largest number of bytes of a redraw sequence. If the sequence of a
 /// screen is longer, the holder answers with
@@ -30,11 +30,7 @@ pub const MAX_LENGTH: usize = 8 * 1024 * 1024;
 ///
 /// Returns the error of `mmap`. An empty sequence is an error.
 pub fn write(memory: impl AsFd, sequence: &[u8]) -> io::Result<()> {
-    let mut mapping = Mapping::writable(memory.as_fd(), sequence.len())?;
-    mapping
-        .slice_mut(0, sequence.len())
-        .copy_from_slice(sequence);
-    Ok(())
+    shared_bytes::write(memory.as_fd(), sequence)
 }
 
 /// Copies the redraw sequence of `length` bytes out of the memory that came
@@ -46,22 +42,5 @@ pub fn write(memory: impl AsFd, sequence: &[u8]) -> io::Result<()> {
 /// Returns an error if `length` is larger than [`MAX_LENGTH`] or than the
 /// memory, or if `fstat` or `mmap` fails.
 pub fn read(memory: impl AsFd, length: u32) -> io::Result<Vec<u8>> {
-    let memory = memory.as_fd();
-    let length = usize::try_from(length)
-        .ok()
-        .filter(|length| *length <= MAX_LENGTH)
-        .ok_or_else(|| invalid("the redraw sequence is longer than the limit"))?;
-    let fits = usize::try_from(rustix::fs::fstat(memory)?.st_size)
-        .is_ok_and(|memory_length| length <= memory_length);
-    if !fits {
-        return Err(invalid("the redraw sequence is longer than the memory"));
-    }
-    let mapping = Mapping::read_only(memory, length)?;
-    let mut sequence = vec![0; length];
-    mapping.copy_out(0, &mut sequence);
-    Ok(sequence)
-}
-
-fn invalid(message: &'static str) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, message)
+    shared_bytes::read(memory.as_fd(), length, MAX_LENGTH)
 }

@@ -5,9 +5,10 @@
 //! that, the daemon sends a [`Request`] and the holder answers each request
 //! with one [`Reply`] that has the same request identifier.
 //!
-//! Two messages come with a file descriptor as `SCM_RIGHTS` ancillary data:
-//! the hello (the ring buffer) and [`Reply::Redraw`] (the redraw sequence).
-//! A descriptor arrives with the first byte of its message.
+//! Three messages come with a file descriptor as `SCM_RIGHTS` ancillary data:
+//! the hello (the ring buffer), [`Reply::Redraw`] (the redraw sequence) and
+//! [`Reply::ProgramReports`] (the program reports). A descriptor arrives
+//! with the first byte of its message.
 //!
 //! The encoding is written by hand and has fixed little-endian fields. The
 //! rules that keep an old holder compatible with a new daemon are:
@@ -24,7 +25,7 @@
 mod descriptor;
 mod frame;
 mod hello;
-mod payload;
+pub(crate) mod payload;
 mod reply;
 mod request;
 mod window_size;

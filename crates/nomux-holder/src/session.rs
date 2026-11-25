@@ -1,5 +1,5 @@
-//! The session: the terminal, the child command, the ring buffer and the
-//! screen state.
+//! The session: the terminal, the child command, the ring buffer, the
+//! screen state and the program reports.
 
 use std::io;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
@@ -9,13 +9,17 @@ use nomux_holder_protocol::ring::RingWriter;
 use nomux_holder_protocol::wire::{
     ChildSignal, ChildStatus, ErrorCode, Hello, ProtocolVersion, WindowSize,
 };
+use nomux_term::osc::OscRecord;
+use nomux_term::osc::program_status::QUERY_REPLY;
 use nomux_term::{Size, Terminal};
 use rustix::event::PollFlags;
 use rustix::io::Errno;
 
 use crate::arguments::SessionArguments;
 use crate::child::ChildProcess;
+use crate::foreground_program::ForegroundProgram;
 use crate::input_queue::InputQueue;
+use crate::program_reports::ProgramReportStore;
 use crate::pty;
 
 /// The largest number of bytes that one read moves from the terminal to the
@@ -38,6 +42,8 @@ pub(crate) struct Session {
     /// The state of the screen after each byte that the ring buffer got. It
     /// keeps no scrollback.
     screen: Terminal,
+    /// What the programs reported in each byte that the ring buffer got.
+    reports: ProgramReportStore,
     input: InputQueue,
     size: WindowSize,
 }
@@ -60,6 +66,7 @@ impl Session {
             child,
             ring,
             screen: Terminal::new(screen_size),
+            reports: ProgramReportStore::default(),
             input: InputQueue::default(),
             size: arguments.size,
         })
@@ -87,18 +94,22 @@ impl Session {
         (!interest.is_empty()).then_some((terminal.as_fd(), interest))
     }
 
-    /// Moves one chunk of output from the terminal into the ring buffer and
-    /// gives the same bytes to the screen state. Returns `false` if the
-    /// terminal had no bytes.
+    /// Moves one chunk of output from the terminal into the ring buffer,
+    /// gives the same bytes to the screen state and keeps what the programs
+    /// reported in them. Returns `false` if the terminal had no bytes.
     pub(crate) fn read_output(&mut self) -> io::Result<bool> {
         let Some(terminal) = &self.terminal else {
             return Ok(false);
         };
-        let screen = &mut self.screen;
+        let (screen, reports, input) = (&mut self.screen, &mut self.reports, &mut self.input);
+        let foreground = ForegroundProgram::of(terminal.as_fd());
         let read = self.ring.write_with(OUTPUT_CHUNK, |chunk| {
             let count = rustix::io::read(terminal, &mut *chunk)?;
-            // The unhandled OSC sequences have no reader yet.
-            screen.feed(&chunk[..count], |_| {});
+            screen.feed(&chunk[..count], |osc| {
+                if let Some(record) = osc.record() {
+                    keep_record(record, reports, input, &foreground);
+                }
+            });
             Ok::<_, Errno>(count)
         });
         match read {
@@ -108,7 +119,11 @@ impl Session {
                 self.terminal_readable = false;
                 Ok(false)
             }
-            Ok(_) => Ok(true),
+            Ok(_) => {
+                // The answer to a program status query.
+                self.flush_input();
+                Ok(true)
+            }
             Err(Errno::AGAIN | Errno::INTR) => Ok(false),
             Err(error) => Err(error.into()),
         }
@@ -135,6 +150,15 @@ impl Session {
         sequence
     }
 
+    /// The number of changes to the program reports.
+    pub(crate) fn program_reports_revision(&self) -> u64 {
+        self.reports.revision()
+    }
+
+    pub(crate) fn encoded_program_reports(&self) -> Vec<u8> {
+        self.reports.encode()
+    }
+
     pub(crate) fn input_backlogged(&self) -> bool {
         self.input.is_backlogged()
     }
@@ -144,6 +168,7 @@ impl Session {
             return Err(ErrorCode::ChildExited);
         }
         self.input.push(bytes);
+        self.reports.input_written();
         self.flush_input();
         Ok(())
     }
@@ -197,6 +222,27 @@ impl Session {
         self.terminal = None;
         self.input.clear();
         Ok(true)
+    }
+}
+
+/// Keeps what a program reported with one OSC sequence, and answers the
+/// program status query.
+fn keep_record(
+    record: OscRecord,
+    reports: &mut ProgramReportStore,
+    input: &mut InputQueue,
+    foreground: &ForegroundProgram<'_>,
+) {
+    match record {
+        // A program that sends queries and does not read the answers must
+        // not make the input queue grow without a limit.
+        OscRecord::ProgramStatusQuery if input.is_backlogged() => {}
+        OscRecord::ProgramStatusQuery => input.push(QUERY_REPLY),
+        OscRecord::ProgramStatus(report) => {
+            reports.report_status(report, |app| foreground.agrees_with(app));
+        }
+        OscRecord::PromptMark(mark) => reports.mark_prompt(mark),
+        OscRecord::Notification(notification) => reports.notify(notification),
     }
 }
 

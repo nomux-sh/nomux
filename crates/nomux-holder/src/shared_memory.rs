@@ -1,4 +1,5 @@
-//! Makes shared memory: for the ring buffer, and for each redraw sequence.
+//! Makes shared memory: for the ring buffer, and for each reply that is
+//! too long for a frame (a redraw sequence, the program reports).
 //!
 //! The memory has no name in the file system when this module returns. The
 //! holder writes through the writable descriptor and gives the read-only
@@ -12,6 +13,21 @@ use rustix::fs::ftruncate;
 pub(crate) struct SharedMemory {
     pub(crate) writable: OwnedFd,
     pub(crate) read_only: OwnedFd,
+}
+
+/// Makes shared memory that has `bytes`, for a reply to the daemon. `write`
+/// is the function of the protocol that writes the bytes into the memory.
+/// Returns the number of bytes and the read-only descriptor. The holder
+/// keeps no descriptor, thus the memory lives as long as the daemon uses it.
+pub(crate) fn with_bytes(
+    purpose: &str,
+    bytes: &[u8],
+    write: fn(&OwnedFd, &[u8]) -> io::Result<()>,
+) -> io::Result<(u32, OwnedFd)> {
+    let length = u32::try_from(bytes.len()).map_err(|_| io::ErrorKind::InvalidInput)?;
+    let memory = create(purpose, bytes.len())?;
+    write(&memory.writable, bytes)?;
+    Ok((length, memory.read_only))
 }
 
 /// Linux: an anonymous memory file. A second `open` through `/proc` gives a

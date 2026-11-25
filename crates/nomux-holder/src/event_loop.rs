@@ -53,7 +53,7 @@ pub(crate) fn run(
                 exit_status_delivered |= server.serve(slot, &mut session);
             }
         }
-        server.complete_waits(session.write_position(), session.child_exited());
+        server.complete_waits(&session);
 
         let ended = exit_deadline
             .is_some_and(|deadline| exit_status_delivered || Instant::now() >= deadline);

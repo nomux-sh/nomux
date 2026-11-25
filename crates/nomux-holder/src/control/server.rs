@@ -10,9 +10,9 @@ use std::path::Path;
 
 use nomux_holder_protocol::wire::{ChildStatus, ErrorCode, Frame, Hello, Reply, Request};
 
-use super::connection::{Answer, Connection, PendingWait, send_answer};
+use super::connection::{Answer, Connection, PendingWait, PendingWaits, send_answer};
 use super::peer::peer_user_id;
-use super::redraw;
+use super::{program_reports, redraw};
 use crate::session::Session;
 
 /// The largest number of connections at one time. During a daemon update,
@@ -104,25 +104,33 @@ impl ControlServer {
         }
     }
 
-    /// Answers the `WaitOutput` requests that can end now.
-    pub(crate) fn complete_waits(&mut self, write_position: u64, child_exited: bool) {
+    /// Answers the wait requests that can end now.
+    pub(crate) fn complete_waits(&mut self, session: &Session) {
+        let child_exited = session.child_exited();
+        let write_position = session.write_position();
+        let revision = session.program_reports_revision();
         for slot in 0..MAX_CONNECTIONS {
             let Some(connection) = self.connections[slot].as_mut() else {
                 continue;
             };
-            let Some(wait) = connection
-                .pending_wait
-                .take_if(|wait| child_exited || write_position > wait.after)
-            else {
-                continue;
-            };
-            let answer = Reply::Output { write_position }.into();
-            let sent = send_answer(
-                &connection.stream,
-                &mut connection.outgoing,
-                wait.request_id,
-                &answer,
-            );
+            let Connection {
+                stream,
+                outgoing,
+                waits,
+                ..
+            } = connection;
+            let ready = [
+                take_ready(&mut waits.output, child_exited, write_position)
+                    .map(|request_id| (request_id, output(write_position))),
+                take_ready(&mut waits.program_reports, child_exited, revision)
+                    .map(|request_id| (request_id, program_reports_changed(revision))),
+            ];
+            let sent = ready
+                .into_iter()
+                .flatten()
+                .try_for_each(|(request_id, reply)| {
+                    send_answer(stream, outgoing, request_id, &reply.into())
+                });
             if sent.is_err() {
                 self.close(slot);
             }
@@ -148,7 +156,7 @@ fn serve_connection(
         stream,
         frames,
         outgoing,
-        pending_wait,
+        waits,
     } = connection;
     let mut exit_status_delivered = false;
     loop {
@@ -158,7 +166,7 @@ fn serve_connection(
         let Some(frame) = frame else {
             return Ok(exit_status_delivered);
         };
-        let answer = answer(frame, slot, lease, pending_wait, session);
+        let answer = answer(frame, slot, lease, waits, session);
         if let Some(answer) = answer {
             send_answer(stream, outgoing, frame.request_id, &answer)?;
             exit_status_delivered |=
@@ -172,10 +180,15 @@ fn answer(
     frame: Frame<'_>,
     slot: usize,
     lease: &mut Option<usize>,
-    pending_wait: &mut Option<PendingWait>,
+    waits: &mut PendingWaits,
     session: &mut Session,
 ) -> Option<Answer> {
     let has_lease = *lease == Some(slot);
+    let child_exited = session.child_exited();
+    let pending = |after| PendingWait {
+        request_id: frame.request_id,
+        after,
+    };
     let reply = match Request::decode(frame) {
         Err(error) => Reply::Error(error.into()),
         Ok(Request::AcquireLease) => {
@@ -183,34 +196,70 @@ fn answer(
             Reply::Done
         }
         Ok(Request::WaitOutput { after }) => {
-            return wait_output(pending_wait, frame.request_id, after, session).map(Answer::from);
+            let position = session.write_position();
+            let slot = &mut waits.output;
+            return wait(slot, pending(after), position, child_exited, output).map(Answer::from);
+        }
+        Ok(Request::WaitProgramReports { after }) => {
+            let revision = session.program_reports_revision();
+            let slot = &mut waits.program_reports;
+            return wait(
+                slot,
+                pending(after),
+                revision,
+                child_exited,
+                program_reports_changed,
+            )
+            .map(Answer::from);
         }
         Ok(Request::Redraw) => return Some(redraw::answer(session)),
+        Ok(Request::ProgramReports) => return Some(program_reports::answer(session)),
         Ok(Request::Status) => Reply::Status(session.status()),
         Ok(Request::Input(bytes)) => write_request(has_lease, || session.write_input(bytes)),
         Ok(Request::Resize(size)) => write_request(has_lease, || session.resize(size)),
         Ok(Request::Signal(signal)) => write_request(has_lease, || session.signal_child(signal)),
+        // `Request` can get a variant that this holder does not answer yet.
+        Ok(_) => Reply::Error(ErrorCode::UnknownKind),
     };
     Some(reply.into())
 }
 
-/// Answers immediately if the daemon does not have all the output, or if
-/// the child ended. If not, keeps the request until that is true.
-fn wait_output(
-    pending_wait: &mut Option<PendingWait>,
-    request_id: u32,
-    after: u64,
-    session: &Session,
+/// Does a wait request for a value that only increases: a position or a
+/// revision. `current` is the value now.
+///
+/// Answers with `reply` of the value now if that value is larger than the
+/// value that the daemon has, or if the child ended. If not, keeps the
+/// request in `slot` until that is true, and returns `None`.
+fn wait(
+    slot: &mut Option<PendingWait>,
+    request: PendingWait,
+    current: u64,
+    child_exited: bool,
+    reply: fn(u64) -> Reply,
 ) -> Option<Reply> {
-    if pending_wait.is_some() {
+    if slot.is_some() {
         return Some(Reply::Error(ErrorCode::WaitPending));
     }
-    let write_position = session.write_position();
-    if session.child_exited() || write_position > after {
-        return Some(Reply::Output { write_position });
+    if child_exited || current > request.after {
+        return Some(reply(current));
     }
-    *pending_wait = Some(PendingWait { request_id, after });
+    *slot = Some(request);
     None
+}
+
+/// Takes the wait request out of `slot` if its reply can go now. Returns
+/// its request identifier.
+fn take_ready(slot: &mut Option<PendingWait>, child_exited: bool, current: u64) -> Option<u32> {
+    slot.take_if(|wait| child_exited || current > wait.after)
+        .map(|wait| wait.request_id)
+}
+
+fn output(write_position: u64) -> Reply {
+    Reply::Output { write_position }
+}
+
+fn program_reports_changed(revision: u64) -> Reply {
+    Reply::ProgramReportsChanged { revision }
 }
 
 /// Does a request that needs the single-writer lease.
