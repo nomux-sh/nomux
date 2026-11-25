@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "tests", "xtask"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 # The minimum supported Rust version is the pinned toolchain in
 # `rust-toolchain.toml`. CI tests no older compiler.
@@ -16,11 +16,11 @@ authors = ["The nomux Authors"]
 publish = false
 
 [workspace.dependencies]
-nomux-client = { path = "crates/nomux-client", version = "0.1.1" }
-nomux-core = { path = "crates/nomux-core", version = "0.1.1" }
-nomux-holder-protocol = { path = "crates/nomux-holder-protocol", version = "0.1.1" }
-nomux-term = { path = "crates/nomux-term", version = "0.1.1" }
-nomux-transport = { path = "crates/nomux-transport", version = "0.1.1" }
+nomux-client = { path = "crates/nomux-client", version = "0.2.0" }
+nomux-core = { path = "crates/nomux-core", version = "0.2.0" }
+nomux-holder-protocol = { path = "crates/nomux-holder-protocol", version = "0.2.0" }
+nomux-term = { path = "crates/nomux-term", version = "0.2.0" }
+nomux-transport = { path = "crates/nomux-transport", version = "0.2.0" }
 
 base64 = "0.22.1"
 clap = { version = "4.6.10", features = ["derive"] }
