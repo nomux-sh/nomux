@@ -31,6 +31,13 @@ nomux [--json | --quiet] [--host <name>] <command>
 | `host ls` | Lists the saved hosts |
 | `host rm <name>` | Removes a saved host. Nothing changes on the host |
 | `host doctor [<name>]` | Checks the connection, the platform, the binaries, the permissions and the daemon of a host |
+| `ext ls` | Lists the installed extensions |
+| `ext install <directory> [--grant <permission>]... [--grant-all]` | Installs an extension from a directory on the host, with the permissions that the options approve |
+| `ext rm <id>` | Stops an extension and removes its package, its state and its data |
+| `ext enable <id>` | Enables an extension, also after the daemon disabled it because of failures |
+| `ext disable <id>` | Disables an extension and stops its process |
+| `ext call <id> <method> [--payload <text> \| --payload @<file>]` | Calls a method of an extension and writes the payload of its result to the standard output |
+| `ext validate <directory>` | Checks the `extension.toml` of a directory on this computer. The command needs no daemon |
 | `version` | Prints the version. `--version` and `-V` do the same |
 
 ### `--host`
@@ -160,6 +167,92 @@ If no session has the identifier, the exit code is 2. Thus the second `kill` of 
 A check that cannot run after a failure is not in the output: without a connection, the output has only `connection`.
 The exit code is 0 if each check of each host passed, and 1 if a check failed.
 
+### `ext install`
+
+`ext install <directory>` installs the extension package in `<directory>`. The directory has the manifest `extension.toml`. [extensions.md](extensions.md) describes what the daemon does with the package.
+
+An extension gets only the permissions that the user approved. The command asks no question, thus the approval is on the command line:
+
+| Command line | Result |
+|---|---|
+| No `--grant` and no `--grant-all`, and the manifest asks for a permission | The command prints the permissions that the extension asks for, installs nothing and has the exit code 4 |
+| `--grant <permission>`, one time or more | The command installs the extension with these permissions. The extension does not get the other permissions that it asks for |
+| `--grant-all` | The command installs the extension with each permission that it asks for. A directory that starts with `${worktree}` is not approved: give a directory with `--grant fs=<directory>` |
+| The manifest asks for no permission | The command installs the extension |
+
+A permission has one of these forms. The outputs of the `ext` commands use the same forms.
+
+| Form | Permission of the manifest |
+|---|---|
+| `fs=<directory>` | An item of `fs`. For an item that starts with `${worktree}`, `<directory>` is an absolute path that ends with the rest of the item |
+| `process=<program>` | An item of `process` |
+| `network` | `network = true` |
+| `scope=<scope>` | An item of `scopes`, for example `scope=sessions:read` |
+
+```console
+$ nomux ext install ./nomux-git
+nomux: the extension nomux.git 1.0.0 asks for these permissions:
+  fs=${worktree}
+  process=git
+  scope=sessions:read
+Nothing was installed. To install the extension, approve its permissions: add --grant-all, or --grant <permission> for each permission that you approve. For a directory that starts with ${worktree}, give a directory: --grant fs=<directory>
+$ nomux ext install ./nomux-git --grant-all --grant fs=/home/user/project
+extension nomux.git 1.0.0 installed with the permissions: fs=/home/user/project process=git scope=sessions:read
+```
+
+- A `--grant` with a permission that the manifest does not ask for fails with the exit code 1, and nothing is installed.
+- A manifest that is not valid fails with the exit code 1. The message has the path of each field that is not valid.
+- An extension that is already installed fails with the exit code 1: remove it first.
+- With `--host`, `<directory>` is an absolute path on the remote host. On the local host, a relative path is relative to the current directory.
+- The command starts no process of the extension. The first `ext call` does.
+
+### `ext ls`, `ext enable`, `ext disable` and `ext rm`
+
+An extension has one of these states:
+
+| State | Meaning |
+|---|---|
+| `stopped` | The extension is enabled and its process does not run. The next call starts it |
+| `starting` | The process started and is not ready |
+| `running` | The process runs. It stops after 60 seconds without a call |
+| `failed` | The process failed. After a pause, the next call starts it again. `REASON` has the failure |
+| `disabled` | The daemon does not start the extension. `REASON` says why: the user disabled it, or it failed 5 times in sequence |
+| `unknown` | The daemon is newer than the CLI and sent a state that the CLI does not know |
+
+`ext enable <id>` also enables an extension that the daemon disabled after failures. `ext disable <id>` stops the process of the extension.
+`ext rm <id>` stops the process and removes the package, the approved permissions and the working directory of the extension.
+Each of the three commands has the exit code 2 if no extension has the identifier.
+
+### `ext call`
+
+`ext call <id> <method>` calls one method of the daemon part of an extension. If the process of the extension does not run, the daemon starts it. The command is for scripts and tests.
+
+- The payload of the call and the payload of the result are bytes. The method of the extension specifies their encoding: nomux does not change them.
+- `--payload <text>` sends the bytes of the text. `--payload @<file>` sends the content of a file. Without the option, the payload is empty. A text that starts with `@` must be in a file.
+- The command writes the payload of the result to the standard output, with no other byte. With `--quiet`, it does the same.
+
+```console
+$ nomux ext call nomux.echo echo --payload @request.bin > response.bin
+```
+
+| Result | Exit code |
+|---|---|
+| The method gave a result | 0 |
+| No extension has the identifier, or the extension answered that it does not have the method or the item | 2 |
+| The extension did not answer in 30 seconds, or it answered with its timeout error | 3 |
+| The extension answered that it does not have the permission, for example for a host service whose scope the user did not approve | 4 |
+| The extension is disabled, its process cannot start or failed, or it answered with a different error | 1 |
+
+### `ext validate`
+
+`ext validate <directory>` reads `<directory>/extension.toml` on this computer and checks it with the validator of the extension SDK (`nomux-extension`). The command connects to no daemon and ignores `--host`.
+
+- A valid manifest has the exit code 0. The output has the identifier, the version, the name and the permissions that the manifest asks for.
+- A manifest that is not valid has the exit code 1. The output has one line for each field that is not valid, with the path of the field, for example `extension.id` or `permissions.scopes[1]`. The output goes to the standard output.
+- A directory without the file has the exit code 2.
+
+The command does not check the files of the package. `ext install` also makes sure that the package has the program of its daemon part.
+
 ## Output
 
 ### Text
@@ -199,6 +292,32 @@ vps
   ok    versions     the client and the daemon have the version 0.1.0
 $ nomux host rm vps
 host vps removed
+$ nomux ext validate ./nomux-git
+extension.toml is valid: nomux.git 1.0.0 (Git) asks for the permissions: process=git scope=sessions:read
+$ nomux ext install ./nomux-git --grant-all
+extension nomux.git 1.0.0 installed with the permissions: process=git scope=sessions:read
+$ nomux ext ls
+ID         NAME  VERSION  STATE    PERMISSIONS                      REASON
+nomux.git  Git   1.0.0    stopped  process=git,scope=sessions:read
+$ nomux ext disable nomux.git
+extension nomux.git disabled
+$ nomux ext ls
+ID         NAME  VERSION  STATE     PERMISSIONS                      REASON
+nomux.git  Git   1.0.0    disabled  process=git,scope=sessions:read  the user disabled the extension
+$ nomux ext enable nomux.git
+extension nomux.git enabled
+$ nomux ext rm nomux.git
+extension nomux.git removed
+$ nomux ext ls
+no extensions
+```
+
+A manifest that is not valid has one line for each field:
+
+```console
+$ nomux ext validate ./nomux-git
+extension.toml is not valid:
+  `extension.id` must have two or more parts with `.` between them, in 64 characters at most. A part starts with a lower-case letter and has only lower-case letters, digits and `-`
 ```
 
 A check that failed has `FAIL` and the reason:
@@ -235,8 +354,10 @@ With `--quiet`, a command prints only what a script needs:
 | `new` | The session identifier |
 | `ls` | One session identifier on each line |
 | `host ls` | One host name on each line |
+| `ext ls` | One extension identifier on each line |
+| `ext call` | The payload of the result, as without `--quiet` |
 | `version` | The version number |
-| `new --attach`, `attach`, `detach`, `kill`, `daemon status`, `daemon stop`, `host add`, `host rm`, `host doctor` | Nothing. The exit code is the result |
+| `new --attach`, `attach`, `detach`, `kill`, `daemon status`, `daemon stop`, `host add`, `host rm`, `host doctor`, `ext install`, `ext rm`, `ext enable`, `ext disable`, `ext validate` | Nothing. The exit code is the result |
 
 ### Errors
 
@@ -248,10 +369,10 @@ A wrong command line prints the usage message of the argument parser and has the
 | Code | Name in JSON | Meaning |
 |---:|---|---|
 | 0 | | Success |
-| 1 | `error` | An error that has no other code, also a wrong command line, an SSH connection that cannot be made, a host key that is not trusted, and a check of `host doctor` that failed |
-| 2 | `not_found` | The item does not exist: no session has the identifier, no host has the name, or no daemon runs (`daemon status`) |
-| 3 | `timeout` | An operation did not complete in the permitted time: the daemon did not answer after its start, a session was not ready, or a command did not end |
-| 4 | `no_permission` | The user does not have permission, for example for the socket of the daemon, or a remote host accepted no key of the user |
+| 1 | `error` | An error that has no other code, also a wrong command line, an SSH connection that cannot be made, a host key that is not trusted, a check of `host doctor` that failed, a manifest that is not valid, and an extension that failed |
+| 2 | `not_found` | The item does not exist: no session has the identifier, no host has the name, no extension has the identifier, or no daemon runs (`daemon status`) |
+| 3 | `timeout` | An operation did not complete in the permitted time: the daemon did not answer after its start, a session was not ready, a command did not end, or an extension did not answer |
+| 4 | `no_permission` | The user does not have permission, for example for the socket of the daemon, or a remote host accepted no key of the user. Also: `ext install` without an approval of the permissions, and an extension that does not have a permission |
 | 5 | `version_mismatch` | The CLI and the daemon have no common protocol version. Update the older of the two |
 
 The codes 1 to 5 are the values of `ErrorCode` in the control protocol.
@@ -393,6 +514,71 @@ The command prints the document after the attach ended.
 
 The document goes to the standard output also when a check failed. The exit code is 1 then.
 
+### `ext ls`
+
+```json
+{"schema_version":1,"extensions":[{"id":"nomux.git","name":"Git","version":"1.0.0","state":"disabled","reason":"the user disabled the extension","permissions":{"fs":[],"process":["git"],"network":false,"scopes":["sessions:read"]}}]}
+```
+
+`extensions` is in the sequence of the identifiers. It is empty if no extension is installed.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | string | The identifier of the extension |
+| `name` | string | The name of the extension for a person |
+| `version` | string | The version of the extension |
+| `state` | string | `stopped`, `starting`, `running`, `failed`, `disabled` or `unknown` |
+| `reason` | string or `null` | For `disabled`: why the extension is disabled. For `failed`: the failure. `null` in the other states. The text is not stable |
+| `permissions.fs` | array of strings | The directories that the user approved |
+| `permissions.process` | array of strings | The programs that the user approved |
+| `permissions.network` | boolean | `true` if the user approved network connections |
+| `permissions.scopes` | array of strings | The scopes of host services that the user approved |
+
+### `ext install`, `ext enable` and `ext disable`
+
+```json
+{"schema_version":1,"extension":{"id":"nomux.git","name":"Git","version":"1.0.0","state":"stopped","reason":null,"permissions":{"fs":[],"process":["git"],"network":false,"scopes":["sessions:read"]}}}
+```
+
+`extension` is the object of `ext ls`, after the command. An `ext install` without an approval is an error: the standard error has the error document, with the permissions in its message.
+
+### `ext rm`
+
+```json
+{"schema_version":1,"removed_extension":"nomux.git"}
+```
+
+### `ext call`
+
+```json
+{"schema_version":1,"call":{"extension":"nomux.echo","method":"echo","payload_base64":"CgJoaQ=="}}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `call.extension` | string | The identifier of the extension |
+| `call.method` | string | The name of the method |
+| `call.payload_base64` | string | The payload of the result in Base64 (RFC 4648, with padding). The payload is bytes in the encoding of the method |
+
+If the extension answered with an error, the standard error has the error document.
+
+### `ext validate`
+
+```json
+{"schema_version":1,"manifest":{"valid":true,"id":"nomux.git","name":"Git","version":"1.0.0","permissions":{"fs":["${worktree}"],"process":["git"],"network":false,"scopes":["sessions:read"]}}}
+{"schema_version":1,"manifest":{"valid":false,"problems":[{"path":"extension.id","problem":"must have two or more parts with `.` between them, in 64 characters at most. A part starts with a lower-case letter and has only lower-case letters, digits and `-`"}]}}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `manifest.valid` | boolean | `true` if the manifest is valid. If it is `false`, the exit code is 1 |
+| `manifest.id`, `manifest.name`, `manifest.version` | string | The identity in the manifest. Only if `valid` is `true` |
+| `manifest.permissions` | object | The permissions that the manifest asks for, with the fields of `permissions` of `ext ls`. Only if `valid` is `true` |
+| `manifest.problems[].path` | string or `null` | The path of a field that is not valid. `null` if the file is not TOML |
+| `manifest.problems[].problem` | string | The rule that the field does not obey, in English for a person. The text is not stable |
+
+The document goes to the standard output also when the manifest is not valid.
+
 ### `version`
 
 ```json
@@ -415,14 +601,14 @@ A wrong command line is not a JSON document: the argument parser writes its usag
 
 ## Tests
 
-- `crates/nomux-cli/src/output/json.rs` has the full text of each document. A changed field fails these tests.
+- `crates/nomux-cli/src/output/json.rs` and `crates/nomux-cli/src/output/extension_json.rs` have the full text of each document. A changed field fails these tests.
 - `crates/nomux-cli/src/arguments.rs` has the rule for the arguments after `--` and `--cmd`. `crates/nomux-cli/src/attach` has the detach keys and the mode of the terminal, also after a panic.
-- `tests/` has the end-to-end tests that run the real `nomux`, `nomuxd` and `nomux-holder` and examine the exit codes. `tests/attach.rs` runs `nomux attach` in a pseudoterminal and examines the screen. `tests/remote_host.rs` runs the `host` commands and the commands with `--host` against an SSH server that the test starts.
+- `tests/` has the end-to-end tests that run the real `nomux`, `nomuxd` and `nomux-holder` and examine the exit codes. `tests/attach.rs` runs `nomux attach` in a pseudoterminal and examines the screen. `tests/remote_host.rs` runs the `host` commands and the commands with `--host` against an SSH server that the test starts. `tests/extensions.rs` runs the `ext` commands with a test extension that uses the extension SDK.
 
 ## Open points for the next versions
 
 - A setting for the detach keys, and `detach` without an identifier in a session.
 - The scrollback: an attach shows the screen of the session and not the lines that left it.
-- The other commands of the command reference.
+- The other commands of the command reference, also `ext update` and `ext pack`, and the installation of an extension from a registry.
 - `host doctor` for the local host, and a check of the agent hooks.
 - The context from `NOMUX_*` variables.
