@@ -4,7 +4,7 @@ use std::fmt;
 use std::io;
 use std::str::FromStr;
 
-use super::process_start_time::process_start_time;
+use super::process_record;
 
 /// A process ID together with the start time of the process.
 ///
@@ -40,8 +40,11 @@ impl ProcessIdentity {
     /// Returns an error if the operating system does not give the start
     /// time of a process that exists.
     pub fn of(pid: u32) -> io::Result<Option<Self>> {
-        let start_time = process_start_time(pid)?;
-        Ok(start_time.map(|start_time| Self { pid, start_time }))
+        let record = process_record::read(pid)?;
+        Ok(record.map(|record| Self {
+            pid,
+            start_time: record.start_time,
+        }))
     }
 }
 

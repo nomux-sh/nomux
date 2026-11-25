@@ -16,13 +16,14 @@
 //! each holder. The daemon needs no other source to find the holders.
 
 mod process_identity;
-mod process_start_time;
+mod process_record;
 mod scan;
 
 use std::env;
 use std::path::{Path, PathBuf};
 
 pub use process_identity::ProcessIdentity;
+pub use process_record::program_name;
 pub use scan::{DiscoveredHolder, HolderState, StaleReason, scan};
 
 use crate::SessionId;
