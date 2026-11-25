@@ -9,9 +9,10 @@ use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::term::{Config, TermMode};
 use alacritty_terminal::vte::ansi::{Processor, Timeout};
 
-use crate::osc::{Osc, OscScanner};
+use crate::osc::Osc;
 use crate::redraw;
 use crate::screen::Screen;
+use crate::sequence_scanner::SequenceScanner;
 use crate::size::Size;
 
 /// The OSC codes that the VT library handles: titles, colors, hyperlinks,
@@ -22,7 +23,7 @@ const LIBRARY_OSC_CODES: [u32; 14] = [0, 2, 4, 8, 10, 11, 12, 22, 50, 52, 104, 1
 pub struct Terminal {
     term: Term<VoidListener>,
     parser: Processor<ImmediateUpdate>,
-    osc_scanner: OscScanner,
+    scanner: SequenceScanner,
     size: Size,
 }
 
@@ -38,7 +39,7 @@ impl Terminal {
         Self {
             term: Term::new(config, &size, VoidListener),
             parser: Processor::new(),
-            osc_scanner: OscScanner::new(),
+            scanner: SequenceScanner::new(),
             size,
         }
     }
@@ -51,12 +52,29 @@ impl Terminal {
     /// A sequence without a decimal code or with more than 4096 bytes is
     /// ignored.
     pub fn feed(&mut self, bytes: &[u8], mut unhandled_osc: impl FnMut(Osc<'_>)) {
-        self.osc_scanner.scan(bytes, |osc| {
+        self.scanner.scan(bytes, |osc| {
             if !LIBRARY_OSC_CODES.contains(&osc.code) {
                 unhandled_osc(osc);
             }
         });
         self.parser.advance(&mut self.term, bytes);
+    }
+
+    /// The number of bytes at the end of the output that had no effect yet:
+    /// an escape sequence or a UTF-8 character that is not complete.
+    ///
+    /// The redraw sequence does not make the state of the parser. Thus a
+    /// client that gets the redraw sequence must then get the output from
+    /// the start of the incomplete tail, not from the end of the output. The
+    /// client then has the complete sequence, and the tail has no effect two
+    /// times.
+    ///
+    /// One case is not exact: a control character in a CSI sequence or in an
+    /// escape sequence has its effect immediately, and the client gets it a
+    /// second time with the tail.
+    #[must_use]
+    pub fn incomplete_tail(&self) -> usize {
+        self.scanner.incomplete_tail()
     }
 
     /// Changes the size of the screen.
@@ -81,7 +99,8 @@ impl Terminal {
     ///
     /// The sequence does not make the scroll region, the tab stops, the saved
     /// cursor, the character sets, the hyperlinks, the changed palette colors
-    /// and the marks of wrapped lines.
+    /// and the marks of wrapped lines. It does not make the state of the
+    /// parser: see [`incomplete_tail`](Self::incomplete_tail).
     ///
     /// The method needs `&mut self` because the VT library gives access to
     /// the hidden screen only through a swap. The terminal has the same state

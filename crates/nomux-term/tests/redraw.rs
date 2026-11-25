@@ -212,3 +212,27 @@ fn copy_has_the_new_size_after_a_resize() {
     };
     assert_eq!(copy.screen().cell(outside), None);
 }
+
+#[test]
+fn copy_from_each_cut_of_the_output_continues_at_the_incomplete_tail() {
+    // Text, colors, cursor addressing, wide and combining characters, OSC,
+    // DCS and APC strings, and the alternate screen.
+    let output = concat!(
+        "first\x1b[1;38;2;10;20;30m bold\x1b[0m\r\n",
+        "\x1b]0;title\x07\x1b]133;A\x1b\\$ caf\u{e9} \u{20ac} \u{4e2d}\u{6587} e\u{301}\r\n",
+        "\x1b[2;4H\x1b[48;5;200mcell\x1b[m\x1bPq#0~~\x1b\\\x1b_payload\x1b\\",
+        "\x1b[?1049h\x1b[3;2H\x1b[4:3;58;2;7;8;9mcurly\x1b[0m \u{1f600}\x1b[?2004h\x1b[5;20Hx",
+    )
+    .as_bytes();
+    let mut complete = new_terminal();
+    complete.feed(output, |_| {});
+
+    for cut in 0..=output.len() {
+        let mut source = new_terminal();
+        source.feed(&output[..cut], |_| {});
+        let mut copy = copy_of(&mut source);
+        copy.feed(&output[cut - source.incomplete_tail()..], |_| {});
+
+        assert_same_screen(&copy, &complete);
+    }
+}
