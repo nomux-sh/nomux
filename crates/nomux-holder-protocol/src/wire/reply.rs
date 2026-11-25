@@ -1,14 +1,20 @@
 //! The replies: the messages from the holder to the daemon after the hello.
 //!
 //! ```text
-//! kind    reply   payload
-//! 0x0002  Done    empty
-//! 0x0003  Error   error code (2)
-//! 0x0004  Status  state (1): 0 running, 1 exited, 2 killed by a signal;
-//!                 3 bytes of zero; exit code or signal number (4)
-//! 0x0005  Output  write position of the ring buffer (8)
-//! 0x0006  Redraw  position of the ring buffer (8), length of the redraw
-//!                 sequence (4); since protocol version 1.1
+//! kind    reply                  payload
+//! 0x0002  Done                   empty
+//! 0x0003  Error                  error code (2)
+//! 0x0004  Status                 state (1): 0 running, 1 exited, 2 killed by
+//!                                a signal; 3 bytes of zero; exit code or
+//!                                signal number (4)
+//! 0x0005  Output                 write position of the ring buffer (8)
+//! 0x0006  Redraw                 position of the ring buffer (8), length of
+//!                                the redraw sequence (4); since protocol
+//!                                version 1.1
+//! 0x0007  ProgramReports         revision (8), length of the encoded
+//!                                program reports (4); since protocol
+//!                                version 1.2
+//! 0x0008  ProgramReportsChanged  revision (8); since protocol version 1.2
 //! ```
 
 use super::frame::Frame;
@@ -19,13 +25,17 @@ const ERROR: u16 = 0x0003;
 const STATUS: u16 = 0x0004;
 const OUTPUT: u16 = 0x0005;
 const REDRAW: u16 = 0x0006;
+const PROGRAM_REPORTS: u16 = 0x0007;
+const PROGRAM_REPORTS_CHANGED: u16 = 0x0008;
 
 const STATE_RUNNING: u8 = 0;
 const STATE_EXITED: u8 = 1;
 const STATE_SIGNALED: u8 = 2;
 
-/// Why the holder did not do a request.
+/// Why the holder did not do a request. A later minor version of the
+/// protocol adds codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ErrorCode {
     /// The holder does not know the request kind.
     UnknownKind,
@@ -36,7 +46,8 @@ pub enum ErrorCode {
     LeaseRequired,
     /// The child command has ended.
     ChildExited,
-    /// This connection already waits for output.
+    /// This connection already has a wait request of this kind without a
+    /// reply.
     WaitPending,
     /// The operating system refused the operation.
     Failed,
@@ -102,8 +113,10 @@ pub enum ChildStatus {
     },
 }
 
-/// A message from the holder that answers one request.
+/// A message from the holder that answers one request. A later minor
+/// version of the protocol adds replies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Reply {
     /// The holder did the request.
     Done,
@@ -129,6 +142,25 @@ pub enum Reply {
         position: u64,
         /// The number of bytes of the redraw sequence.
         length: u32,
+    },
+    /// The answer to
+    /// [`Request::ProgramReports`](super::Request::ProgramReports). It comes
+    /// with a read-only descriptor of the shared memory that has the encoded
+    /// program reports, as `SCM_RIGHTS` ancillary data.
+    /// [`program_reports::read`](crate::program_reports::read) reads the
+    /// memory. Since protocol version 1.2.
+    ProgramReports {
+        /// The revision of the program reports in the memory.
+        revision: u64,
+        /// The number of bytes of the encoded program reports.
+        length: u32,
+    },
+    /// The answer to
+    /// [`Request::WaitProgramReports`](super::Request::WaitProgramReports).
+    /// Since protocol version 1.2.
+    ProgramReportsChanged {
+        /// The revision of the program reports now.
+        revision: u64,
     },
 }
 
@@ -160,6 +192,15 @@ impl Reply {
                 fields[..8].copy_from_slice(&position.to_le_bytes());
                 fields[8..].copy_from_slice(&length.to_le_bytes());
                 (REDRAW, &fields)
+            }
+            Self::ProgramReports { revision, length } => {
+                fields[..8].copy_from_slice(&revision.to_le_bytes());
+                fields[8..].copy_from_slice(&length.to_le_bytes());
+                (PROGRAM_REPORTS, &fields)
+            }
+            Self::ProgramReportsChanged { revision } => {
+                fields[..8].copy_from_slice(&revision.to_le_bytes());
+                (PROGRAM_REPORTS_CHANGED, &fields[..8])
             }
         };
         let frame = Frame {
@@ -198,6 +239,13 @@ impl Reply {
             REDRAW => Ok(Self::Redraw {
                 position: reader.u64()?,
                 length: reader.u32()?,
+            }),
+            PROGRAM_REPORTS => Ok(Self::ProgramReports {
+                revision: reader.u64()?,
+                length: reader.u32()?,
+            }),
+            PROGRAM_REPORTS_CHANGED => Ok(Self::ProgramReportsChanged {
+                revision: reader.u64()?,
             }),
             kind => Err(DecodeError::UnknownKind(kind)),
         }

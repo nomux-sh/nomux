@@ -1,8 +1,6 @@
 //! Answers a redraw request: the redraw sequence of the current screen goes
 //! to the daemon in new shared memory.
 
-use std::os::fd::OwnedFd;
-
 use nomux_holder_protocol::redraw;
 use nomux_holder_protocol::wire::{ErrorCode, Reply};
 
@@ -15,23 +13,16 @@ use crate::shared_memory;
 /// sequence are from the same moment.
 pub(super) fn answer(session: &mut Session) -> Answer {
     let position = session.redraw_position();
-    match share(&session.redraw_sequence()) {
+    let sequence = session.redraw_sequence();
+    if sequence.len() > redraw::MAX_LENGTH {
+        return Reply::Error(ErrorCode::RedrawTooLarge).into();
+    }
+    let write = |memory: &_, bytes: &_| redraw::write(memory, bytes);
+    match shared_memory::with_bytes("redraw", &sequence, write) {
         Ok((length, descriptor)) => Answer {
             reply: Reply::Redraw { position, length },
             descriptor: Some(descriptor),
         },
-        Err(code) => Reply::Error(code).into(),
+        Err(_) => Reply::Error(ErrorCode::Failed).into(),
     }
-}
-
-/// Copies `sequence` into new shared memory. Returns its length and the
-/// read-only descriptor of the memory.
-fn share(sequence: &[u8]) -> Result<(u32, OwnedFd), ErrorCode> {
-    let length = u32::try_from(sequence.len())
-        .ok()
-        .filter(|_| sequence.len() <= redraw::MAX_LENGTH)
-        .ok_or(ErrorCode::RedrawTooLarge)?;
-    let memory = shared_memory::create("redraw", sequence.len()).map_err(|_| ErrorCode::Failed)?;
-    redraw::write(&memory.writable, sequence).map_err(|_| ErrorCode::Failed)?;
-    Ok((length, memory.read_only))
 }

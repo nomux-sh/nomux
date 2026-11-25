@@ -6,7 +6,9 @@
 //! session in a new PTY, always reads the PTY, and writes the output to a
 //! ring buffer in shared memory that the daemon reads. It gives the same
 //! output to a VT parser, thus it knows the current screen and can give the
-//! redraw sequence of that screen to the daemon. The daemon controls
+//! redraw sequence of that screen to the daemon. It keeps what the programs
+//! report in the output: the program status (OSC 7501), the input line state
+//! (OSC 133) and the notifications (OSC 9, OSC 777). The daemon controls
 //! the holder through a Unix socket and finds it through its discovery
 //! files. The holder stays alive when the daemon stops, crashes or is
 //! updated, thus the session stays alive.
@@ -23,8 +25,7 @@
 //!
 //! # Status
 //!
-//! The holder does not have the journal, the checkpoint and the OSC parser
-//! yet. It ignores the OSC sequences that the VT parser does not handle.
+//! The holder does not have the journal and the checkpoint yet.
 
 mod arguments;
 mod child;
@@ -32,7 +33,9 @@ mod child_exit_signal;
 mod control;
 mod discovery_directory;
 mod event_loop;
+mod foreground_program;
 mod input_queue;
+mod program_reports;
 mod pty;
 mod session;
 mod shared_memory;

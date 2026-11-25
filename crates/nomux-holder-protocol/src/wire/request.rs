@@ -1,14 +1,18 @@
 //! The requests: the messages from the daemon to the holder.
 //!
 //! ```text
-//! kind    request       payload
-//! 0x0101  AcquireLease  empty
-//! 0x0102  Input         the bytes for the terminal
-//! 0x0103  Resize        rows (2), columns (2)
-//! 0x0104  Signal        signal (1): 1 hangup, 2 interrupt, 3 terminate, 4 kill
-//! 0x0105  Status        empty
-//! 0x0106  WaitOutput    write position that the daemon already has (8)
-//! 0x0107  Redraw        empty; since protocol version 1.1
+//! kind    request             payload
+//! 0x0101  AcquireLease        empty
+//! 0x0102  Input               the bytes for the terminal
+//! 0x0103  Resize              rows (2), columns (2)
+//! 0x0104  Signal              signal (1): 1 hangup, 2 interrupt, 3 terminate,
+//!                             4 kill
+//! 0x0105  Status              empty
+//! 0x0106  WaitOutput          write position that the daemon already has (8)
+//! 0x0107  Redraw              empty; since protocol version 1.1
+//! 0x0108  ProgramReports      empty; since protocol version 1.2
+//! 0x0109  WaitProgramReports  revision that the daemon already has (8);
+//!                             since protocol version 1.2
 //! ```
 
 use super::frame::Frame;
@@ -22,6 +26,8 @@ const SIGNAL: u16 = 0x0104;
 const STATUS: u16 = 0x0105;
 const WAIT_OUTPUT: u16 = 0x0106;
 const REDRAW: u16 = 0x0107;
+const PROGRAM_REPORTS: u16 = 0x0108;
+const WAIT_PROGRAM_REPORTS: u16 = 0x0109;
 
 /// A signal that the daemon can send to the child command.
 ///
@@ -60,8 +66,10 @@ impl ChildSignal {
     }
 }
 
-/// A message from the daemon to the holder.
+/// A message from the daemon to the holder. A later minor version of the
+/// protocol adds requests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Request<'payload> {
     /// Take the single-writer lease for this connection. The connection that
     /// had the lease loses it.
@@ -84,6 +92,16 @@ pub enum Request<'payload> {
     /// the ring buffer that the screen corresponds to. Since protocol version
     /// 1.1.
     Redraw,
+    /// Give the program reports: the program status records, the input line
+    /// state and the last notifications. Since protocol version 1.2.
+    ProgramReports,
+    /// Answer when the revision of the program reports is larger than
+    /// `after`, or when the child command has ended. Since protocol version
+    /// 1.2.
+    WaitProgramReports {
+        /// The revision that the daemon already has.
+        after: u64,
+    },
 }
 
 impl<'payload> Request<'payload> {
@@ -112,6 +130,11 @@ impl<'payload> Request<'payload> {
                 (WAIT_OUTPUT, &fields)
             }
             Self::Redraw => (REDRAW, &[]),
+            Self::ProgramReports => (PROGRAM_REPORTS, &[]),
+            Self::WaitProgramReports { after } => {
+                fields = after.to_le_bytes();
+                (WAIT_PROGRAM_REPORTS, &fields)
+            }
         };
         let frame = Frame {
             kind,
@@ -139,6 +162,10 @@ impl<'payload> Request<'payload> {
                 after: reader.u64()?,
             }),
             REDRAW => Ok(Self::Redraw),
+            PROGRAM_REPORTS => Ok(Self::ProgramReports),
+            WAIT_PROGRAM_REPORTS => Ok(Self::WaitProgramReports {
+                after: reader.u64()?,
+            }),
             kind => Err(DecodeError::UnknownKind(kind)),
         }
     }
@@ -153,6 +180,7 @@ impl<'payload> Request<'payload> {
             | Self::Status
             | Self::WaitOutput { .. } => 0,
             Self::Redraw => 1,
+            Self::ProgramReports | Self::WaitProgramReports { .. } => 2,
         }
     }
 }

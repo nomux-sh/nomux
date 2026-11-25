@@ -115,6 +115,67 @@ fn the_bytes_of_the_redraw_frames_do_not_change() {
 }
 
 #[test]
+fn the_bytes_of_the_program_reports_frames_do_not_change() {
+    let encoded = |request: Request<'_>| {
+        let mut frame = Vec::new();
+        request.encode(7, &mut frame);
+        frame
+    };
+    assert_eq!(
+        encoded(Request::ProgramReports),
+        [
+            8, 0, 0, 0, // length after this field
+            0x08, 0x01, // kind: ProgramReports request
+            0, 0, // flags
+            7, 0, 0, 0, // request identifier
+        ]
+    );
+    assert_eq!(
+        encoded(Request::WaitProgramReports {
+            after: 0x0102_0304_0506_0708
+        }),
+        [
+            16, 0, 0, 0, // length after this field
+            0x09, 0x01, // kind: WaitProgramReports request
+            0, 0, // flags
+            7, 0, 0, 0, // request identifier
+            8, 7, 6, 5, 4, 3, 2, 1, // revision that the daemon has
+        ]
+    );
+
+    let mut reports = Vec::new();
+    Reply::ProgramReports {
+        revision: 0x0102_0304_0506_0708,
+        length: 0x0A0B_0C0D,
+    }
+    .encode(7, &mut reports);
+    assert_eq!(
+        reports,
+        [
+            20, 0, 0, 0, // length after this field
+            0x07, 0x00, // kind: ProgramReports reply
+            0, 0, // flags
+            7, 0, 0, 0, // request identifier
+            8, 7, 6, 5, 4, 3, 2, 1, // revision
+            0x0D, 0x0C, 0x0B, 0x0A, // length of the encoded program reports
+        ]
+    );
+
+    let mut changed = Vec::new();
+    Reply::ProgramReportsChanged { revision: 9 }.encode(7, &mut changed);
+    assert_eq!(
+        changed,
+        [
+            16, 0, 0, 0, // length after this field
+            0x08, 0x00, // kind: ProgramReportsChanged reply
+            0, 0, // flags
+            7, 0, 0, 0, // request identifier
+            9, 0, 0, 0, 0, 0, 0, 0, // revision
+        ]
+    );
+}
+
+#[test]
 fn a_holder_supports_only_the_requests_of_its_minor_version() {
     let version_1_1 = ProtocolVersion { major: 1, minor: 1 };
     let later_minor = ProtocolVersion { major: 1, minor: 9 };
@@ -126,6 +187,12 @@ fn a_holder_supports_only_the_requests_of_its_minor_version() {
     assert!(later_minor.supports(&Request::Redraw));
     assert!(!later_major.supports(&Request::Status));
     assert!(ProtocolVersion::CURRENT.supports(&Request::Redraw));
+
+    let wait = Request::WaitProgramReports { after: 0 };
+    assert!(!version_1_1.supports(&Request::ProgramReports));
+    assert!(!version_1_1.supports(&wait));
+    assert!(ProtocolVersion::CURRENT.supports(&Request::ProgramReports));
+    assert!(ProtocolVersion::CURRENT.supports(&wait));
 }
 
 #[test]
@@ -140,6 +207,8 @@ fn each_message_decodes_to_the_value_that_was_encoded() {
             after: u64::MAX - 1,
         },
         Request::Redraw,
+        Request::ProgramReports,
+        Request::WaitProgramReports { after: 1 << 40 },
     ];
     let replies = [
         Reply::Done,
@@ -156,6 +225,11 @@ fn each_message_decodes_to_the_value_that_was_encoded() {
             length: 70_000,
         },
         Reply::Error(ErrorCode::RedrawTooLarge),
+        Reply::ProgramReports {
+            revision: 1 << 40,
+            length: 70_000,
+        },
+        Reply::ProgramReportsChanged { revision: 1 << 40 },
     ];
     let mut buffer = FrameBuffer::new();
     let mut encoded = Vec::new();

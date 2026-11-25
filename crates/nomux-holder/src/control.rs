@@ -2,6 +2,7 @@
 
 mod connection;
 mod peer;
+mod program_reports;
 mod redraw;
 mod server;
 
