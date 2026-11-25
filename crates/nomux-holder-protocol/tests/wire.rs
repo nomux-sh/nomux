@@ -17,12 +17,15 @@ fn feed(buffer: &mut FrameBuffer, bytes: &[u8]) {
 
 const VERSION_1_0: ProtocolVersion = ProtocolVersion { major: 1, minor: 0 };
 
+const VERSION_1_3: ProtocolVersion = ProtocolVersion { major: 1, minor: 3 };
+
 fn hello() -> Hello {
     Hello {
-        protocol: VERSION_1_0,
+        protocol: VERSION_1_3,
         session_id: "s1".parse().expect("the test helper works"),
         child_pid: 0x0102_0304,
         size: SIZE,
+        epoch: 0x0506_0708,
     }
 }
 
@@ -69,14 +72,71 @@ fn the_bytes_of_the_hello_frame_do_not_change() {
     assert_eq!(
         encoded,
         [
-            23, 0, 0, 0, // length after this field
+            27, 0, 0, 0, // length after this field
             0x01, 0x00, // kind: Hello
             0, 0, // flags
             0, 0, 0, 0, // request identifier
-            1, 0, 0, 0, // protocol version 1.0
+            1, 0, 3, 0, // protocol version 1.3
             4, 3, 2, 1, // process ID of the child
             40, 0, 100, 0, // rows, columns
             2, b's', b'1', // session identifier
+            8, 7, 6, 5, // epoch
+        ]
+    );
+}
+
+#[test]
+fn the_hello_of_a_holder_before_version_1_3_has_the_first_epoch() {
+    let frame = Frame {
+        kind: 0x0001,
+        request_id: 0,
+        payload: &[
+            1, 0, 2, 0, // protocol version 1.2
+            4, 3, 2, 1, // process ID of the child
+            40, 0, 100, 0, // rows, columns
+            2, b's', b'1', // session identifier
+        ],
+    };
+    let decoded = Hello::decode(frame).unwrap();
+    assert_eq!(decoded.epoch, 1);
+    assert_eq!(decoded.session_id, hello().session_id);
+}
+
+#[test]
+fn the_bytes_of_the_journal_frames_do_not_change() {
+    let mut request = Vec::new();
+    Request::JournalRead {
+        from: 0x0102_0304_0506_0708,
+        max_length: 0x0A0B_0C0D,
+    }
+    .encode(9, &mut request);
+    assert_eq!(
+        request,
+        [
+            20, 0, 0, 0, // length after this field
+            0x0A, 0x01, // kind: JournalRead
+            0, 0, // flags
+            9, 0, 0, 0, // request identifier
+            8, 7, 6, 5, 4, 3, 2, 1, // position of the first byte
+            0x0D, 0x0C, 0x0B, 0x0A, // largest number of bytes
+        ]
+    );
+
+    let mut reply = Vec::new();
+    Reply::Journal {
+        position: 0x0102_0304_0506_0708,
+        length: 0x0A0B_0C0D,
+    }
+    .encode(9, &mut reply);
+    assert_eq!(
+        reply,
+        [
+            20, 0, 0, 0, // length after this field
+            0x09, 0x00, // kind: Journal
+            0, 0, // flags
+            9, 0, 0, 0, // request identifier
+            8, 7, 6, 5, 4, 3, 2, 1, // position of the first byte
+            0x0D, 0x0C, 0x0B, 0x0A, // number of bytes
         ]
     );
 }
@@ -193,6 +253,14 @@ fn a_holder_supports_only_the_requests_of_its_minor_version() {
     assert!(!version_1_1.supports(&wait));
     assert!(ProtocolVersion::CURRENT.supports(&Request::ProgramReports));
     assert!(ProtocolVersion::CURRENT.supports(&wait));
+
+    let version_1_2 = ProtocolVersion { major: 1, minor: 2 };
+    let journal_read = Request::JournalRead {
+        from: 0,
+        max_length: 1,
+    };
+    assert!(!version_1_2.supports(&journal_read));
+    assert!(ProtocolVersion::CURRENT.supports(&journal_read));
 }
 
 #[test]
@@ -209,6 +277,10 @@ fn each_message_decodes_to_the_value_that_was_encoded() {
         Request::Redraw,
         Request::ProgramReports,
         Request::WaitProgramReports { after: 1 << 40 },
+        Request::JournalRead {
+            from: 1 << 40,
+            max_length: 70_000,
+        },
     ];
     let replies = [
         Reply::Done,
@@ -230,6 +302,10 @@ fn each_message_decodes_to_the_value_that_was_encoded() {
             length: 70_000,
         },
         Reply::ProgramReportsChanged { revision: 1 << 40 },
+        Reply::Journal {
+            position: 1 << 40,
+            length: 70_000,
+        },
     ];
     let mut buffer = FrameBuffer::new();
     let mut encoded = Vec::new();
@@ -325,7 +401,9 @@ fn fields_that_a_later_version_adds_to_a_payload_are_ignored() {
     .encode(&mut first_frame);
     feed(&mut buffer, &with_added_fields(&first_frame));
     let frame = buffer.next_frame().unwrap().unwrap();
-    assert_eq!(Hello::decode(frame).unwrap().session_id, hello().session_id);
+    let later = Hello::decode(frame).unwrap();
+    assert_eq!(later.session_id, hello().session_id);
+    assert_eq!(later.epoch, hello().epoch);
 }
 
 #[test]
@@ -371,6 +449,16 @@ fn a_payload_with_a_value_that_is_not_permitted_is_invalid() {
     };
     assert_eq!(
         Request::decode(unknown_signal),
+        Err(DecodeError::InvalidPayload)
+    );
+
+    let read_of_no_byte = Frame {
+        kind: 0x010A,
+        request_id: 1,
+        payload: &[0; 12],
+    };
+    assert_eq!(
+        Request::decode(read_of_no_byte),
         Err(DecodeError::InvalidPayload)
     );
 }

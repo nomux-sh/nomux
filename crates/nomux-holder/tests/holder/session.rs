@@ -9,7 +9,9 @@ use nomux_holder_protocol::wire::{
     ChildSignal, ChildStatus, ErrorCode, ProtocolVersion, Reply, Request, WindowSize,
 };
 
-use crate::fixture::{Client, HOLDER, Holder, holder_command, runtime_directory, wait_for};
+use crate::fixture::{
+    Client, HOLDER, Holder, holder_command, runtime_directory, state_directory, wait_for,
+};
 
 fn input(bytes: &[u8]) -> Request<'_> {
     Request::Input(bytes)
@@ -113,8 +115,10 @@ fn the_session_continues_after_the_starter_exits() {
     let runtime = runtime_directory();
     let _stop = StopHolders(runtime.path().to_owned());
     let starter = format!(
-        "'{HOLDER}' --session orphan --runtime-directory '{}' -- /bin/sh >/dev/null 2>&1 &",
-        runtime.path().display()
+        "'{HOLDER}' --session orphan --runtime-directory '{}' --state-directory '{}' \
+         -- /bin/sh >/dev/null 2>&1 &",
+        runtime.path().display(),
+        state_directory(runtime.path()).display()
     );
     let status = Command::new("/bin/sh").args(["-c", &starter]).status();
     assert!(status.unwrap().success());

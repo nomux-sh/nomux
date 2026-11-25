@@ -12,7 +12,7 @@ use nomux_holder_protocol::wire::{ChildStatus, ErrorCode, Frame, Hello, Reply, R
 
 use super::connection::{Answer, Connection, PendingWait, PendingWaits, send_answer};
 use super::peer::peer_user_id;
-use super::{program_reports, redraw};
+use super::{journal, program_reports, redraw};
 use crate::session::Session;
 
 /// The largest number of connections at one time. During a daemon update,
@@ -214,6 +214,9 @@ fn answer(
         }
         Ok(Request::Redraw) => return Some(redraw::answer(session)),
         Ok(Request::ProgramReports) => return Some(program_reports::answer(session)),
+        Ok(Request::JournalRead { from, max_length }) => {
+            return Some(journal::answer(session, from, max_length));
+        }
         Ok(Request::Status) => Reply::Status(session.status()),
         Ok(Request::Input(bytes)) => write_request(has_lease, || session.write_input(bytes)),
         Ok(Request::Resize(size)) => write_request(has_lease, || session.resize(size)),

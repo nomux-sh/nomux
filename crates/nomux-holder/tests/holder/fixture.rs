@@ -1,16 +1,17 @@
 //! Starts the real `nomux-holder` binary and talks to it as the daemon does:
-//! discovery files, control socket, ring buffer, redraw memory and program
-//! reports memory.
+//! discovery files, control socket, ring buffer, redraw memory, program
+//! reports memory and journal memory.
 
 use std::io::Write;
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use nomux_holder_protocol::discovery::{HolderState, scan};
+use nomux_holder_protocol::journal;
 use nomux_holder_protocol::program_reports::{self, ProgramReports};
 use nomux_holder_protocol::redraw;
 use nomux_holder_protocol::ring::RingReader;
@@ -29,6 +30,13 @@ pub(crate) fn runtime_directory() -> TempDir {
         .prefix("nomux")
         .tempdir_in("/tmp")
         .expect("the test helper works")
+}
+
+/// The state directory of the holders of a test. It is in the directory of
+/// the test, thus a test writes nothing to the state directory of the user.
+/// Its name is not a session identifier, thus it is no holder directory.
+pub(crate) fn state_directory(runtime: &Path) -> PathBuf {
+    runtime.join(".state")
 }
 
 pub(crate) fn wait_for<T>(what: &str, mut condition: impl FnMut() -> Option<T>) -> T {
@@ -52,6 +60,8 @@ pub(crate) fn holder_command(
     holder
         .args(["--session", session, "--runtime-directory"])
         .arg(runtime)
+        .arg("--state-directory")
+        .arg(state_directory(runtime))
         .args(options)
         .arg("--")
         .args(command)
@@ -72,6 +82,12 @@ impl Holder {
             .spawn()
             .expect("the test helper works");
         Self { process }
+    }
+
+    /// Stops the holder with `SIGKILL`: it cannot write or remove a file.
+    pub(crate) fn kill(&mut self) {
+        self.process.kill().expect("the test helper works");
+        self.process.wait().expect("the test helper works");
     }
 
     pub(crate) fn wait_for_exit(&mut self) -> ExitStatus {
@@ -222,6 +238,24 @@ impl Client {
         reports
     }
 
+    /// Asks for output bytes of the journal from `from` on. Returns the
+    /// position of the first byte and the bytes.
+    pub(crate) fn journal(&mut self, from: u64, max_length: u32) -> (u64, Vec<u8>) {
+        let reply = self.request(Request::JournalRead { from, max_length });
+        let Reply::Journal { position, length } = reply else {
+            panic!("not a journal range: {reply:?}");
+        };
+        if length == 0 {
+            return (position, Vec::new());
+        }
+        let memory = self
+            .descriptor
+            .take()
+            .expect("a journal reply with bytes has a descriptor");
+        let bytes = journal::read_range(memory, length).expect("the test helper works");
+        (position, bytes)
+    }
+
     pub(crate) fn type_line(&mut self, line: &str) {
         let reply = self.request(Request::Input(format!("{line}\n").as_bytes()));
         assert_eq!(reply, Reply::Done);
@@ -269,6 +303,24 @@ impl Client {
         let after = self.ring.position();
         let reply = self.request(Request::WaitOutput { after });
         assert!(matches!(reply, Reply::Output { .. }), "{reply:?}");
+    }
+
+    /// Waits until the holder wrote `position` bytes of output or more.
+    /// Does not read the ring buffer. Returns the write position.
+    pub(crate) fn wait_for_position(&mut self, position: u64) -> u64 {
+        let deadline = Instant::now() + TIMEOUT;
+        let mut after = 0;
+        loop {
+            let reply = self.request(Request::WaitOutput { after });
+            let Reply::Output { write_position } = reply else {
+                panic!("not an output position: {reply:?}");
+            };
+            if write_position >= position {
+                return write_position;
+            }
+            assert!(Instant::now() < deadline, "no position {position}");
+            after = write_position;
+        }
     }
 
     pub(crate) fn wait_for_exit_status(&mut self) -> ChildStatus {

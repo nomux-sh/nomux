@@ -9,6 +9,7 @@
 //!     10     2  columns
 //!     12     1  length of the session identifier
 //!     13     n  session identifier (ASCII)
+//!   13+n     4  epoch of the session; since protocol version 1.3
 //! ```
 //!
 //! The holder sends the read-only descriptor of the ring buffer together
@@ -22,6 +23,7 @@ use super::payload::{DecodeError, PayloadReader};
 use super::request::Request;
 use super::window_size::WindowSize;
 use crate::SessionId;
+use crate::journal::FIRST_EPOCH;
 
 const KIND: u16 = 0x0001;
 
@@ -37,7 +39,7 @@ pub struct ProtocolVersion {
 
 impl ProtocolVersion {
     /// The version that this crate implements.
-    pub const CURRENT: Self = Self { major: 1, minor: 2 };
+    pub const CURRENT: Self = Self { major: 1, minor: 3 };
 
     /// `true` if a holder of this version knows `request`. The daemon asks
     /// this before it sends a request that a minor version added.
@@ -58,13 +60,20 @@ pub struct Hello {
     pub child_pid: u32,
     /// The current size of the terminal window.
     pub size: WindowSize,
+    /// The epoch of the session: one continuous numbering of the output
+    /// positions. A holder of a protocol version before 1.3 does not send
+    /// it, and it then is [`FIRST_EPOCH`]. Since protocol version 1.3.
+    pub epoch: u32,
 }
+
+/// The minor version that added the epoch to the hello.
+const EPOCH_MINOR_VERSION: u16 = 3;
 
 impl Hello {
     /// Appends the encoded hello frame to `output`.
     pub fn encode(&self, output: &mut Vec<u8>) {
         let session_id = self.session_id.as_str().as_bytes();
-        let mut payload = Vec::with_capacity(13 + session_id.len());
+        let mut payload = Vec::with_capacity(17 + session_id.len());
         payload.extend_from_slice(&self.protocol.major.to_le_bytes());
         payload.extend_from_slice(&self.protocol.minor.to_le_bytes());
         payload.extend_from_slice(&self.child_pid.to_le_bytes());
@@ -72,6 +81,7 @@ impl Hello {
         // A session identifier has 64 bytes at most.
         payload.push(session_id.len().to_le_bytes()[0]);
         payload.extend_from_slice(session_id);
+        payload.extend_from_slice(&self.epoch.to_le_bytes());
         let frame = Frame {
             kind: KIND,
             request_id: 0,
@@ -106,11 +116,17 @@ impl Hello {
             .ok()
             .and_then(|text| text.parse().ok())
             .ok_or(HelloError::Invalid)?;
+        let epoch = if protocol.minor >= EPOCH_MINOR_VERSION {
+            reader.u32()?
+        } else {
+            FIRST_EPOCH
+        };
         Ok(Self {
             protocol,
             session_id,
             child_pid,
             size,
+            epoch,
         })
     }
 }

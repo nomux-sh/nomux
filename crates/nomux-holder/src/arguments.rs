@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use nomux_holder_protocol::SessionId;
 use nomux_holder_protocol::discovery::default_runtime_directory;
+use nomux_holder_protocol::session_state::default_state_directory;
 use nomux_holder_protocol::wire::WindowSize;
 use nomux_term::Size;
 
@@ -16,6 +17,8 @@ Usage: nomux-holder --session <identifier> [options] -- <command> [argument...]
 
 Options:
   --runtime-directory <path>  Directory for the discovery files (default: ~/.nomux/run)
+  --state-directory <path>    Directory for the session state: the journal and the
+                              session metadata (default: the state directory of the user)
   --working-directory <path>  Working directory of the command (default: the current one)
   --rows <number>             Rows of the terminal window (default: 24)
   --columns <number>          Columns of the terminal window (default: 80)
@@ -46,6 +49,7 @@ pub(crate) enum Invocation {
 pub(crate) struct SessionArguments {
     pub(crate) session_id: SessionId,
     pub(crate) runtime_directory: PathBuf,
+    pub(crate) state_directory: PathBuf,
     pub(crate) working_directory: Option<PathBuf>,
     pub(crate) size: WindowSize,
     pub(crate) ring_capacity: usize,
@@ -58,6 +62,7 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Inv
     let mut arguments = arguments.into_iter();
     let mut session_id = None;
     let mut runtime_directory = None;
+    let mut state_directory = None;
     let mut working_directory = None;
     let mut size = DEFAULT_SIZE;
     let mut ring_capacity = DEFAULT_RING_CAPACITY;
@@ -80,6 +85,7 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Inv
             "--" => break,
             "--session" => session_id = Some(parse_value(option, &value()?)?),
             "--runtime-directory" => runtime_directory = Some(PathBuf::from(value()?)),
+            "--state-directory" => state_directory = Some(PathBuf::from(value()?)),
             "--working-directory" => working_directory = Some(PathBuf::from(value()?)),
             "--rows" => size.rows = parse_value(option, &value()?)?,
             "--columns" => size.columns = parse_value(option, &value()?)?,
@@ -111,6 +117,9 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Inv
         runtime_directory: runtime_directory
             .or_else(default_runtime_directory)
             .ok_or("--runtime-directory is necessary when HOME is not set")?,
+        state_directory: state_directory
+            .or_else(default_state_directory)
+            .ok_or("--state-directory is necessary when HOME is not set")?,
         working_directory,
         size,
         ring_capacity,

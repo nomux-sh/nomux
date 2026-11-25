@@ -15,6 +15,8 @@
 //!                                program reports (4); since protocol
 //!                                version 1.2
 //! 0x0008  ProgramReportsChanged  revision (8); since protocol version 1.2
+//! 0x0009  Journal                position of the first byte (8), number of
+//!                                bytes (4); since protocol version 1.3
 //! ```
 
 use super::frame::Frame;
@@ -27,6 +29,7 @@ const OUTPUT: u16 = 0x0005;
 const REDRAW: u16 = 0x0006;
 const PROGRAM_REPORTS: u16 = 0x0007;
 const PROGRAM_REPORTS_CHANGED: u16 = 0x0008;
+const JOURNAL: u16 = 0x0009;
 
 const STATE_RUNNING: u8 = 0;
 const STATE_EXITED: u8 = 1;
@@ -162,6 +165,20 @@ pub enum Reply {
         /// The revision of the program reports now.
         revision: u64,
     },
+    /// The answer to [`Request::JournalRead`](super::Request::JournalRead).
+    /// If `length` is not zero, it comes with a read-only descriptor of the
+    /// shared memory that has the output bytes, as `SCM_RIGHTS` ancillary
+    /// data. [`journal::read_range`](crate::journal::read_range) reads the
+    /// memory. Since protocol version 1.3.
+    Journal {
+        /// The position of the first byte of the reply. It is the position
+        /// of the request, or the next position that the journal has: the
+        /// journal has no byte between the two.
+        position: u64,
+        /// The number of bytes. Zero if the journal has no byte at the
+        /// position of the request or after it.
+        length: u32,
+    },
 }
 
 impl Reply {
@@ -201,6 +218,11 @@ impl Reply {
             Self::ProgramReportsChanged { revision } => {
                 fields[..8].copy_from_slice(&revision.to_le_bytes());
                 (PROGRAM_REPORTS_CHANGED, &fields[..8])
+            }
+            Self::Journal { position, length } => {
+                fields[..8].copy_from_slice(&position.to_le_bytes());
+                fields[8..].copy_from_slice(&length.to_le_bytes());
+                (JOURNAL, &fields)
             }
         };
         let frame = Frame {
@@ -246,6 +268,10 @@ impl Reply {
             }),
             PROGRAM_REPORTS_CHANGED => Ok(Self::ProgramReportsChanged {
                 revision: reader.u64()?,
+            }),
+            JOURNAL => Ok(Self::Journal {
+                position: reader.u64()?,
+                length: reader.u32()?,
             }),
             kind => Err(DecodeError::UnknownKind(kind)),
         }

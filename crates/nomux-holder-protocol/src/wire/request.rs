@@ -13,6 +13,8 @@
 //! 0x0108  ProgramReports      empty; since protocol version 1.2
 //! 0x0109  WaitProgramReports  revision that the daemon already has (8);
 //!                             since protocol version 1.2
+//! 0x010A  JournalRead         position of the first byte (8), largest number
+//!                             of bytes (4); since protocol version 1.3
 //! ```
 
 use super::frame::Frame;
@@ -28,6 +30,7 @@ const WAIT_OUTPUT: u16 = 0x0106;
 const REDRAW: u16 = 0x0107;
 const PROGRAM_REPORTS: u16 = 0x0108;
 const WAIT_PROGRAM_REPORTS: u16 = 0x0109;
+const JOURNAL_READ: u16 = 0x010A;
 
 /// A signal that the daemon can send to the child command.
 ///
@@ -102,6 +105,16 @@ pub enum Request<'payload> {
         /// The revision that the daemon already has.
         after: u64,
     },
+    /// Give output bytes of the session from the journal: the bytes that
+    /// the ring buffer has no more. Since protocol version 1.3.
+    JournalRead {
+        /// The position of the first byte that the daemon asks for.
+        from: u64,
+        /// The largest number of bytes of the reply. The holder gives
+        /// [`journal::MAX_RANGE_LENGTH`](crate::journal::MAX_RANGE_LENGTH)
+        /// bytes at most. Zero is not valid.
+        max_length: u32,
+    },
 }
 
 impl<'payload> Request<'payload> {
@@ -112,7 +125,7 @@ impl<'payload> Request<'payload> {
     /// Panics if the bytes of an [`Request::Input`] are longer than
     /// [`MAX_PAYLOAD_LENGTH`](super::MAX_PAYLOAD_LENGTH).
     pub fn encode(&self, request_id: u32, output: &mut Vec<u8>) {
-        let mut fields = [0u8; 8];
+        let mut fields = [0u8; 12];
         let (kind, payload): (u16, &[u8]) = match *self {
             Self::AcquireLease => (ACQUIRE_LEASE, &[]),
             Self::Input(bytes) => (INPUT, bytes),
@@ -126,14 +139,19 @@ impl<'payload> Request<'payload> {
             }
             Self::Status => (STATUS, &[]),
             Self::WaitOutput { after } => {
-                fields = after.to_le_bytes();
-                (WAIT_OUTPUT, &fields)
+                fields[..8].copy_from_slice(&after.to_le_bytes());
+                (WAIT_OUTPUT, &fields[..8])
             }
             Self::Redraw => (REDRAW, &[]),
             Self::ProgramReports => (PROGRAM_REPORTS, &[]),
             Self::WaitProgramReports { after } => {
-                fields = after.to_le_bytes();
-                (WAIT_PROGRAM_REPORTS, &fields)
+                fields[..8].copy_from_slice(&after.to_le_bytes());
+                (WAIT_PROGRAM_REPORTS, &fields[..8])
+            }
+            Self::JournalRead { from, max_length } => {
+                fields[..8].copy_from_slice(&from.to_le_bytes());
+                fields[8..].copy_from_slice(&max_length.to_le_bytes());
+                (JOURNAL_READ, &fields)
             }
         };
         let frame = Frame {
@@ -166,6 +184,14 @@ impl<'payload> Request<'payload> {
             WAIT_PROGRAM_REPORTS => Ok(Self::WaitProgramReports {
                 after: reader.u64()?,
             }),
+            JOURNAL_READ => {
+                let from = reader.u64()?;
+                let max_length = reader.u32()?;
+                if max_length == 0 {
+                    return Err(DecodeError::InvalidPayload);
+                }
+                Ok(Self::JournalRead { from, max_length })
+            }
             kind => Err(DecodeError::UnknownKind(kind)),
         }
     }
@@ -181,6 +207,7 @@ impl<'payload> Request<'payload> {
             | Self::WaitOutput { .. } => 0,
             Self::Redraw => 1,
             Self::ProgramReports | Self::WaitProgramReports { .. } => 2,
+            Self::JournalRead { .. } => 3,
         }
     }
 }
