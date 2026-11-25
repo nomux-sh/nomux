@@ -1,0 +1,59 @@
+# Configuration for `cargo deny check`.
+# Reference: https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+# The release targets of the core. Dependencies for other targets are not checked.
+targets = [
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+all-features = true
+
+[advisories]
+# Each advisory in the RustSec database fails the check: vulnerabilities,
+# unmaintained crates and unsound crates. Add an `ignore` entry only with a
+# reason and a link to the tracking issue.
+unmaintained = "all"
+yanked = "deny"
+ignore = []
+
+[licenses]
+# A license that is not in this list fails the check. This rejects GPL, AGPL
+# and LGPL, and each other license that is not permissive enough for
+# `MIT OR Apache-2.0` binaries. Add a license only when a real dependency
+# needs it.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "MPL-2.0",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.93
+# The list above is the license policy, not a record of the current
+# dependencies. Do not report an entry that no dependency uses yet.
+unused-allowed-license = "allow"
+
+[licenses.private]
+# Workspace crates have `publish = false`. Check their license too.
+ignore = false
+
+[bans]
+multiple-versions = "warn"
+# A dependency must state a version. Path dependencies in the workspace are exempt.
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+# Dependencies come from crates.io only. A git dependency needs an entry in `allow-git`.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
