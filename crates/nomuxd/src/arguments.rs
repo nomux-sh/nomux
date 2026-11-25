@@ -17,6 +17,9 @@ Options:
 
 Environment:
   NOMUX_LOG  The log level: error, warn (default), info, debug or trace
+  NOMUX_EXTENSION_IDLE_SECONDS
+             The time without a call after which the daemon stops the process
+             of an extension (default: 60)
 ";
 
 /// The name of the option that [`Invocation::Detach`] gives to the daemon

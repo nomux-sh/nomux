@@ -1,9 +1,13 @@
 //! The request handlers: each one changes a request of the protocol into a
 //! call of the daemon and the result into a response of the protocol.
 
+mod ext;
 mod host;
 mod session;
 
+use std::sync::Arc;
+
+use nomux_ext_host::ExtensionHost;
 use nomux_proto::wire::v1::{Error, ErrorCode, request, response};
 
 use crate::attachment::Attachment;
@@ -13,7 +17,8 @@ use crate::shutdown::Shutdown;
 
 /// What the handlers of all connections share.
 pub(crate) struct Context {
-    pub(crate) sessions: Sessions,
+    pub(crate) sessions: Arc<Sessions>,
+    pub(crate) extensions: ExtensionHost,
     pub(crate) shutdown: Shutdown,
     pub(crate) in_flight_requests: InFlightRequests,
 }
@@ -48,6 +53,12 @@ pub(crate) async fn handle(body: request::Body, context: &Context) -> Outcome {
         request::Body::SessionDetach(request) => session::detach(&request, context),
         request::Body::SessionInput(request) => session::input(request, context).await,
         request::Body::SessionResize(request) => session::resize(&request, context).await,
+        request::Body::ExtList(_) => Ok(ext::list(context)),
+        request::Body::ExtInspect(request) => ext::inspect(request).await,
+        request::Body::ExtInstall(request) => ext::install(request, context).await,
+        request::Body::ExtRemove(request) => ext::remove(&request, context).await,
+        request::Body::ExtSetEnabled(request) => ext::set_enabled(&request, context).await,
+        request::Body::ExtCall(request) => ext::call(request, context).await,
     };
     Outcome::Respond(result.unwrap_or_else(response::Result::Error))
 }

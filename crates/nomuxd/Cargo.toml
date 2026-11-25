@@ -13,9 +13,11 @@ publish.workspace = true
 [dependencies]
 getrandom.workspace = true
 nomux-core.workspace = true
+nomux-ext-host.workspace = true
 nomux-holder-protocol.workspace = true
 nomux-proto.workspace = true
 nomux-transport.workspace = true
+prost.workspace = true
 rustix = { workspace = true, features = ["process"] }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt", "signal", "sync", "time"] }
 tracing.workspace = true
