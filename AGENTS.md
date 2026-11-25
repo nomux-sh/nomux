@@ -10,6 +10,7 @@ Rules for coding agents and for people who work in this repository. `CLAUDE.md` 
 |---|---|
 | `crates/nomux-core` | Types that more than one crate uses. Now: the `--version` output of the three binaries. |
 | `crates/nomux-term` | Abstraction over the VT library. |
+| `crates/nomux-holder-protocol` | Contract between a holder and the daemon: control messages, ring buffer layout, discovery files. |
 | `crates/nomux-holder` | Binary `nomux-holder`: owns the PTY of one session. |
 | `crates/nomux-transport` | Unix socket, SSH channels, QUIC streams, credit windows. |
 | `crates/nomux-status` | Agent status resolver, rules, aggregation. |
@@ -27,8 +28,9 @@ Rules for coding agents and for people who work in this repository. `CLAUDE.md` 
 
 ## Rules for this repository
 
-- `nomux-holder` has no async runtime. Do not give it a dependency on `tokio` or on a crate that starts a runtime. The same rule applies to the crates that the holder uses: `nomux-core` and `nomux-term`.
+- `nomux-holder` has no async runtime. Do not give it a dependency on `tokio` or on a crate that starts a runtime. The same rule applies to the crates that the holder uses: `nomux-core`, `nomux-holder-protocol` and `nomux-term`.
 - Do not write `unsafe` code. The workspace lints deny it. If a crate must use it, get agreement in an issue first, then permit it for one item with `#[expect(unsafe_code)]` and a `SAFETY` comment.
+- A holder that runs is never replaced. A change to `nomux-holder-protocol` must be an addition that an older holder and a newer daemon can use together. [docs/holder.md](docs/holder.md) has the compatibility rules.
 - Obey the dependency direction in [docs/architecture.md](docs/architecture.md). `nomux-core` depends on no other nomux crate. A client does not talk to a holder.
 - Add a dependency to a crate only when its code uses it. `cargo machete` fails on an unused dependency.
 - Add a license to `deny.toml` only when a real dependency needs it.

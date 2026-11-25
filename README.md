@@ -8,7 +8,7 @@ This repository is a part of [nomux](https://github.com/nomux-sh), a native and 
 
 In development. Versions earlier than 1.0.0 are pre-releases: interfaces can change between minor versions.
 
-The repository now has the Cargo workspace, the developer tools and CI. The three binaries print their version and do nothing else. The holder, the daemon and the CLI commands are the next work: refer to the [roadmap](https://github.com/nomux-sh/docs/blob/main/src/content/docs/project/roadmap.md).
+The repository now has the Cargo workspace, the developer tools, CI and the first version of the holder ([docs/holder.md](docs/holder.md)). The daemon and the CLI print their version and do nothing else. The daemon, the rest of the holder and the CLI commands are the next work: refer to the [roadmap](https://github.com/nomux-sh/docs/blob/main/src/content/docs/project/roadmap.md).
 
 ## Layout
 
@@ -16,7 +16,8 @@ The repository now has the Cargo workspace, the developer tools and CI. The thre
 |---|---|---|---|
 | `crates/nomux-core` | library | Shared types, errors, configuration | in use: the version output of the binaries |
 | `crates/nomux-term` | library | Thin abstraction over the VT library | structure only |
-| `crates/nomux-holder` | binary `nomux-holder` | Session holder: owns the PTY of one session. No async runtime | prints its version only |
+| `crates/nomux-holder-protocol` | library | Contract between a holder and the daemon: control messages, ring buffer layout, discovery files | in use by the holder |
+| `crates/nomux-holder` | binary `nomux-holder` | Session holder: owns the PTY of one session. No async runtime | first version: PTY, ring buffer, control socket, discovery files |
 | `crates/nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows | structure only |
 | `crates/nomux-status` | library | Agent status resolver, rules, aggregation | structure only |
 | `crates/nomux-ext-host` | library | Extension host of the daemon | structure only |
