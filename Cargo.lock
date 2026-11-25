@@ -383,6 +383,7 @@ dependencies = [
  "libc",
  "nomux-core",
  "nomux-holder-protocol",
+ "nomux-term",
  "rustix",
  "signal-hook",
  "tempfile",

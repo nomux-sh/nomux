@@ -96,6 +96,12 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Inv
     if size.rows == 0 || size.columns == 0 {
         return Err("--rows and --columns must be larger than 0".to_owned());
     }
+    if size.cells() > WindowSize::MAX_CELLS {
+        return Err(format!(
+            "--rows times --columns must be {} at most",
+            WindowSize::MAX_CELLS
+        ));
+    }
     Ok(Invocation::Session(SessionArguments {
         session_id: session_id.ok_or("--session is necessary")?,
         runtime_directory: runtime_directory

@@ -15,9 +15,11 @@ fn feed(buffer: &mut FrameBuffer, bytes: &[u8]) {
     buffer.advance(bytes.len());
 }
 
+const VERSION_1_0: ProtocolVersion = ProtocolVersion { major: 1, minor: 0 };
+
 fn hello() -> Hello {
     Hello {
-        protocol: ProtocolVersion::CURRENT,
+        protocol: VERSION_1_0,
         session_id: "s1".parse().expect("the test helper works"),
         child_pid: 0x0102_0304,
         size: SIZE,
@@ -80,6 +82,53 @@ fn the_bytes_of_the_hello_frame_do_not_change() {
 }
 
 #[test]
+fn the_bytes_of_the_redraw_frames_do_not_change() {
+    let mut request = Vec::new();
+    Request::Redraw.encode(7, &mut request);
+    assert_eq!(
+        request,
+        [
+            8, 0, 0, 0, // length after this field
+            0x07, 0x01, // kind: Redraw request
+            0, 0, // flags
+            7, 0, 0, 0, // request identifier
+        ]
+    );
+
+    let mut reply = Vec::new();
+    Reply::Redraw {
+        position: 0x0102_0304_0506_0708,
+        length: 0x0A0B_0C0D,
+    }
+    .encode(7, &mut reply);
+    assert_eq!(
+        reply,
+        [
+            20, 0, 0, 0, // length after this field
+            0x06, 0x00, // kind: Redraw reply
+            0, 0, // flags
+            7, 0, 0, 0, // request identifier
+            8, 7, 6, 5, 4, 3, 2, 1, // position of the ring buffer
+            0x0D, 0x0C, 0x0B, 0x0A, // length of the redraw sequence
+        ]
+    );
+}
+
+#[test]
+fn a_holder_supports_only_the_requests_of_its_minor_version() {
+    let version_1_1 = ProtocolVersion { major: 1, minor: 1 };
+    let later_minor = ProtocolVersion { major: 1, minor: 9 };
+    let later_major = ProtocolVersion { major: 2, minor: 1 };
+
+    assert!(VERSION_1_0.supports(&Request::Status));
+    assert!(!VERSION_1_0.supports(&Request::Redraw));
+    assert!(version_1_1.supports(&Request::Redraw));
+    assert!(later_minor.supports(&Request::Redraw));
+    assert!(!later_major.supports(&Request::Status));
+    assert!(ProtocolVersion::CURRENT.supports(&Request::Redraw));
+}
+
+#[test]
 fn each_message_decodes_to_the_value_that_was_encoded() {
     let requests = [
         Request::AcquireLease,
@@ -90,6 +139,7 @@ fn each_message_decodes_to_the_value_that_was_encoded() {
         Request::WaitOutput {
             after: u64::MAX - 1,
         },
+        Request::Redraw,
     ];
     let replies = [
         Reply::Done,
@@ -101,6 +151,11 @@ fn each_message_decodes_to_the_value_that_was_encoded() {
         Reply::Output {
             write_position: 1 << 40,
         },
+        Reply::Redraw {
+            position: 1 << 40,
+            length: 70_000,
+        },
+        Reply::Error(ErrorCode::RedrawTooLarge),
     ];
     let mut buffer = FrameBuffer::new();
     let mut encoded = Vec::new();

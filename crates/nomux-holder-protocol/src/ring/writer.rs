@@ -9,7 +9,7 @@ use super::layout::{
     HEADER_LENGTH, LAYOUT_VERSION, LAYOUT_VERSION_OFFSET, MAGIC, MAGIC_OFFSET, is_valid_capacity,
     region_length,
 };
-use super::mapping::Mapping;
+use crate::mapping::Mapping;
 
 /// Writes terminal output into the ring buffer.
 ///

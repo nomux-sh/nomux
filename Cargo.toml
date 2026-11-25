@@ -19,6 +19,7 @@ publish = false
 nomux-client = { path = "crates/nomux-client", version = "0.0.0" }
 nomux-core = { path = "crates/nomux-core", version = "0.0.0" }
 nomux-holder-protocol = { path = "crates/nomux-holder-protocol", version = "0.0.0" }
+nomux-term = { path = "crates/nomux-term", version = "0.0.0" }
 nomux-transport = { path = "crates/nomux-transport", version = "0.0.0" }
 
 clap = { version = "4.6.10", features = ["derive"] }

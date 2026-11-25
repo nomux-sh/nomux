@@ -10,8 +10,9 @@ use std::path::Path;
 
 use nomux_holder_protocol::wire::{ChildStatus, ErrorCode, Frame, Hello, Reply, Request};
 
-use super::connection::{Connection, PendingWait, send_reply};
+use super::connection::{Answer, Connection, PendingWait, send_answer};
 use super::peer::peer_user_id;
+use super::redraw;
 use crate::session::Session;
 
 /// The largest number of connections at one time. During a daemon update,
@@ -115,12 +116,12 @@ impl ControlServer {
             else {
                 continue;
             };
-            let reply = Reply::Output { write_position };
-            let sent = send_reply(
+            let answer = Reply::Output { write_position }.into();
+            let sent = send_answer(
                 &connection.stream,
                 &mut connection.outgoing,
                 wait.request_id,
-                reply,
+                &answer,
             );
             if sent.is_err() {
                 self.close(slot);
@@ -157,11 +158,11 @@ fn serve_connection(
         let Some(frame) = frame else {
             return Ok(exit_status_delivered);
         };
-        let reply = answer(frame, slot, lease, pending_wait, session);
-        if let Some(reply) = reply {
-            send_reply(stream, outgoing, frame.request_id, reply)?;
+        let answer = answer(frame, slot, lease, pending_wait, session);
+        if let Some(answer) = answer {
+            send_answer(stream, outgoing, frame.request_id, &answer)?;
             exit_status_delivered |=
-                matches!(reply, Reply::Status(status) if status != ChildStatus::Running);
+                matches!(answer.reply, Reply::Status(status) if status != ChildStatus::Running);
         }
     }
 }
@@ -173,7 +174,7 @@ fn answer(
     lease: &mut Option<usize>,
     pending_wait: &mut Option<PendingWait>,
     session: &mut Session,
-) -> Option<Reply> {
+) -> Option<Answer> {
     let has_lease = *lease == Some(slot);
     let reply = match Request::decode(frame) {
         Err(error) => Reply::Error(error.into()),
@@ -182,14 +183,15 @@ fn answer(
             Reply::Done
         }
         Ok(Request::WaitOutput { after }) => {
-            return wait_output(pending_wait, frame.request_id, after, session);
+            return wait_output(pending_wait, frame.request_id, after, session).map(Answer::from);
         }
+        Ok(Request::Redraw) => return Some(redraw::answer(session)),
         Ok(Request::Status) => Reply::Status(session.status()),
         Ok(Request::Input(bytes)) => write_request(has_lease, || session.write_input(bytes)),
         Ok(Request::Resize(size)) => write_request(has_lease, || session.resize(size)),
         Ok(Request::Signal(signal)) => write_request(has_lease, || session.signal_child(signal)),
     };
-    Some(reply)
+    Some(reply.into())
 }
 
 /// Answers immediately if the daemon does not have all the output, or if

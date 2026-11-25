@@ -19,6 +19,7 @@ use std::fmt;
 
 use super::frame::Frame;
 use super::payload::{DecodeError, PayloadReader};
+use super::request::Request;
 use super::window_size::WindowSize;
 use crate::SessionId;
 
@@ -36,7 +37,14 @@ pub struct ProtocolVersion {
 
 impl ProtocolVersion {
     /// The version that this crate implements.
-    pub const CURRENT: Self = Self { major: 1, minor: 0 };
+    pub const CURRENT: Self = Self { major: 1, minor: 1 };
+
+    /// `true` if a holder of this version knows `request`. The daemon asks
+    /// this before it sends a request that a minor version added.
+    #[must_use]
+    pub fn supports(self, request: &Request<'_>) -> bool {
+        self.major == Self::CURRENT.major && self.minor >= request.minor_version()
+    }
 }
 
 /// What a holder says about itself when a connection opens.

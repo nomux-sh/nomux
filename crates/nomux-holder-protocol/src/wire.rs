@@ -5,6 +5,10 @@
 //! that, the daemon sends a [`Request`] and the holder answers each request
 //! with one [`Reply`] that has the same request identifier.
 //!
+//! Two messages come with a file descriptor as `SCM_RIGHTS` ancillary data:
+//! the hello (the ring buffer) and [`Reply::Redraw`] (the redraw sequence).
+//! A descriptor arrives with the first byte of its message.
+//!
 //! The encoding is written by hand and has fixed little-endian fields. The
 //! rules that keep an old holder compatible with a new daemon are:
 //!
@@ -14,6 +18,8 @@
 //!   [`ErrorCode::UnknownKind`]. The connection stays open.
 //! - The frame header and the first four bytes of the hello payload (the
 //!   protocol version) never change.
+//! - Each addition increases the minor version. The daemon sends a request
+//!   only if [`ProtocolVersion::supports`] it.
 
 mod descriptor;
 mod frame;

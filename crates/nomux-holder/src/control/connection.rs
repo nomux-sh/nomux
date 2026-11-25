@@ -1,7 +1,7 @@
 //! One connection of the daemon.
 
 use std::io::{self, Read, Write};
-use std::os::fd::BorrowedFd;
+use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 
 use nomux_holder_protocol::wire::{FrameBuffer, Reply, send_with_descriptor};
@@ -55,19 +55,37 @@ impl Connection {
     }
 }
 
-/// Writes one reply to the socket of a connection.
+/// A reply, and the descriptor that goes with it as ancillary data.
+pub(super) struct Answer {
+    pub(super) reply: Reply,
+    pub(super) descriptor: Option<OwnedFd>,
+}
+
+impl From<Reply> for Answer {
+    fn from(reply: Reply) -> Self {
+        Self {
+            reply,
+            descriptor: None,
+        }
+    }
+}
+
+/// Writes one answer to the socket of a connection.
 ///
 /// A reply is small. If the socket does not take it in one write, the daemon
 /// does not read its replies, and the connection must close.
-pub(super) fn send_reply(
+pub(super) fn send_answer(
     mut stream: &UnixStream,
     outgoing: &mut Vec<u8>,
     request_id: u32,
-    reply: Reply,
+    answer: &Answer,
 ) -> io::Result<()> {
     outgoing.clear();
-    reply.encode(request_id, outgoing);
-    let written = stream.write(outgoing)?;
+    answer.reply.encode(request_id, outgoing);
+    let written = match &answer.descriptor {
+        Some(descriptor) => send_with_descriptor(stream, outgoing, descriptor.as_fd())?,
+        None => stream.write(outgoing)?,
+    };
     if written != outgoing.len() {
         return Err(io::ErrorKind::WriteZero.into());
     }

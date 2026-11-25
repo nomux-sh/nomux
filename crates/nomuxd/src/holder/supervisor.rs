@@ -156,8 +156,9 @@ impl Supervisor {
                     Reply::Status(_) => return Ok(Served::SessionEnded),
                     Reply::Error(ErrorCode::LeaseRequired) => return Ok(Served::LeaseLost),
                     // The command ended before the signal. The reply to
-                    // `WaitOutput` says so too.
-                    Reply::Done | Reply::Error(ErrorCode::ChildExited) => {}
+                    // `WaitOutput` says so too. This task sends no `Redraw`
+                    // request, thus it gets no `Redraw` reply.
+                    Reply::Done | Reply::Redraw { .. } | Reply::Error(ErrorCode::ChildExited) => {}
                     Reply::Error(code) => {
                         warn!(session = %self.session_id, ?code, "the holder refused a request");
                         self.answer_kill_waiters(Err(KillError::Refused(code)));
