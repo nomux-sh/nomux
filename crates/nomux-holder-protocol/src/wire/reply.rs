@@ -1,0 +1,173 @@
+//! The replies: the messages from the holder to the daemon after the hello.
+//!
+//! ```text
+//! kind    reply   payload
+//! 0x0002  Done    empty
+//! 0x0003  Error   error code (2)
+//! 0x0004  Status  state (1): 0 running, 1 exited, 2 killed by a signal;
+//!                 3 bytes of zero; exit code or signal number (4)
+//! 0x0005  Output  write position of the ring buffer (8)
+//! ```
+
+use super::frame::Frame;
+use super::payload::{DecodeError, PayloadReader};
+
+const DONE: u16 = 0x0002;
+const ERROR: u16 = 0x0003;
+const STATUS: u16 = 0x0004;
+const OUTPUT: u16 = 0x0005;
+
+const STATE_RUNNING: u8 = 0;
+const STATE_EXITED: u8 = 1;
+const STATE_SIGNALED: u8 = 2;
+
+/// Why the holder did not do a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorCode {
+    /// The holder does not know the request kind.
+    UnknownKind,
+    /// The payload of the request is not valid.
+    InvalidPayload,
+    /// The request needs the single-writer lease, and this connection does
+    /// not have it.
+    LeaseRequired,
+    /// The child command has ended.
+    ChildExited,
+    /// This connection already waits for output.
+    WaitPending,
+    /// The operating system refused the operation.
+    Failed,
+    /// A code from a later protocol version.
+    Unrecognized(u16),
+}
+
+impl ErrorCode {
+    fn encode(self) -> u16 {
+        match self {
+            Self::UnknownKind => 1,
+            Self::InvalidPayload => 2,
+            Self::LeaseRequired => 3,
+            Self::ChildExited => 4,
+            Self::WaitPending => 5,
+            Self::Failed => 6,
+            Self::Unrecognized(code) => code,
+        }
+    }
+
+    fn decode(code: u16) -> Self {
+        match code {
+            1 => Self::UnknownKind,
+            2 => Self::InvalidPayload,
+            3 => Self::LeaseRequired,
+            4 => Self::ChildExited,
+            5 => Self::WaitPending,
+            6 => Self::Failed,
+            code => Self::Unrecognized(code),
+        }
+    }
+}
+
+impl From<DecodeError> for ErrorCode {
+    fn from(error: DecodeError) -> Self {
+        match error {
+            DecodeError::UnknownKind(_) => Self::UnknownKind,
+            DecodeError::InvalidPayload => Self::InvalidPayload,
+        }
+    }
+}
+
+/// The state of the child command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChildStatus {
+    /// The child command runs.
+    Running,
+    /// The child command ended with an exit code.
+    Exited {
+        /// The exit code.
+        code: i32,
+    },
+    /// A signal ended the child command.
+    Signaled {
+        /// The signal number of the operating system.
+        signal: i32,
+    },
+}
+
+/// A message from the holder that answers one request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reply {
+    /// The holder did the request.
+    Done,
+    /// The holder did not do the request.
+    Error(ErrorCode),
+    /// The answer to [`Request::Status`](super::Request::Status).
+    Status(ChildStatus),
+    /// The answer to [`Request::WaitOutput`](super::Request::WaitOutput).
+    Output {
+        /// The write position of the ring buffer.
+        write_position: u64,
+    },
+}
+
+impl Reply {
+    /// Appends the encoded reply frame to `output`.
+    pub fn encode(&self, request_id: u32, output: &mut Vec<u8>) {
+        let mut fields = [0u8; 8];
+        let (kind, payload): (u16, &[u8]) = match *self {
+            Self::Done => (DONE, &[]),
+            Self::Error(code) => {
+                fields[..2].copy_from_slice(&code.encode().to_le_bytes());
+                (ERROR, &fields[..2])
+            }
+            Self::Status(status) => {
+                let (state, value) = match status {
+                    ChildStatus::Running => (STATE_RUNNING, 0),
+                    ChildStatus::Exited { code } => (STATE_EXITED, code),
+                    ChildStatus::Signaled { signal } => (STATE_SIGNALED, signal),
+                };
+                fields[0] = state;
+                fields[4..].copy_from_slice(&value.to_le_bytes());
+                (STATUS, &fields)
+            }
+            Self::Output { write_position } => {
+                fields = write_position.to_le_bytes();
+                (OUTPUT, &fields)
+            }
+        };
+        let frame = Frame {
+            kind,
+            request_id,
+            payload,
+        };
+        frame.encode(output);
+    }
+
+    /// Decodes a reply frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if this version does not know the kind, or if the
+    /// payload is not valid for the kind.
+    pub fn decode(frame: Frame<'_>) -> Result<Self, DecodeError> {
+        let mut reader = PayloadReader::new(frame.payload);
+        match frame.kind {
+            DONE => Ok(Self::Done),
+            ERROR => Ok(Self::Error(ErrorCode::decode(reader.u16()?))),
+            STATUS => {
+                let state = reader.u8()?;
+                reader.bytes(3)?;
+                let value = reader.i32()?;
+                match state {
+                    STATE_RUNNING => Ok(Self::Status(ChildStatus::Running)),
+                    STATE_EXITED => Ok(Self::Status(ChildStatus::Exited { code: value })),
+                    STATE_SIGNALED => Ok(Self::Status(ChildStatus::Signaled { signal: value })),
+                    _ => Err(DecodeError::InvalidPayload),
+                }
+            }
+            OUTPUT => Ok(Self::Output {
+                write_position: reader.u64()?,
+            }),
+            kind => Err(DecodeError::UnknownKind(kind)),
+        }
+    }
+}
