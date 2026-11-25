@@ -8,7 +8,7 @@ This repository is a part of [nomux](https://github.com/nomux-sh), a native and 
 
 In development. Versions earlier than 1.0.0 are pre-releases: interfaces can change between minor versions.
 
-The repository now has the Cargo workspace, the developer tools, CI and the first version of the holder ([docs/holder.md](docs/holder.md)), of the daemon ([docs/daemon.md](docs/daemon.md)) and of the CLI ([docs/cli.md](docs/cli.md)). The CLI creates, lists and ends sessions, attaches a terminal to a session and detaches it, and a session continues when the daemon stops. The journal, the scrollback and the remote hosts are the next work: refer to the [roadmap](https://github.com/nomux-sh/docs/blob/main/src/content/docs/project/roadmap.md).
+The repository now has the Cargo workspace, the developer tools, CI and the first version of the holder ([docs/holder.md](docs/holder.md)), of the daemon ([docs/daemon.md](docs/daemon.md)) and of the CLI ([docs/cli.md](docs/cli.md)). The CLI creates, lists and ends sessions, attaches a terminal to a session and detaches it, and a session continues when the daemon stops. The same commands work on a remote host through SSH ([docs/remote.md](docs/remote.md)). The journal and the scrollback are the next work: refer to the [roadmap](https://github.com/nomux-sh/docs/blob/main/src/content/docs/project/roadmap.md).
 
 ## Quick start
 
@@ -49,6 +49,34 @@ The repository now has the Cargo workspace, the developer tools, CI and the firs
 A session does not need the daemon: it continues when the daemon stops (`nomux daemon stop`), fails or is updated. The next command starts a new daemon, which finds the session.
 
 Each command accepts `--json`. [docs/cli.md](docs/cli.md) has the commands, the keys of an attach, the JSON schema and the exit codes.
+
+### A session on a remote host
+
+The remote host needs an SSH server and a key of the user in `authorized_keys`. It needs no nomux package: nomux installs itself there.
+
+1. Make sure that `ssh` knows the key of the host. If you did not connect to the host before, do it one time and compare the fingerprint that `ssh` shows:
+
+   ```console
+   $ ssh deploy@vps.example.com exit
+   ```
+
+2. Add the host. The command installs the three binaries in `~/.nomux/bin` of the host, starts the daemon there and saves the host with the name `vps`:
+
+   ```console
+   $ nomux host add deploy@vps.example.com --name vps
+   host vps added: Linux x86_64, nomux in ~/.nomux/bin/0.1.0 (installed), nomuxd 0.1.0 runs: process ID 2210, 0 sessions
+   ```
+
+3. Use each command with `--host vps`:
+
+   ```console
+   $ nomux --host vps new --attach
+   $ nomux --host vps ls
+   ```
+
+The session continues on the host when the local computer disconnects, and `nomux --host vps attach <id>` shows the same screen again. An attach that loses its network connection connects again and continues without lost output.
+
+nomux uses `~/.ssh/config`, ssh-agent and the key files of the user. It asks for no password and stores none. `nomux host doctor vps` checks a host. [docs/remote.md](docs/remote.md) has the details, also for a build that has no release.
 
 ## Install
 
@@ -116,16 +144,16 @@ The binaries are not signed and not notarized. Code signing and notarization sta
 
 | Path | Type | Contents | State |
 |---|---|---|---|
-| `crates/nomux-core` | library | Shared types, errors, configuration | in use: the version output of the binaries, the lookup of a binary of the same installation |
+| `crates/nomux-core` | library | Shared types, errors, configuration | in use: the version output of the binaries, the lookup of a binary of the same installation, the hosts of the global configuration file |
 | `crates/nomux-term` | library | Thin abstraction over the VT library (`alacritty_terminal`) | in use by the holder: the screen state, the redraw sequence and the OSC sequences |
 | `crates/nomux-holder-protocol` | library | Contract between a holder and the daemon: control messages, ring buffer layout, redraw memory, discovery files | in use by the holder |
 | `crates/nomux-holder` | binary `nomux-holder` | Session holder: owns the PTY of one session. No async runtime | first version: PTY, ring buffer, screen state, control socket, discovery files |
-| `crates/nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows | first version: the Unix socket of the local host, the control channel and the terminal channels of an attach |
+| `crates/nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows | first version: the Unix socket of the local host, the SSH client for a remote host, the control channel and the terminal channels of an attach |
 | `crates/nomux-status` | library | Agent status resolver, rules, aggregation | structure only |
 | `crates/nomux-ext-host` | library | Extension host of the daemon | first version: installed extensions, a process for each extension in use, calls, events, isolation of failures. The daemon does not use it yet |
 | `crates/nomuxd` | binary `nomuxd` | Daemon | first version: creates, lists and ends sessions, finds the holders after a restart, attaches clients to a session |
-| `crates/nomux-client` | library | Protocol client for the CLI, the desktop client and the mobile clients | first version: connection, handshake, requests for sessions and for the daemon, attach |
-| `crates/nomux-cli` | binary `nomux` | CLI | first version: `new`, `ls`, `attach`, `detach`, `kill`, `daemon status`, `daemon stop`, `version` |
+| `crates/nomux-client` | library | Protocol client for the CLI, the desktop client and the mobile clients | first version: the local host and remote hosts, the installation on a remote host, handshake, requests for sessions and for the daemon, attach with reconnect |
+| `crates/nomux-cli` | binary `nomux` | CLI | first version: `new`, `ls`, `attach`, `detach`, `kill`, `daemon status`, `daemon stop`, `host add`, `host ls`, `host rm`, `host doctor`, `version`, and `--host` |
 | `xtask` | binary | Developer tasks: `cargo xtask` | in use |
 | `bench` | directory | Performance tests and the performance targets | in use: the VT library benchmark |
 | `fuzz` | directory | Fuzz targets | structure only |

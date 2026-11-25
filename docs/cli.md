@@ -1,20 +1,21 @@
 # CLI
 
 This document describes the command-line interface (`nomux`): its commands, its JSON output and its exit codes.
-The code is in `crates/nomux-cli`. The CLI is a thin client: it reads the command line, connects to the daemon with `nomux-client`, sends its requests and prints the result. Only `attach` uses the terminal of the user. [daemon.md](daemon.md) describes the daemon that answers.
+The code is in `crates/nomux-cli`. The CLI is a thin client: it reads the command line, connects to the daemon with `nomux-client`, sends its requests and prints the result. Only `attach` uses the terminal of the user. [daemon.md](daemon.md) describes the daemon that answers, and [remote.md](remote.md) describes how a command reaches the daemon of a remote host.
 
 ## Rules
 
 - No command asks a question. A command reads only its arguments and its environment. The exception is `attach`, which gives the keyboard and the screen of the user to a session.
 - Each command has the same exit codes. `attach` adds the exit status of the command of the session: see "`attach`".
-- Each command accepts `--json` and `--quiet`. The two options cannot be used together.
+- Each command accepts `--json`, `--quiet` and `--host <name>`. `--json` and `--quiet` cannot be used together.
+- Without `--host`, a command uses the daemon of the local host. With `--host <name>`, it uses the daemon of the remote host `<name>` of `nomux host ls`, through SSH: see "`--host`".
 - A command that needs the daemon starts it when no daemon answers. The CLI runs `nomuxd --detach` and waits for 5 seconds at most until the socket answers. The commands `daemon status` and `daemon stop` start no daemon.
 - The text output has colour only for the state of a session, only when the standard output is a terminal, and only when the `NO_COLOR` variable is not set. The JSON output and the quiet output never have colour.
 
 ## Commands
 
 ```
-nomux [--json | --quiet] <command>
+nomux [--json | --quiet] [--host <name>] <command>
 ```
 
 | Command | Function |
@@ -26,7 +27,28 @@ nomux [--json | --quiet] <command>
 | `kill <id>` | Ends a session and waits until its command has ended |
 | `daemon status` | Shows if the daemon runs |
 | `daemon stop` | Stops the daemon. The sessions continue |
+| `host add <ssh-target> [--name <name>]` | Connects to a host through SSH, installs nomux there, starts the daemon and saves the host |
+| `host ls` | Lists the saved hosts |
+| `host rm <name>` | Removes a saved host. Nothing changes on the host |
+| `host doctor [<name>]` | Checks the connection, the platform, the binaries, the permissions and the daemon of a host |
 | `version` | Prints the version. `--version` and `-V` do the same |
+
+### `--host`
+
+`--host <name>` makes a command use the daemon of a remote host. `<name>` is a host of the global configuration file, which `nomux host add` writes.
+
+```sh
+nomux --host vps new --attach
+nomux --host vps ls --json
+nomux --host vps attach k3xq2abc
+nomux --host vps daemon status
+```
+
+- Each command first connects to the host and makes sure that the host has the nomux binaries of the version of the CLI. If they are absent, the command installs them, as `host add` does, and writes one line about it to the standard error.
+- A name that the configuration file does not have gives exit code 2.
+- `new --cwd <dir>` with `--host` needs an absolute path on the host. Without `--cwd`, the command starts in the home directory of the user on the host.
+- `--host` cannot be used with a `host` command, which takes the name as an argument. `version` prints the version of the CLI.
+- An SSH error has exit code 1. If the host accepts no key of the user, the exit code is 4. [remote.md](remote.md) has the messages for a host key that is not known or that changed.
 
 ### `new`
 
@@ -78,6 +100,7 @@ The session has one window size: the size of the terminal that attached or chang
 | A signal ends the command of the session | `session <id> ended by signal <n>` | 128 + `<n>`, as a shell gives it |
 | The session ends and the daemon cannot get the exit status | `session <id> ended; its exit status is not known` | 1 |
 | The daemon stops or fails | An error that says that the session continues and how to attach again | 1 |
+| The connection to a remote host ends | The attach connects again and continues with the output that it does not have. The title of the terminal window says `nomux: connection lost, connecting again` until then, and the keys of that time are discarded. After approximately 48 seconds without a connection: an error that says how to attach again | 1 after the error |
 | The CLI gets `SIGTERM`, `SIGHUP`, `SIGINT` or `SIGQUIT` | An error | 1 |
 | No session has the identifier | An error | 2 |
 
@@ -102,6 +125,41 @@ If no session has the identifier, the exit code is 2. Thus the second `kill` of 
 `daemon status` has the exit code 0 if a daemon runs and the exit code 2 if no daemon runs.
 `daemon stop` has the exit code 0 also when no daemon runs: the result is the same.
 
+### `host add`
+
+`host add <ssh-target> [--name <name>]` does these steps and saves the host only if all of them succeed:
+
+1. It connects to `<ssh-target>` with the SSH client of nomux: `[user@]host`, `ssh://[user@]host[:port]`, or a `Host` name of `~/.ssh/config`.
+2. It finds the operating system and the processor of the host and, if the host does not have them, installs the three binaries of the version of the CLI in `~/.nomux/bin/<version>` of the host.
+3. It starts the daemon on the host, if no daemon runs, and asks it for its version.
+4. It writes `[hosts.<name>]` to the global configuration file.
+
+- The default name is the host part of the destination: `deploy@vps.example.com` gives `vps.example.com`. A name has only the characters `a` to `z`, `A` to `Z`, `0` to `9`, `.`, `_` and `-`.
+- The command can be run again for the same name and the same destination: it then installs nothing that the host has. For a name that exists with a different destination, the command fails.
+- The command asks no question. A host key that is not known is an error with the fingerprint and the `ssh` command that adds the key.
+
+[remote.md](remote.md) has the steps of the installation, the variables `NOMUX_RELEASE_DOWNLOAD_URL` and `NOMUX_BOOTSTRAP_BINARIES`, the configuration file and how to remove nomux from a host.
+
+### `host ls` and `host rm`
+
+`host ls` reads only the configuration file. `host rm <name>` removes the host from the file, and it has the exit code 2 if the file does not have the name. The two commands do not connect to a host.
+
+### `host doctor`
+
+`host doctor <name>` checks one host, and `host doctor` checks each host of the configuration file. The command changes nothing on a host: it installs nothing and starts no daemon.
+
+| Check | Passes if |
+|---|---|
+| `connection` | The SSH connection, the host key and the authentication are correct |
+| `platform` | nomux has binaries for the operating system and the processor of the host |
+| `binaries` | The host has the binaries of the version of the CLI |
+| `permissions` | `~/.nomux`, `~/.nomux/bin`, `~/.nomux/run` and the socket belong to the user, other users cannot write to the first two, and other users have no access to the last two |
+| `daemon` | A daemon answers, or no daemon runs. It fails if the SSH server refuses connections to Unix sockets |
+| `versions` | The CLI and the daemon have a common protocol version. Only if a daemon answers |
+
+A check that cannot run after a failure is not in the output: without a connection, the output has only `connection`.
+The exit code is 0 if each check of each host passed, and 1 if a check failed.
+
 ## Output
 
 ### Text
@@ -124,7 +182,39 @@ $ nomux daemon status
 nomuxd 0.1.0 runs: process ID 41870, 0 sessions
 $ nomux daemon stop
 nomuxd stopped
+$ nomux host add deploy@vps.example.com --name vps
+nomux: downloading https://github.com/nomux-sh/nomux/releases/download/v0.1.0/nomux-0.1.0-x86_64-unknown-linux-musl.tar.gz
+nomux: installing nomux 0.1.0 for x86_64-unknown-linux-musl on the host (5234 KiB)
+host vps added: Linux x86_64, nomux in ~/.nomux/bin/0.1.0 (installed), nomuxd 0.1.0 runs: process ID 2210, 0 sessions
+$ nomux host ls
+NAME  SSH
+vps   deploy@vps.example.com
+$ nomux host doctor vps
+vps
+  ok    connection   deploy@vps.example.com port 22, host key ssh-ed25519 SHA256:8bLUG8wQ0mmtzh1V3IO9Yb1pOd2k9y1DqcHBnBtnOC0
+  ok    platform     Linux x86_64: x86_64-unknown-linux-musl
+  ok    binaries     nomux 0.1.0 is in ~/.nomux/bin/0.1.0
+  ok    permissions  private to the user: ~/.nomux drwx------, ~/.nomux/bin drwx------, ~/.nomux/run drwx------, ~/.nomux/run/nomuxd.sock srw-------
+  ok    daemon       nomuxd 0.1.0 runs: process ID 2210, 0 sessions
+  ok    versions     the client and the daemon have the version 0.1.0
+$ nomux host rm vps
+host vps removed
 ```
+
+A check that failed has `FAIL` and the reason:
+
+```console
+$ nomux host doctor vps
+vps
+  ok    connection   deploy@vps.example.com port 22, host key ssh-ed25519 SHA256:8bLUG8wQ0mmtzh1V3IO9Yb1pOd2k9y1DqcHBnBtnOC0
+  ok    platform     Linux x86_64: x86_64-unknown-linux-musl
+  ok    binaries     nomux 0.1.0 is in ~/.nomux/bin/0.1.0
+  FAIL  permissions  ~/.nomux/run has the mode drwxr-xr-x: other users can use it. Run `chmod go-rwx ~/.nomux/run` on the host
+  ok    daemon       nomuxd 0.1.0 runs: process ID 2210, 0 sessions
+  ok    versions     the client and the daemon have the version 0.1.0
+```
+
+The lines that start with `nomux:` are on the standard error. Only the text output has these progress lines.
 
 `PID` is the process ID of the command of the session. It is `-` if the daemon does not know it.
 
@@ -144,8 +234,9 @@ With `--quiet`, a command prints only what a script needs:
 |---|---|
 | `new` | The session identifier |
 | `ls` | One session identifier on each line |
+| `host ls` | One host name on each line |
 | `version` | The version number |
-| `new --attach`, `attach`, `detach`, `kill`, `daemon status`, `daemon stop` | Nothing. The exit code is the result |
+| `new --attach`, `attach`, `detach`, `kill`, `daemon status`, `daemon stop`, `host add`, `host rm`, `host doctor` | Nothing. The exit code is the result |
 
 ### Errors
 
@@ -157,10 +248,10 @@ A wrong command line prints the usage message of the argument parser and has the
 | Code | Name in JSON | Meaning |
 |---:|---|---|
 | 0 | | Success |
-| 1 | `error` | An error that has no other code, also a wrong command line |
-| 2 | `not_found` | The item does not exist: no session has the identifier, or no daemon runs (`daemon status`) |
+| 1 | `error` | An error that has no other code, also a wrong command line, an SSH connection that cannot be made, a host key that is not trusted, and a check of `host doctor` that failed |
+| 2 | `not_found` | The item does not exist: no session has the identifier, no host has the name, or no daemon runs (`daemon status`) |
 | 3 | `timeout` | An operation did not complete in the permitted time: the daemon did not answer after its start, a session was not ready, or a command did not end |
-| 4 | `no_permission` | The user does not have permission, for example for the socket of the daemon |
+| 4 | `no_permission` | The user does not have permission, for example for the socket of the daemon, or a remote host accepted no key of the user |
 | 5 | `version_mismatch` | The CLI and the daemon have no common protocol version. Update the older of the two |
 
 The codes 1 to 5 are the values of `ErrorCode` in the control protocol.
@@ -255,6 +346,53 @@ The command prints the document after the attach ended.
 
 `stopped` is `true` if a daemon ran and the command stopped it. It is `false` if no daemon ran.
 
+### `host add`
+
+```json
+{"schema_version":1,"host":{"name":"vps","ssh":"deploy@vps.example.com","system":"Linux","machine":"x86_64","target":"x86_64-unknown-linux-musl","directory":"~/.nomux/bin/0.1.0","installed":true,"daemon":{"running":true,"version":"0.1.0","pid":2210,"sessions":0}}}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `host.name` | string | The name of the host for `--host` |
+| `host.ssh` | string | The SSH destination |
+| `host.system`, `host.machine` | string | The operating system and the processor of the host, as `uname -s` and `uname -m` give them |
+| `host.target` | string | The release target of the binaries of the host |
+| `host.directory` | string | The directory of the binaries on the host |
+| `host.installed` | boolean | `true` if the command installed the binaries. `false` if the host had them |
+| `host.daemon` | object | The daemon of the host: the object of `daemon status` |
+
+### `host ls`
+
+```json
+{"schema_version":1,"hosts":[{"name":"vps","ssh":"deploy@vps.example.com"}]}
+```
+
+`hosts` is in the sequence of the names. It is empty if the configuration file has no host.
+
+### `host rm`
+
+```json
+{"schema_version":1,"removed":"vps"}
+```
+
+### `host doctor`
+
+```json
+{"schema_version":1,"doctor":[{"host":"vps","ok":false,"checks":[{"name":"connection","ok":true,"detail":"deploy@vps.example.com port 22, host key ssh-ed25519 SHA256:..."},{"name":"permissions","ok":false,"detail":"~/.nomux/run has the mode drwxr-xr-x: other users can use it. Run `chmod go-rwx ~/.nomux/run` on the host"}]}]}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `doctor` | array | One object for each host that the command checked |
+| `doctor[].host` | string | The name of the host |
+| `doctor[].ok` | boolean | `true` if each check of the host passed |
+| `doctor[].checks[].name` | string | `connection`, `platform`, `binaries`, `permissions`, `daemon` or `versions` |
+| `doctor[].checks[].ok` | boolean | `true` if the host passed the check |
+| `doctor[].checks[].detail` | string | A text in English for a person: what the check found, or the reason and what to do. The text is not stable |
+
+The document goes to the standard output also when a check failed. The exit code is 1 then.
+
 ### `version`
 
 ```json
@@ -279,11 +417,12 @@ A wrong command line is not a JSON document: the argument parser writes its usag
 
 - `crates/nomux-cli/src/output/json.rs` has the full text of each document. A changed field fails these tests.
 - `crates/nomux-cli/src/arguments.rs` has the rule for the arguments after `--` and `--cmd`. `crates/nomux-cli/src/attach` has the detach keys and the mode of the terminal, also after a panic.
-- `tests/` has the end-to-end tests that run the real `nomux`, `nomuxd` and `nomux-holder` and examine the exit codes. `tests/attach.rs` runs `nomux attach` in a pseudoterminal and examines the screen.
+- `tests/` has the end-to-end tests that run the real `nomux`, `nomuxd` and `nomux-holder` and examine the exit codes. `tests/attach.rs` runs `nomux attach` in a pseudoterminal and examines the screen. `tests/remote_host.rs` runs the `host` commands and the commands with `--host` against an SSH server that the test starts.
 
 ## Open points for the next versions
 
 - A setting for the detach keys, and `detach` without an identifier in a session.
 - The scrollback: an attach shows the screen of the session and not the lines that left it.
-- The other commands and the `--host` option of the command reference.
+- The other commands of the command reference.
+- `host doctor` for the local host, and a check of the agent hooks.
 - The context from `NOMUX_*` variables.

@@ -3,7 +3,7 @@
 This document describes the daemon (`nomuxd`): its process model, its socket, its lifecycle, how it finds and holds the holders, and how it attaches clients to the terminal of a session.
 The code is in `crates/nomuxd`. The transport is in `crates/nomux-transport`, and the client side is in `crates/nomux-client`.
 
-[architecture.md](architecture.md) shows where the daemon is in the core. [holder.md](holder.md) describes the holder and its contract with the daemon. [cli.md](cli.md) describes the commands that use the daemon.
+[architecture.md](architecture.md) shows where the daemon is in the core. [holder.md](holder.md) describes the holder and its contract with the daemon. [cli.md](cli.md) describes the commands that use the daemon. [remote.md](remote.md) describes how a client on a different computer reaches the daemon through SSH.
 
 ## Process model
 
@@ -23,6 +23,7 @@ The daemon owns no PTY. Each session lives in its holder. Thus the end of the da
 ```sh
 nomuxd            # runs in the foreground; the log goes to the standard error
 nomuxd --detach   # starts the daemon as a separate process and ends
+nomuxd --replace  # if a daemon runs, stops it and takes its place; also with --detach
 nomuxd --version
 ```
 
@@ -98,6 +99,17 @@ The operating system releases the lock when the process ends, also after `kill -
 
 A second daemon for the same runtime directory cannot take the lock. It writes `a daemon already runs for <directory> (process ID <n>)` to its standard error and ends with status 1.
 It does this before it removes the socket file and before it connects to a holder. Thus the first daemon and its leases are not changed.
+
+### Replacement of a daemon
+
+`nomuxd --replace` takes the place of a daemon that runs. A client uses it for a daemon that has no common protocol version with the client: [remote.md](remote.md) says when.
+
+1. The new daemon cannot take the lock. It reads the process ID of the first daemon from the lock file and sends `SIGTERM` to it.
+2. The first daemon does its stop sequence: it answers the requests that it began, removes its socket, releases the lock and ends.
+3. The new daemon gets the lock. If that does not occur in 15 seconds, it ends with an error. Then it does the normal start sequence: it makes its socket, finds the holders and takes their leases.
+
+No session ends, and the two daemons never serve at the same time. The clients that are attached through the first daemon lose their connection.
+A daemon writes its process ID immediately after it takes the lock. Until then the lock file has the process ID of an earlier daemon. Thus the new daemon reads the file two times, 20 ms apart, and sends the signal only if the two values are the same.
 
 If two clients start a daemon at the same time, one daemon gets the lock, the other one ends, and the two clients connect to the daemon that stays.
 
@@ -274,8 +286,8 @@ Measured on Linux x86-64 with the release profile. The targets are in [bench/REA
 |---|---|---|
 | Size of `nomuxd` (glibc, dynamic) | 878 KiB (899504 bytes) | < 10 MB |
 | Size of `nomuxd` (musl, static) | 974 KiB (996952 bytes) | < 10 MB |
-| Size of `nomux` (glibc, dynamic) | 943 KiB (966104 bytes) | no target |
-| Size of `nomux` (musl, static) | 1045 KiB (1069952 bytes) | no target |
+| Size of `nomux` (glibc, dynamic), before the SSH client | 943 KiB (966104 bytes) | no target |
+| Size of `nomux` (musl, static), before the SSH client | 1045 KiB (1069952 bytes) | no target |
 | Resident memory, idle daemon without a session (glibc) | 2.9 MB | < 10 MB |
 | Resident memory, idle daemon with 2 sessions (glibc) | 3.1 MB | < 10 MB |
 | Resident memory, idle daemon with 1 session and 1 attached client (glibc) | 3.1 MB | < 10 MB |
@@ -310,7 +322,7 @@ These parts are not in the daemon yet:
 - **State.** The daemon keeps no database. After a restart it knows the identifier, the state and the process ID of a session, which come from the holder, and not the command or the working directory.
 - **Exit status.** A session leaves the list when its command ends. The clients that are attached at that moment get the exit status. The daemon does not keep it for a later request.
 - **Session environment.** A session gets the environment of the daemon, thus of the client that started the daemon.
-- **Daemon update.** A new daemon cannot take over from a daemon that runs: the instance lock refuses it.
+- **Daemon update.** `nomuxd --replace` takes over from a daemon that runs, and the clients of that daemon lose their connection. An update that keeps the connections is not written.
 - **Service files.** There is no systemd unit and no launchd file.
 - **Log rotation.** `nomuxd.log` has no size limit. With the default level it stays almost empty.
-- **Host identity, authentication, warm pool, restore after a reboot, remote transports.**
+- **Host identity, authentication, warm pool, restore after a reboot, the QUIC transport.**
