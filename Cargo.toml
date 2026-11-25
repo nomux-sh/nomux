@@ -16,15 +16,19 @@ authors = ["The nomux Authors"]
 publish = false
 
 [workspace.dependencies]
+nomux-client = { path = "crates/nomux-client", version = "0.0.0" }
 nomux-core = { path = "crates/nomux-core", version = "0.0.0" }
 nomux-holder-protocol = { path = "crates/nomux-holder-protocol", version = "0.0.0" }
 nomux-transport = { path = "crates/nomux-transport", version = "0.0.0" }
 
+clap = { version = "4.6.10", features = ["derive"] }
 getrandom = "0.4.3"
 libc = "0.2.191"
 nomux-proto = "0.2.0"
 prost = "0.14.6"
 rustix = "1.1.6"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
 signal-hook = { version = "0.4.6", default-features = false }
 tempfile = "3.27.0"
 tokio = { version = "1.54.1", default-features = false }
