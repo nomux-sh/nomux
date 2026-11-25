@@ -92,3 +92,10 @@ path = "fuzz_targets/ring_reader.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "journal_reader"
+path = "fuzz_targets/journal_reader.rs"
+test = false
+doc = false
+bench = false
