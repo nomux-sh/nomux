@@ -54,12 +54,9 @@ cargo fuzz tmin terminal_feed artifacts/terminal_feed/<file>
 
 ## Cases that the targets skip
 
-| Target | Case | Issue |
-|---|---|---|
-| `terminal_feed`, `redraw_round_trip` | A terminal of 1 column. | [#24](https://github.com/nomux-sh/nomux/issues/24) |
-| `redraw_round_trip` | A screen that has one cell of a wide character without the other cell. | [#25](https://github.com/nomux-sh/nomux/issues/25) |
-| `redraw_round_trip` | A copy whose cursor is at the right of the cursor of the source in the same row. | [#27](https://github.com/nomux-sh/nomux/issues/27) |
-| `ring_reader` | A position of 2^63 or more. | [#26](https://github.com/nomux-sh/nomux/issues/26) |
+No target skips a case now.
+
+`terminal_feed` and `redraw_round_trip` also select a resize to 1 column. `nomux-term` refuses that size, thus the terminal keeps its size, as the terminal of a holder that refuses a `Resize`.
 
 `ring_reader` does not make the region shorter after the reader mapped it.
 

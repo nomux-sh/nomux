@@ -33,11 +33,6 @@ const CAPACITY_FIELD: usize = 16;
 const CLAIMED_FIELD: u64 = 32;
 const COMMITTED_FIELD: u64 = 40;
 
-/// The reader adds to its position with an addition that can overflow:
-/// <https://github.com/nomux-sh/nomux/issues/26>. Until it cannot, the
-/// positions of the holder and of a seek are smaller than 2^63.
-const POSITION_MASK: u64 = u64::MAX >> 1;
-
 const REGION_LENGTH_BYTES: usize = 2;
 const OPERATION_BYTES: usize = 9;
 
@@ -62,12 +57,11 @@ fuzz_target!(|input: &[u8]| {
     let mut destination = vec![0; usize::from(u16::MAX)];
     for [kind, value @ ..] in operations.as_chunks::<OPERATION_BYTES>().0 {
         let value = u64::from_le_bytes(*value);
-        let position = value & POSITION_MASK;
         match kind % 4 {
             0 => assert_read_is_correct(&mut reader, &data, &mut destination[..low_16_bits(value)]),
-            1 => reader.seek(position),
-            2 => store(&memory, CLAIMED_FIELD, position),
-            _ => store(&memory, COMMITTED_FIELD, position),
+            1 => reader.seek(value),
+            2 => store(&memory, CLAIMED_FIELD, value),
+            _ => store(&memory, COMMITTED_FIELD, value),
         }
     }
 });
@@ -78,12 +72,6 @@ fn region_with(header: &[u8; HEADER_LENGTH], length: usize) -> Vec<u8> {
     let mut region: Vec<u8> = (0..length).map(data_byte).collect();
     let header_length = length.min(HEADER_LENGTH);
     region[..header_length].copy_from_slice(&header[..header_length]);
-    for field in [CLAIMED_FIELD, COMMITTED_FIELD] {
-        let last_byte = usize::try_from(field).expect("the field is in the header") + 7;
-        if let Some(byte) = region.get_mut(last_byte) {
-            *byte &= POSITION_MASK.to_le_bytes()[7];
-        }
-    }
     region
 }
 
