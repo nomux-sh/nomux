@@ -7,6 +7,7 @@ mod run_state;
 
 use std::env;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use nomux_extension::ApiVersion;
@@ -118,6 +119,9 @@ impl Supervisor {
 
     /// Examines if the host can start the extension now.
     fn prepare_start(&self, lifecycle: &Lifecycle) -> Result<Setup, CallError> {
+        if self.context.closed.load(Ordering::Relaxed) {
+            return Err(CallError::Stopped);
+        }
         let registry = self.context.registry();
         let extension = registry
             .get(&self.extension_id)

@@ -4,9 +4,11 @@ use std::collections::HashMap;
 use std::fmt;
 use std::io;
 use std::path::Path;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use nomux_extension::Permissions;
+use nomux_extension::manifest::Manifest;
 use tokio::sync::{broadcast, watch};
 use tokio::task::JoinSet;
 
@@ -15,7 +17,7 @@ use crate::config::HostConfig;
 use crate::extension_event::ExtensionEvent;
 use crate::host_context::HostContext;
 use crate::host_services::HostServices;
-use crate::registry::{Enablement, InstallError, InstalledExtension, Registry, StateError};
+use crate::registry::{self, Enablement, InstallError, InstalledExtension, Registry, StateError};
 use crate::supervisor::{RunState, Supervisor};
 
 /// One installed extension and the state of its process.
@@ -56,10 +58,27 @@ impl ExtensionHost {
         })
     }
 
-    /// Installs the package in the directory `source` and enables it.
-    /// `granted` has the permissions that the user approved.
+    /// Reads the manifest of the package in the directory `source` and
+    /// examines if the host can run the package. Installs nothing. The
+    /// manifest has the permissions that the extension asks for: show them
+    /// to the user before [`install`](Self::install).
     ///
-    /// This function copies files and blocks its thread.
+    /// This function reads files and blocks its thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the package is not valid or if the host cannot
+    /// run it.
+    pub fn inspect(source: &Path) -> Result<Manifest, InstallError> {
+        registry::inspect(source)
+    }
+
+    /// Installs the package in the directory `source` and enables it.
+    /// `granted` has the permissions that the user approved. Starts no
+    /// process.
+    ///
+    /// This function copies files and blocks its thread. During the copy,
+    /// the other functions of the host do not wait.
     ///
     /// # Errors
     ///
@@ -71,7 +90,30 @@ impl ExtensionHost {
         source: &Path,
         granted: Permissions,
     ) -> Result<InstalledExtension, InstallError> {
-        self.context.registry().install(source, granted)
+        let pending = self.context.registry().begin_install(source, granted)?;
+        let copied = pending.copy_package();
+        self.context.registry().finish_install(pending, copied)
+    }
+
+    /// Stops the process of an extension and removes its package, its state
+    /// file and its data directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the extension is not installed or if a file was
+    /// not removed. The extension is not installed after this function also
+    /// when a file of it stays.
+    pub async fn remove(&self, id: &str) -> Result<(), StateError> {
+        // From this moment no call starts the extension.
+        let removed = self.context.registry().remove(id)?;
+        let supervisor = self.supervisors().remove(id);
+        if let Some(supervisor) = supervisor {
+            supervisor.stop().await;
+        }
+        let deleted = tokio::task::spawn_blocking(move || removed.delete_files()).await;
+        deleted
+            .unwrap_or_else(|error| Err(io::Error::other(error)))
+            .map_err(StateError::Io)
     }
 
     /// The installed extensions, in the sequence of their identifiers.
@@ -175,8 +217,10 @@ impl ExtensionHost {
     }
 
     /// Stops each process and waits for its end. The daemon calls it
-    /// before it stops. A call after it starts the extension again.
+    /// before it stops. After it, the host starts no extension: a call
+    /// fails with [`CallError::Stopped`].
     pub async fn shutdown(&self) {
+        self.context.closed.store(true, Ordering::Relaxed);
         let supervisors: Vec<Arc<Supervisor>> = {
             let supervisors = self.supervisors();
             supervisors.values().cloned().collect()

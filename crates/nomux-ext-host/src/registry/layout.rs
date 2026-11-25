@@ -36,12 +36,23 @@ impl Layout {
         self.packages().join(format!(".incoming-{id}"))
     }
 
+    /// Where a package is from its removal until the host deleted it.
+    pub(super) fn removed_package(&self, id: &str) -> PathBuf {
+        self.packages().join(format!(".removed-{id}"))
+    }
+
     pub(super) fn state_file(&self, id: &str) -> PathBuf {
         self.directory.join("state").join(format!("{id}.toml"))
     }
 
     pub(super) fn data(&self, id: &str) -> PathBuf {
         self.directory.join("data").join(id)
+    }
+
+    /// Where the data of an extension is from its removal until the host
+    /// deleted it.
+    pub(super) fn removed_data(&self, id: &str) -> PathBuf {
+        self.directory.join("data").join(format!(".removed-{id}"))
     }
 }
 
