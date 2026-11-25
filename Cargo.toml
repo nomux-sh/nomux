@@ -12,8 +12,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/nomux-sh/nomux"
 homepage = "https://nomux.sh"
 authors = ["The nomux Authors"]
-# No crate is published before the first public release. The release work
-# removes this line for `nomux-core` and `nomux-client`.
+# No crate of this workspace is published to crates.io yet.
 publish = false
 
 [workspace.dependencies]

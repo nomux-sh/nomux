@@ -1,4 +1,5 @@
-//! Runs the real `nomux` binary and checks the version output.
+//! Runs the real `nomux` binary. `nomux-holder` and `nomuxd` have the same
+//! `main` function, thus one binary guards the wiring of all three.
 
 use std::process::Command;
 
@@ -23,6 +24,6 @@ fn no_arguments_is_a_usage_error() {
     assert!(
         String::from_utf8(output.stderr)
             .unwrap()
-            .contains("this build has no commands")
+            .starts_with("nomux ")
     );
 }

@@ -17,4 +17,4 @@
 //!
 //! # Status
 //!
-//! Milestone M0 contains no code. Milestone M3 adds the extension host.
+//! This crate has no code yet.

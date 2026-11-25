@@ -15,4 +15,4 @@
 //!
 //! # Status
 //!
-//! Milestone M0 contains no code. Milestone M4 adds the status engine.
+//! This crate has no code yet.

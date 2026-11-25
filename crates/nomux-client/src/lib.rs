@@ -14,5 +14,4 @@
 //!
 //! # Status
 //!
-//! Milestone M0 contains no code. Milestone M1 adds the client. Milestone M9
-//! adds the `uniffi` feature for the mobile clients.
+//! This crate has no code yet.
