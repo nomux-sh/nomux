@@ -83,14 +83,14 @@ impl RingWriter {
         let index = self.data_index();
         let length = limit.min(self.capacity - index);
         self.mapping
-            .store_u64(CLAIMED_OFFSET, self.position + length as u64);
+            .store_u64(CLAIMED_OFFSET, self.position.wrapping_add(length as u64));
         // A reader must see the claim before it can see a byte of the chunk.
         // The release store does not order the writes that come after it.
         fence(Ordering::SeqCst);
         let chunk = self.mapping.slice_mut(HEADER_LENGTH + index, length);
         let written = fill(chunk).map(|written| written.min(length));
         if let Ok(written) = written {
-            self.position += written as u64;
+            self.position = self.position.wrapping_add(written as u64);
             self.mapping.store_u64(COMMITTED_OFFSET, self.position);
         }
         // The bytes after the committed position were not changed.

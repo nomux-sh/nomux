@@ -40,6 +40,10 @@
 //!
 //! The bytes from `claimed - capacity` to `committed` are stable.
 //!
+//! The arithmetic on positions wraps at 2^64. The capacity is a power of
+//! two, thus the data index is correct after a wrap, and the positions of a
+//! holder that is not trusted cannot make an addition of the reader overflow.
+//!
 //! # Overrun
 //!
 //! A reader keeps its own position. After it copies bytes that start at
