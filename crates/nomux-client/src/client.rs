@@ -6,14 +6,16 @@ use std::time::Duration;
 
 use nomux_proto::compatibility::{VersionRange, negotiate};
 use nomux_proto::wire::v1::{
-    self as wire, Envelope, Hello, HostInfoRequest, HostStopRequest, Request, SessionCreateRequest,
-    SessionKillRequest, SessionListRequest, envelope, request, response,
+    self as wire, Envelope, Hello, HostInfoRequest, HostStopRequest, Request, SessionAttachRequest,
+    SessionCreateRequest, SessionDetachRequest, SessionInputRequest, SessionKillRequest,
+    SessionListRequest, SessionResizeRequest, envelope, request, response,
 };
 use nomux_transport::EnvelopeStream;
 use tokio::time::timeout;
 
 use crate::local_daemon;
-use crate::{ClientError, ClientKind, HostInfo, NewSession, Session};
+use crate::terminal::{AttachOptions, TerminalInput, TerminalOutput};
+use crate::{ClientError, ClientKind, HostInfo, NewSession, Session, WindowSize};
 
 /// The longest time that a client waits for the response to one request.
 /// The daemon ends each request of this protocol version earlier.
@@ -164,6 +166,98 @@ impl Client {
         let request = SessionKillRequest { id: id.to_owned() };
         match self.call(request::Body::SessionKill(request)).await? {
             response::Result::SessionKill(_) => Ok(()),
+            _ => Err(unexpected_result()),
+        }
+    }
+
+    /// Attaches to the terminal of the session `id`. The connection becomes
+    /// the terminal of the attach: the result is the screen and the output
+    /// of the session, and the way to send input.
+    ///
+    /// To send a request during the attach, for example
+    /// [`resize_session`](Self::resize_session), use a second connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::NotFound`] if no session has the identifier,
+    /// and [`ClientError::Failed`] if the window size is not valid or the
+    /// daemon cannot read the terminal of the session.
+    pub async fn attach(
+        mut self,
+        id: &str,
+        options: AttachOptions,
+    ) -> Result<(TerminalOutput, TerminalInput), ClientError> {
+        let size = options.size.unwrap_or(WindowSize {
+            rows: 0,
+            columns: 0,
+        });
+        let request = SessionAttachRequest {
+            id: id.to_owned(),
+            rows: size.rows.into(),
+            columns: size.columns.into(),
+            epoch: options.resume.map_or(0, |position| position.epoch),
+            from_seq: options.resume.map_or(0, |position| position.seq),
+        };
+        let response::Result::SessionAttach(attached) =
+            self.call(request::Body::SessionAttach(request)).await?
+        else {
+            return Err(unexpected_result());
+        };
+        let (output, input) = self.stream.into_frames();
+        Ok((
+            TerminalOutput::new(output, attached.handle, attached.epoch, options.resume),
+            TerminalInput::new(input, attached.handle),
+        ))
+    }
+
+    /// Detaches each client that is attached to the session `id`. The
+    /// session continues. Returns the number of clients.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::NotFound`] if no session has the identifier.
+    pub async fn detach_session(&mut self, id: &str) -> Result<u32, ClientError> {
+        let request = SessionDetachRequest { id: id.to_owned() };
+        match self.call(request::Body::SessionDetach(request)).await? {
+            response::Result::SessionDetach(detached) => Ok(detached.detached),
+            _ => Err(unexpected_result()),
+        }
+    }
+
+    /// Changes the window size of the session `id`. The session has the
+    /// size of the client that attached or changed its size last.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::NotFound`] if no session has the identifier,
+    /// and [`ClientError::Failed`] if the window size is not valid.
+    pub async fn resize_session(&mut self, id: &str, size: WindowSize) -> Result<(), ClientError> {
+        let request = SessionResizeRequest {
+            id: id.to_owned(),
+            rows: size.rows.into(),
+            columns: size.columns.into(),
+        };
+        match self.call(request::Body::SessionResize(request)).await? {
+            response::Result::SessionResize(_) => Ok(()),
+            _ => Err(unexpected_result()),
+        }
+    }
+
+    /// Writes bytes to the terminal of the session `id`, as if the user
+    /// typed them, and waits until the session has them. A client that is
+    /// attached uses [`TerminalInput::send`], which does not wait.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::NotFound`] if no session has the identifier,
+    /// and [`ClientError::Failed`] if the command of the session has ended.
+    pub async fn send_input(&mut self, id: &str, bytes: &[u8]) -> Result<(), ClientError> {
+        let request = SessionInputRequest {
+            id: id.to_owned(),
+            data: bytes.to_vec(),
+        };
+        match self.call(request::Body::SessionInput(request)).await? {
+            response::Result::SessionInput(_) => Ok(()),
             _ => Err(unexpected_result()),
         }
     }
