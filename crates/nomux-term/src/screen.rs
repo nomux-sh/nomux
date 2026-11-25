@@ -7,7 +7,7 @@ use alacritty_terminal::event::VoidListener;
 use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::TermMode;
 
-use crate::cell::{Cell, Style};
+use crate::cell::{Cell, CellWidth, Style};
 use crate::conversion;
 use crate::cursor::{Cursor, Position};
 use crate::modes::Modes;
@@ -33,8 +33,35 @@ impl<'a> Screen<'a> {
     }
 
     /// The cell at `position`, or `None` if the position is not on the screen.
+    ///
+    /// The VT library can keep one cell of a wide character without the
+    /// other cell, for example after a delete character on the first cell.
+    /// No terminal can show a half of a character, thus such a cell is an
+    /// empty cell that keeps its style.
     #[must_use]
     pub fn cell(&self, position: Position) -> Option<Cell<'a>> {
+        let cell = self.library_cell(position)?;
+        let other_half = match cell.width {
+            CellWidth::Single => return Some(cell),
+            CellWidth::Double => (position.column.checked_add(1), CellWidth::Continuation),
+            CellWidth::Continuation => (position.column.checked_sub(1), CellWidth::Double),
+        };
+        let (column, width) = other_half;
+        let other_cell = column.and_then(|column| {
+            self.library_cell(Position {
+                row: position.row,
+                column,
+            })
+        });
+        if other_cell.is_some_and(|other_cell| other_cell.width == width) {
+            Some(cell)
+        } else {
+            Some(cell.without_character())
+        }
+    }
+
+    /// The cell as the VT library keeps it.
+    fn library_cell(&self, position: Position) -> Option<Cell<'a>> {
         if position.row >= self.size.rows() || position.column >= self.size.columns() {
             return None;
         }

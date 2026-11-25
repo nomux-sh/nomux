@@ -58,6 +58,7 @@ impl Terminal {
             }
         });
         self.parser.advance(&mut self.term, bytes);
+        self.end_wrap_before_the_last_column();
     }
 
     /// The number of bytes at the end of the output that had no effect yet:
@@ -81,6 +82,7 @@ impl Terminal {
     pub fn resize(&mut self, size: Size) {
         self.term.resize(size);
         self.size = size;
+        self.end_wrap_before_the_last_column();
     }
 
     /// The visible screen.
@@ -111,6 +113,18 @@ impl Terminal {
             redraw::write_enter_alternate_screen(output);
         }
         redraw::write_visible_screen(&self.screen(), output);
+    }
+
+    /// After a character in the last column, the next character goes to the
+    /// next row. The VT library keeps this state when a backward tab or a
+    /// wider alternate screen puts the cursor before the last column. A VT
+    /// terminal ends the state there, and the redraw sequence can make the
+    /// state only in the last column.
+    fn end_wrap_before_the_last_column(&mut self) {
+        let cursor = &self.term.grid().cursor;
+        if cursor.input_needs_wrap && cursor.point.column < self.term.last_column() {
+            self.term.grid_mut().cursor.input_needs_wrap = false;
+        }
     }
 
     /// Writes the screen that the alternate screen hides.
