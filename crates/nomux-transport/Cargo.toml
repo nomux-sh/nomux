@@ -11,9 +11,13 @@ authors.workspace = true
 publish.workspace = true
 
 [dependencies]
+base64.workspace = true
+hmac.workspace = true
 nomux-proto.workspace = true
 prost.workspace = true
-tokio = { workspace = true, features = ["io-util", "net"] }
+russh.workspace = true
+sha1.workspace = true
+tokio = { workspace = true, features = ["io-util", "net", "rt", "time"] }
 
 [dev-dependencies]
 tempfile.workspace = true

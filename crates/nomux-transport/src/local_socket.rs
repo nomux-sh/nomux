@@ -41,7 +41,7 @@ pub fn default_socket_path() -> Option<PathBuf> {
 /// Returns the error of `connect`. The kind is `NotFound` or
 /// `ConnectionRefused` if no daemon listens there.
 pub async fn connect(path: &Path) -> io::Result<EnvelopeStream> {
-    UnixStream::connect(path).await.map(EnvelopeStream::new)
+    UnixStream::connect(path).await.map(envelope_stream)
 }
 
 /// The listening socket of the daemon.
@@ -81,8 +81,13 @@ impl LocalListener {
                 format!("the peer is user {peer}, not the owner of the socket"),
             ));
         }
-        Ok(EnvelopeStream::new(stream))
+        Ok(envelope_stream(stream))
     }
+}
+
+fn envelope_stream(stream: UnixStream) -> EnvelopeStream {
+    let (read, write) = stream.into_split();
+    EnvelopeStream::new(read, write)
 }
 
 #[cfg(test)]

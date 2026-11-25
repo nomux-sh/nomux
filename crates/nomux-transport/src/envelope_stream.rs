@@ -4,9 +4,9 @@ use std::io;
 
 use nomux_proto::wire::v1::{Envelope, MAX_ENVELOPE_LENGTH};
 use prost::Message;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixStream;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+use crate::byte_stream::{ReadHalf, WriteHalf};
 use crate::frame_stream::{FrameReader, FrameWriter};
 
 /// A protobuf varint of 64 bits has 10 bytes at most.
@@ -14,17 +14,25 @@ const MAX_LENGTH_PREFIX: usize = 10;
 
 /// One connection of the control channel: a byte stream that carries
 /// envelopes. Each envelope has a varint length prefix.
+///
+/// The byte stream is a Unix socket on the local host or an SSH channel to
+/// the socket of a remote daemon.
 #[derive(Debug)]
 pub struct EnvelopeStream {
-    stream: UnixStream,
+    read: ReadHalf,
+    write: WriteHalf,
     /// The bytes that came from the stream and are not an envelope yet.
     incoming: Vec<u8>,
 }
 
 impl EnvelopeStream {
-    pub(crate) fn new(stream: UnixStream) -> Self {
+    pub(crate) fn new(
+        read: impl AsyncRead + Send + Unpin + 'static,
+        write: impl AsyncWrite + Send + Unpin + 'static,
+    ) -> Self {
         Self {
-            stream,
+            read: ReadHalf::new(read),
+            write: WriteHalf::new(write),
             incoming: Vec::new(),
         }
     }
@@ -42,7 +50,7 @@ impl EnvelopeStream {
                 "the envelope is longer than the protocol permits",
             ));
         }
-        self.stream
+        self.write
             .write_all(&envelope.encode_length_delimited_to_vec())
             .await
     }
@@ -61,7 +69,7 @@ impl EnvelopeStream {
             if let Some(envelope) = self.take_envelope()? {
                 return Ok(Some(envelope));
             }
-            if self.stream.read_buf(&mut self.incoming).await? == 0 {
+            if self.read.read_buf(&mut self.incoming).await? == 0 {
                 return if self.incoming.is_empty() {
                     Ok(None)
                 } else {
@@ -77,10 +85,9 @@ impl EnvelopeStream {
     /// start of the first frame.
     #[must_use]
     pub fn into_frames(self) -> (FrameReader, FrameWriter) {
-        let (read, write) = self.stream.into_split();
         (
-            FrameReader::new(read, self.incoming),
-            FrameWriter::new(write),
+            FrameReader::new(self.read, self.incoming),
+            FrameWriter::new(self.write),
         )
     }
 
@@ -117,6 +124,7 @@ fn invalid(message: &'static str) -> io::Error {
 #[cfg(test)]
 mod tests {
     use nomux_proto::wire::v1::{Event, envelope};
+    use tokio::net::UnixStream;
 
     use super::*;
 
@@ -128,7 +136,8 @@ mod tests {
 
     fn pair() -> (EnvelopeStream, UnixStream) {
         let (near, far) = UnixStream::pair().unwrap();
-        (EnvelopeStream::new(near), far)
+        let (read, write) = near.into_split();
+        (EnvelopeStream::new(read, write), far)
     }
 
     #[tokio::test]
