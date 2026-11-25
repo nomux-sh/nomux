@@ -16,11 +16,11 @@
 //!
 //! # Status
 //!
-//! Milestone M0 prints the version for `--version` and does nothing else.
-//! Milestone M1 adds the holder.
+//! The binary prints its version for `--version` and does nothing else. The
+//! holder is not written yet.
 
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    nomux_core::version_only_main(&nomux_core::build_info!(), std::env::args_os().skip(1))
+    nomux_core::version_only_main(nomux_core::version_line!())
 }

@@ -15,10 +15,10 @@
 //!
 //! # Status
 //!
-//! Milestone M0 contains only [`BuildInfo`] and the entry point that the
-//! three binaries share. Milestone M1 adds the glossary types, the error type
-//! and the configuration model.
+//! This crate contains only the `--version` output that the three binaries
+//! share. The glossary types, the error type and the configuration model are
+//! not written yet.
 
-mod build_info;
+mod version;
 
-pub use build_info::{BuildInfo, version_only_main};
+pub use version::version_only_main;

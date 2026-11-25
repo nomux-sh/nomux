@@ -15,5 +15,5 @@
 //!
 //! # Status
 //!
-//! Milestone M0 contains no code. Milestone M1 selects the VT library from a
-//! benchmark (speed, memory, correctness) and adds the abstraction.
+//! This crate has no code yet. A benchmark (speed, memory, correctness)
+//! selects the VT library before the abstraction is written.

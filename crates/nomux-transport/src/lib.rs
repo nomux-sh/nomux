@@ -17,5 +17,5 @@
 //!
 //! # Status
 //!
-//! Milestone M0 contains no code. Milestone M1 adds the Unix socket, M2 adds
-//! SSH, and M8 adds QUIC.
+//! This crate has no code yet. The Unix socket transport comes first, then
+//! SSH, then QUIC.
