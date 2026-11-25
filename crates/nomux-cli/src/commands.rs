@@ -17,9 +17,11 @@ pub(crate) async fn run(command: Command) -> Result<Report, ClientError> {
             cwd,
             attach,
             command,
+            command_after_separator,
         } => {
+            // The command line has the command in one of the two forms.
             let session = NewSession {
-                command,
+                command: [command, command_after_separator].concat(),
                 working_directory: Some(working_directory(cwd)?),
             };
             if attach {

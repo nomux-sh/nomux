@@ -66,9 +66,14 @@ pub(crate) enum Command {
             long = "cmd",
             value_name = "COMMAND",
             num_args = 1..,
-            allow_hyphen_values = true
+            allow_hyphen_values = true,
+            conflicts_with = "command_after_separator"
         )]
         command: Vec<String>,
+
+        /// The same as --cmd: each argument after -- belongs to the command
+        #[arg(last = true, value_name = "COMMAND")]
+        command_after_separator: Vec<String>,
     },
     /// List the sessions
     Ls,
@@ -103,4 +108,54 @@ pub(crate) enum DaemonCommand {
     Status,
     /// Stop the daemon. The sessions continue
     Stop,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The parts of a `new` command line: `--json`, `--attach`, and the
+    /// command of the session.
+    fn new_session(arguments: &[&str]) -> (bool, bool, Vec<String>) {
+        let arguments = Arguments::try_parse_from([&["nomux", "new"], arguments].concat()).unwrap();
+        let json = arguments.json;
+        let Some(Command::New {
+            attach,
+            command,
+            command_after_separator,
+            ..
+        }) = arguments.requested_command()
+        else {
+            panic!("not the new command");
+        };
+        (json, attach, [command, command_after_separator].concat())
+    }
+
+    fn words(words: &[&str]) -> Vec<String> {
+        words.iter().map(|&word| word.to_owned()).collect()
+    }
+
+    #[test]
+    fn the_options_before_the_separator_belong_to_nomux() {
+        assert_eq!(
+            new_session(&["--json", "--attach", "--", "sleep", "300"]),
+            (true, true, words(&["sleep", "300"]))
+        );
+        assert_eq!(
+            new_session(&["--json", "--cmd", "sleep", "300"]),
+            (true, false, words(&["sleep", "300"]))
+        );
+    }
+
+    #[test]
+    fn each_argument_after_the_command_starts_belongs_to_the_command() {
+        assert_eq!(
+            new_session(&["--", "sleep", "300", "--json", "--attach"]),
+            (false, false, words(&["sleep", "300", "--json", "--attach"]))
+        );
+        assert_eq!(
+            new_session(&["--cmd", "sh", "--json", "--", "-c", "true"]),
+            (false, false, words(&["sh", "--json", "--", "-c", "true"]))
+        );
+    }
 }
