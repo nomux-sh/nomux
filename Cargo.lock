@@ -411,6 +411,7 @@ dependencies = [
  "nomux-extension",
  "prost",
  "serde",
+ "tempfile",
  "tokio",
  "toml",
  "tracing",
