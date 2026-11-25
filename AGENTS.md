@@ -12,16 +12,16 @@ Rules for coding agents and for people who work in this repository. `CLAUDE.md` 
 | `crates/nomux-term` | Abstraction over the VT library (`alacritty_terminal`): screen state, redraw sequence, OSC sequences. |
 | `crates/nomux-holder-protocol` | Contract between a holder and the daemon: control messages, ring buffer layout, discovery files. |
 | `crates/nomux-holder` | Binary `nomux-holder`: owns the PTY of one session. |
-| `crates/nomux-transport` | Unix socket, SSH channels, QUIC streams, credit windows. Now: the socket of the daemon on the local host and the framing of the control channel. |
+| `crates/nomux-transport` | Unix socket, SSH channels, QUIC streams, credit windows. Now: the socket of the daemon on the local host, the framing of the control channel and the framing of the terminal channels of an attach. |
 | `crates/nomux-status` | Agent status resolver, rules, aggregation. |
 | `crates/nomux-ext-host` | Extension host of the daemon. |
 | `crates/nomuxd` | Binary `nomuxd`: the daemon. [docs/daemon.md](docs/daemon.md) describes it. |
-| `crates/nomux-client` | Protocol client for the CLI, the desktop client and the mobile clients. |
-| `crates/nomux-cli` | Binary `nomux`: the CLI. [docs/cli.md](docs/cli.md) has the commands, the JSON schema and the exit codes. |
+| `crates/nomux-client` | Protocol client for the CLI, the desktop client and the mobile clients: the requests, and the terminal of an attach as a stream of output and a sink for input. It has no terminal handling. |
+| `crates/nomux-cli` | Binary `nomux`: the CLI. [docs/cli.md](docs/cli.md) has the commands, the keys of an attach, the JSON schema and the exit codes. |
 | `xtask` | Developer tasks. `cargo xtask ci` runs the checks. |
 | `bench` | Performance targets and the benchmarks. Each benchmark is a Cargo workspace of its own, which `cargo xtask ci` does not build. |
 | `fuzz` | Fuzz targets. It has a `README.md` only. |
-| `tests` | Package `nomux-end-to-end`: tests that run the real `nomux`, `nomuxd` and `nomux-holder` together. |
+| `tests` | Package `nomux-end-to-end`: tests that run the real `nomux`, `nomuxd` and `nomux-holder` together, also in a pseudoterminal, and the program that measures the attach path. |
 | `docs` | Developer notes of the core. |
 | `Cargo.toml` | Workspace members, shared package fields, lint policy, release profile. |
 | `deny.toml`, `clippy.toml`, `rust-toolchain.toml` | License and source policy, clippy settings, pinned toolchain. |

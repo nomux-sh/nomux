@@ -8,28 +8,47 @@ This repository is a part of [nomux](https://github.com/nomux-sh), a native and 
 
 In development. Versions earlier than 1.0.0 are pre-releases: interfaces can change between minor versions.
 
-The repository now has the Cargo workspace, the developer tools, CI and the first version of the holder ([docs/holder.md](docs/holder.md)), of the daemon ([docs/daemon.md](docs/daemon.md)) and of the CLI ([docs/cli.md](docs/cli.md)). The CLI creates, lists and ends sessions, and a session continues when the daemon stops. A client cannot attach to the terminal of a session yet. Attach and the rest of the holder are the next work: refer to the [roadmap](https://github.com/nomux-sh/docs/blob/main/src/content/docs/project/roadmap.md).
+The repository now has the Cargo workspace, the developer tools, CI and the first version of the holder ([docs/holder.md](docs/holder.md)), of the daemon ([docs/daemon.md](docs/daemon.md)) and of the CLI ([docs/cli.md](docs/cli.md)). The CLI creates, lists and ends sessions, attaches a terminal to a session and detaches it, and a session continues when the daemon stops. The journal, the scrollback and the remote hosts are the next work: refer to the [roadmap](https://github.com/nomux-sh/docs/blob/main/src/content/docs/project/roadmap.md).
 
 ## Quick start
 
-Build the binaries (see "Build") and put `target/release` into `PATH`. Then:
+1. Install the three binaries: see "Install". Before the first release, build them (see "Build") and put `target/release` into `PATH`.
 
-```console
-$ nomux new --cmd sh          # starts the daemon and a session, prints the session identifier
-k3xq2abc
-$ nomux ls
-ID        STATE    PID
-k3xq2abc  running  41873
-$ nomux daemon stop           # the session continues without the daemon
-nomuxd stopped
-$ nomux ls                    # starts a new daemon, which finds the session
-ID        STATE    PID
-k3xq2abc  running  41873
-$ nomux kill k3xq2abc
-session k3xq2abc ended
-```
+2. Start a session and attach to it. The first command starts the daemon.
 
-Each command accepts `--json`. [docs/cli.md](docs/cli.md) has the JSON schema and the exit codes.
+   ```console
+   $ nomux new
+   k3xq2abc
+   $ nomux attach k3xq2abc
+   ```
+
+   `nomux new --attach` does the two steps with one command. `nomux new -- vim notes.txt` starts a session with a command that is not the shell.
+
+3. The terminal now shows the session. To detach, press `Ctrl-\` and then `d`. The session continues, and its programs do not see the detach.
+
+   ```console
+   detached from session k3xq2abc
+   $ nomux ls
+   ID        STATE    PID
+   k3xq2abc  running  41873
+   ```
+
+4. Attach again from the same terminal or from a different one. More than one terminal can show the same session at the same time.
+
+   ```console
+   $ nomux attach k3xq2abc
+   ```
+
+5. End the session:
+
+   ```console
+   $ nomux kill k3xq2abc
+   session k3xq2abc ended
+   ```
+
+A session does not need the daemon: it continues when the daemon stops (`nomux daemon stop`), fails or is updated. The next command starts a new daemon, which finds the session.
+
+Each command accepts `--json`. [docs/cli.md](docs/cli.md) has the commands, the keys of an attach, the JSON schema and the exit codes.
 
 ## Install
 
@@ -45,6 +64,8 @@ Each release has one archive for each target and a `SHA256SUMS` file. An archive
 | macOS, Apple silicon | `aarch64-apple-darwin` |
 
 The Linux binaries are static. They do not use the C library of the host.
+
+The word `unknown` in the names of the Linux targets is the vendor field of the Rust target name. It is the same for all Linux targets and does not mean that a part of the target is not known.
 
 ### With the install script
 
@@ -101,12 +122,12 @@ The binaries are not signed and not notarized. Code signing and notarization sta
 | `crates/nomux-term` | library | Thin abstraction over the VT library (`alacritty_terminal`) | in use by the holder: the screen state, the redraw sequence and the OSC sequences |
 | `crates/nomux-holder-protocol` | library | Contract between a holder and the daemon: control messages, ring buffer layout, redraw memory, discovery files | in use by the holder |
 | `crates/nomux-holder` | binary `nomux-holder` | Session holder: owns the PTY of one session. No async runtime | first version: PTY, ring buffer, screen state, control socket, discovery files |
-| `crates/nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows | first version: the Unix socket of the local host |
+| `crates/nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows | first version: the Unix socket of the local host, the control channel and the terminal channels of an attach |
 | `crates/nomux-status` | library | Agent status resolver, rules, aggregation | structure only |
 | `crates/nomux-ext-host` | library | Extension host of the daemon | structure only |
-| `crates/nomuxd` | binary `nomuxd` | Daemon | first version: creates, lists and ends sessions, finds the holders after a restart |
-| `crates/nomux-client` | library | Protocol client for the CLI, the desktop client and the mobile clients | first version: connection, handshake, requests for sessions and for the daemon |
-| `crates/nomux-cli` | binary `nomux` | CLI | first version: `new`, `ls`, `kill`, `daemon status`, `daemon stop`, `version` |
+| `crates/nomuxd` | binary `nomuxd` | Daemon | first version: creates, lists and ends sessions, finds the holders after a restart, attaches clients to a session |
+| `crates/nomux-client` | library | Protocol client for the CLI, the desktop client and the mobile clients | first version: connection, handshake, requests for sessions and for the daemon, attach |
+| `crates/nomux-cli` | binary `nomux` | CLI | first version: `new`, `ls`, `attach`, `detach`, `kill`, `daemon status`, `daemon stop`, `version` |
 | `xtask` | binary | Developer tasks: `cargo xtask` | in use |
 | `bench` | directory | Performance tests and the performance targets | in use: the VT library benchmark |
 | `fuzz` | directory | Fuzz targets | structure only |
