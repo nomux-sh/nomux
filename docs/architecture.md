@@ -1,0 +1,132 @@
+# Architecture of the core
+
+This document shows the components of the nomux core and the responsibility of each component.
+It is an overview. The protocol specifications are in the [`proto`](https://github.com/nomux-sh/proto) repository.
+
+Milestone M0 contains the workspace structure only. No component in this document is implemented yet.
+The "Milestones" section shows which milestone adds each component.
+
+## Components
+
+```
+[Desktop client]     [CLI: nomux]     [Mobile clients]
+        \                 |                 /
+         +---------- nomux protocol -------+
+     (control: protobuf; terminal: binary frames; capability handshake)
+                          |
+   Transport: SSH (separate channels) | QUIC (separate streams) | Unix socket (local)
+                          v
++------------------------------ nomuxd (one on each host) ----------------------------+
+| sessions   : finds and manages the holders; sends stream or sync data to clients   |
+| state      : data model, status resolver, event log (SQLite, WAL)                  |
+| extensions : starts the daemon part of each extension; applies permissions         |
+| events     : event bus to the clients and to the notification channels             |
+| host       : identity, authentication, self-update (no session stops)              |
++------+---------------------------------------------------------+-------------------+
+       | Unix socket (control) + memfd ring buffer (data)        | stdio, framed protobuf
++------v--------------+  +------------------+          +---------v--------------------+
+| nomux-holder        |  | nomux-holder     |  ...     | extensions: git, fs,         |
+| PTY, VT state,      |  |                  |          | agent-*, notify-*, usage ... |
+| OSC parser,         |  |                  |          | (separate process, started   |
+| journal, checkpoint |  |                  |          | only when necessary)         |
++---------------------+  +------------------+          +------------------------------+
+```
+
+There are three process types in the core: the holder, the daemon and the client.
+The extensions are separate processes. They are not part of this repository.
+
+## Holder (`nomux-holder`)
+
+One holder owns the PTY of one session. The holder is a separate, small binary.
+
+Responsibilities:
+
+- Open the PTY and start the command of the session.
+- Always read the PTY, also when no client is connected.
+- Give the output to the VT parser, to the OSC parser (OSC 7501, 133, 9, 777) and to a ring buffer of fixed size. The ring buffer is shared memory (`memfd`). The daemon maps it and reads it without a copy.
+- Write the screen changes to a sequential journal, and write a checkpoint at intervals. Each session has an epoch and a sequence number. A client that connects again sends "epoch E, last sequence N" and gets only the part that it does not have.
+- Compress the long scrollback with zstd and write it to disk.
+- Write the discovery files in `~/.nomux/run/<id>/`: `pid` (the process ID and the process start time), `sock`, and `ready`. The holder writes `ready` last.
+- Accept one writer at a time (single-writer lease). During a daemon update, the old daemon and the new daemon cannot write to the holder at the same time.
+- Know the state of the input line (OSC 133 B and C). The delivery of team messages uses this state.
+
+Rules:
+
+- The holder has no async runtime. It uses `rustix` (`openpty`, `poll`, `memfd`, `mmap`) directly.
+- The holder stays alive when the daemon stops, crashes, gets `kill -9` or is updated.
+- The holder does not talk to clients. Only the daemon connects to a holder.
+- The protocol between the holder and the daemon has the strictest version rules. A daemon update does not replace a holder that runs.
+
+## Daemon (`nomuxd`)
+
+One daemon runs on each host.
+
+Responsibilities:
+
+- **Sessions:** Find the holders from their discovery files and connect to them, also after a daemon restart. Take the single-writer lease. Send terminal data to the clients. Keep a small pool of holders that already have a shell (warm pool), thus a new session starts immediately.
+- **State:** Keep the data model, the status resolver and the event log in SQLite (WAL mode).
+- **Extensions:** Start the daemon part of each extension as a separate process when a client needs it. Apply the permissions of the extension.
+- **Events:** Send events to the clients and to the notification channels.
+- **Host:** Keep the host identity, authenticate the clients, and update the daemon without stopping a session.
+- **Restore after reboot:** Restore all workspaces as metadata only. Start the process of a session when a client opens its tab for the first time.
+
+Rules:
+
+- The daemon does not own a PTY. Thus a daemon failure stops no session.
+- Terminal data does not go through the component that owns the state.
+- The daemon calculates data such as metrics or git status only while a client watches it.
+
+## Client (`nomux-client`, `nomux`)
+
+The client library `nomux-client` is the client side of the protocol. The CLI, the desktop client and the mobile clients use it.
+
+Responsibilities:
+
+- Connect to a daemon through a transport: a Unix socket on the local host, SSH or QUIC for a remote host.
+- Do the handshake: protocol version, oldest supported version and capability flags.
+- Send numbered control requests and receive the replies and the events.
+- Receive terminal data in one of two modes. If the client keeps up, it gets the raw bytes. If the client is behind, it gets only the latest state of the screen.
+- Send input on a separate channel that has the highest priority.
+- After a disconnect, attach again with the epoch and the last sequence number.
+
+Rules:
+
+- A client talks to the daemon only. It does not talk to a holder.
+- The CLI (`nomux`) contains no protocol code. It reads the command line, calls `nomux-client` and prints the result.
+
+## Crates
+
+| Crate | Type | Responsibility |
+|---|---|---|
+| `nomux-core` | library | Shared types, errors, configuration, glossary types |
+| `nomux-term` | library | Thin abstraction over the VT library, which lets the project replace the library |
+| `nomux-holder` | binary | The holder. No async runtime |
+| `nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows |
+| `nomux-status` | library | Status resolver, rules, aggregation. Pure code without I/O |
+| `nomux-ext-host` | library | Extension host of the daemon |
+| `nomuxd` | binary | The daemon |
+| `nomux-client` | library | Protocol client for the CLI, the desktop client and the mobile clients |
+| `nomux-cli` | binary `nomux` | The CLI |
+
+Planned direction of the dependencies:
+
+- `nomux-core` depends on no other nomux crate.
+- `nomux-holder` uses `nomux-core` and `nomux-term`. It must not use a crate that needs an async runtime.
+- `nomuxd` uses `nomux-core`, `nomux-term`, `nomux-transport`, `nomux-status` and `nomux-ext-host`.
+- `nomux-client` uses `nomux-core`, `nomux-term` and `nomux-transport`.
+- `nomux-cli` uses `nomux-client`.
+
+In milestone M0, the three binaries depend on `nomux-core` only, and the libraries have no dependencies.
+A crate gets a dependency when its code uses it.
+
+## Milestones
+
+| Milestone | Components in this repository |
+|---|---|
+| M0 | Workspace, tools, CI |
+| M1 | Holder, daemon, attach, warm pool, lazy restore, first CLI commands, VT library selection, Unix socket transport |
+| M2 | Remote hosts: SSH transport and bootstrap |
+| M3 | Extension host |
+| M4 | Agent status engine |
+| M8 | QUIC transport, port forwarding |
+| M9 | `uniffi` feature of `nomux-client` for the mobile clients |
