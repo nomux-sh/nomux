@@ -75,7 +75,7 @@ pub enum CellWidth {
     /// The character uses this cell and the cell at its right.
     Double,
     /// The cell at the right of a [`CellWidth::Double`] cell. It has no
-    /// character of its own.
+    /// character of its own. A screen always has the two cells together.
     Continuation,
 }
 
@@ -93,6 +93,16 @@ pub struct Cell<'a> {
 }
 
 impl Cell<'_> {
+    /// An empty cell with the style of this cell.
+    pub(crate) fn without_character(self) -> Self {
+        Self {
+            character: ' ',
+            combining: &[],
+            width: CellWidth::Single,
+            style: self.style,
+        }
+    }
+
     /// `true` if a new, empty screen has the same cell.
     pub(crate) fn is_blank(&self) -> bool {
         self.character == ' '

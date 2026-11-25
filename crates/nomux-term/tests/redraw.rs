@@ -1,7 +1,9 @@
 //! The contract of `Terminal::write_redraw`: the sequence makes the same
 //! screen in a new terminal.
 
-use nomux_term::{Attributes, Color, CursorShape, Modes, Position, Size, Terminal, Underline};
+use nomux_term::{
+    Attributes, CellWidth, Color, CursorShape, Modes, Position, Size, Style, Terminal, Underline,
+};
 
 const ROWS: u16 = 5;
 const COLUMNS: u16 = 20;
@@ -126,6 +128,50 @@ fn next_character_wraps_in_the_copy_after_a_full_row() {
 
     assert_same_screen(&source, &copy);
     assert_eq!(character_at(&copy, 1, 0), 'b');
+}
+
+/// Backward tab moves the cursor away from the last column, and a wider
+/// alternate screen moves the last column away from the cursor. The VT
+/// library keeps the wrap for the next character in the two cases.
+#[test]
+fn next_character_does_not_wrap_after_the_cursor_left_the_last_column() {
+    let full_row = "a".repeat(usize::from(COLUMNS));
+    let mut after_backward_tab = terminal_with(&format!("{full_row}\x1b[Z"));
+    let mut after_wider_screen = terminal_with(&format!("\x1b[?1049h{full_row}"));
+    after_wider_screen.resize(Size::new(ROWS, COLUMNS + 10).unwrap());
+
+    for (source, column) in [(&mut after_backward_tab, 16), (&mut after_wider_screen, 19)] {
+        let mut copy = copy_of(source);
+        assert_same_screen(source, &copy);
+
+        source.feed(b"b", |_| {});
+        copy.feed(b"b", |_| {});
+
+        assert_same_screen(source, &copy);
+        assert_eq!(character_at(&copy, 0, column), 'b');
+    }
+}
+
+/// Delete character on one cell of a wide character leaves the other cell.
+#[test]
+fn one_cell_of_a_wide_character_is_an_empty_cell_with_its_style() {
+    let red_background = Style {
+        background: Color::Indexed(1),
+        ..Style::default()
+    };
+    for delete_at in ["\x1b[1;1H", "\x1b[1;2H"] {
+        let mut source = terminal_with(&format!("\x1b[41m日\x1b[0mx{delete_at}\x1b[P"));
+        let copy = copy_of(&mut source);
+
+        assert_same_screen(&source, &copy);
+        let first = Position { row: 0, column: 0 };
+        let cell = copy.screen().cell(first).unwrap();
+        assert_eq!(
+            (cell.character, cell.width, cell.style),
+            (' ', CellWidth::Single, red_background)
+        );
+        assert_eq!(character_at(&copy, 0, 1), 'x');
+    }
 }
 
 #[test]

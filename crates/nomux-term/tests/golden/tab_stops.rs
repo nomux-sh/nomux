@@ -122,3 +122,22 @@ cursor 0,17
 ",
     );
 }
+
+/// A known gap: after a character in the last column, the VT library keeps
+/// the wrap when a backward tab moves the cursor. A VT terminal writes the
+/// next character at the tab stop. `nomux-term` ends the wrap at the end of
+/// a call of `Terminal::feed`, not in the call.
+#[test]
+fn backward_tab_after_the_last_column_keeps_the_wrap_in_the_same_call() {
+    assert_screen(
+        "aaaaaaaaaaaaaaaaaaaa\x1b[Zb",
+        "
+|aaaaaaaaaaaaaaaaaaaa|
+|b                   |
+|                    |
+|                    |
+|                    |
+cursor 1,1
+",
+    );
+}
