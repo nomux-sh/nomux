@@ -2,6 +2,7 @@
 
 use std::convert::Infallible;
 use std::io;
+use std::os::unix::fs::FileExt;
 
 use nomux_holder_protocol::ring::{Overrun, RingReader, RingWriter, region_length};
 
@@ -150,6 +151,29 @@ fn a_reader_continues_from_the_position_that_it_seeks() {
     write_all(&mut writer, &pattern(3000, 3000));
     reader.seek(1000);
     assert_eq!(read_all(&mut reader), Err(Overrun { lost: 5000 }));
+}
+
+/// A holder that the daemon does not trust can store each value in its
+/// positions.
+#[test]
+fn a_read_over_the_largest_position_continues_at_position_0() {
+    const COMMITTED_OFFSET: u64 = 40;
+    let near_the_largest = u64::MAX - 1;
+    let memory = shared_memory();
+    let store_committed = |position: u64| {
+        memory
+            .write_all_at(&position.to_le_bytes(), COMMITTED_OFFSET)
+            .expect("the test helper works");
+    };
+    let _writer = RingWriter::create(&memory, CAPACITY).expect("the test helper works");
+    let mut reader = RingReader::map(&memory).expect("the test helper works");
+    store_committed(near_the_largest);
+    reader.seek(near_the_largest);
+
+    store_committed(5);
+
+    assert_eq!(reader.read(&mut [0; 100]), Ok(7));
+    assert_eq!(reader.position(), 5);
 }
 
 #[test]

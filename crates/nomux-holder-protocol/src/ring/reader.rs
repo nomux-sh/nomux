@@ -137,7 +137,9 @@ impl RingReader {
         if claimed.wrapping_sub(self.position) > self.capacity as u64 {
             return Err(self.skip_to(self.write_position()));
         }
-        self.position += count as u64;
+        // A holder that is not trusted can put the positions near the
+        // largest value.
+        self.position = self.position.wrapping_add(count as u64);
         Ok(count)
     }
 
