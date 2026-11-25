@@ -26,7 +26,7 @@ base64 = "0.22.1"
 clap = { version = "4.6.10", features = ["derive"] }
 getrandom = "0.4.3"
 libc = "0.2.191"
-nomux-proto = "0.2.0"
+nomux-proto = "0.3.0"
 prost = "0.14.6"
 rustix = "1.1.6"
 serde = { version = "1.0.229", features = ["derive"] }

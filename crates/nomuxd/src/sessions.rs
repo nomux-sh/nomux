@@ -1,48 +1,29 @@
-//! The operations on sessions: create, list, end, and take over the sessions
+//! The operations on sessions: create, list, find, and take over the sessions
 //! of an earlier daemon.
 
 use std::env;
-use std::error::Error;
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 use nomux_holder_protocol::SessionId;
 use nomux_holder_protocol::discovery::{HolderState, SOCKET_FILE, holder_directory, scan};
-use tokio::sync::{mpsc, oneshot};
-use tokio::time::timeout;
+use tokio::sync::{mpsc, watch};
 use tracing::{info, warn};
 
-use crate::holder::{self, HolderLink, KillRequest, LaunchError, Supervisor};
+use crate::holder::{self, HolderLink, LaunchError, SharedOutputFeed, Supervisor};
+use crate::session_error::SessionError;
+use crate::session_handle::SessionHandle;
 use crate::session_id;
 use crate::session_registry::{SessionRecord, SessionRegistry, SessionState};
 use crate::shutdown::Shutdown;
 
-/// The longest time that a request waits for the end of a session. The task
-/// of the holder sends `SIGKILL` earlier than this.
-const KILL_TIMEOUT: Duration = Duration::from_secs(10);
-/// One client can have a few kill requests for the same session open.
-const KILL_REQUEST_QUEUE: usize = 8;
+/// The commands of the attached clients and of the request handlers that
+/// wait for the task of one session. A sender waits when the queue is full,
+/// thus input that the holder does not take uses no more memory.
+const COMMAND_QUEUE: usize = 64;
 const FALLBACK_SHELL: &str = "/bin/sh";
-
-/// Why an operation on a session did not succeed.
-#[derive(Debug)]
-pub(crate) enum SessionError {
-    NotFound(String),
-    Timeout(String),
-    Failed(String),
-}
-
-impl fmt::Display for SessionError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (Self::NotFound(message) | Self::Timeout(message) | Self::Failed(message)) = self;
-        formatter.write_str(message)
-    }
-}
-
-impl Error for SessionError {}
 
 /// The sessions of the host.
 pub(crate) struct Sessions {
@@ -73,12 +54,15 @@ impl Sessions {
                     continue;
                 }
                 HolderState::Starting => None,
-                HolderState::Live => holder::open(&holder.socket_path(), &holder.session_id)
-                    .await
-                    .inspect_err(|error| {
-                        warn!(session = %holder.session_id, %error, "cannot connect to a holder");
-                    })
-                    .ok(),
+                HolderState::Live => holder::open_with_lease(
+                    &holder.socket_path(),
+                    &holder.session_id,
+                )
+                .await
+                .inspect_err(|error| {
+                    warn!(session = %holder.session_id, %error, "cannot connect to a holder");
+                })
+                .ok(),
             };
             self.supervise(holder.session_id, link);
         }
@@ -112,8 +96,7 @@ impl Sessions {
             LaunchError::NotReady => SessionError::Timeout(error.to_string()),
             _ => start_failure(error),
         })?;
-        let socket = holder_directory(&self.runtime_directory, &session_id).join(SOCKET_FILE);
-        let link = holder::open(&socket, &session_id)
+        let link = holder::open_with_lease(&self.holder_socket(&session_id), &session_id)
             .await
             .map_err(start_failure)?;
         Ok(self.supervise(session_id, Some(link)))
@@ -124,31 +107,32 @@ impl Sessions {
         self.registry.records()
     }
 
-    /// Ends the session `id` and waits until its command has ended.
-    pub(crate) async fn kill(&self, id: &str) -> Result<(), SessionError> {
-        let not_found = || SessionError::NotFound(format!("no session has the identifier {id}"));
-        // Text that is not a session identifier names no session.
-        let session_id: SessionId = id.parse().map_err(|_| not_found())?;
-        let kill_requests = self
-            .registry
-            .kill_requests(&session_id)
-            .ok_or_else(not_found)?;
+    /// The session `id`, in each state.
+    pub(crate) fn find(&self, id: &str) -> Result<Arc<SessionHandle>, SessionError> {
+        self.find_with_state(id).map(|(_, handle)| handle)
+    }
 
-        let (done, ended) = oneshot::channel();
-        // If the task of the session is gone, the session has ended.
-        if kill_requests.send(KillRequest { done }).await.is_err() {
-            return Ok(());
-        }
-        match timeout(KILL_TIMEOUT, ended).await {
-            Ok(Ok(Ok(())) | Err(_)) => Ok(()),
-            Ok(Ok(Err(error))) => Err(SessionError::Failed(format!(
-                "session {id} did not end: {error}"
-            ))),
-            Err(_) => Err(SessionError::Timeout(format!(
-                "session {id} did not end in {} seconds",
-                KILL_TIMEOUT.as_secs()
+    /// The session `id`, if the daemon has a connection to its holder. A
+    /// request for the terminal of a session cannot wait for a holder that
+    /// does not answer.
+    pub(crate) fn find_reachable(&self, id: &str) -> Result<Arc<SessionHandle>, SessionError> {
+        match self.find_with_state(id)? {
+            (SessionState::Running { .. }, handle) => Ok(handle),
+            (SessionState::Unreachable, _) => Err(SessionError::Failed(format!(
+                "the daemon has no connection to the holder of session {id}"
             ))),
         }
+    }
+
+    fn find_with_state(
+        &self,
+        id: &str,
+    ) -> Result<(SessionState, Arc<SessionHandle>), SessionError> {
+        // Text that is not a session identifier names no session.
+        id.parse()
+            .ok()
+            .and_then(|session_id: SessionId| self.registry.find(&session_id))
+            .ok_or_else(|| SessionError::NotFound(format!("no session has the identifier {id}")))
     }
 
     /// Puts a session into the list and starts the task that owns the
@@ -156,25 +140,33 @@ impl Sessions {
     fn supervise(&self, session_id: SessionId, link: Option<HolderLink>) -> SessionRecord {
         let state = match &link {
             Some(link) => SessionState::Running {
-                pid: link.command_pid,
+                pid: link.hello.child_pid,
             },
             None => SessionState::Unreachable,
         };
-        let (kill_requests, receiver) = mpsc::channel(KILL_REQUEST_QUEUE);
+        let (commands, command_receiver) = mpsc::channel(COMMAND_QUEUE);
+        let (ended_sender, ended) = watch::channel(None);
+        let output = SharedOutputFeed::new(self.holder_socket(&session_id), session_id.clone());
+        let handle = SessionHandle::new(session_id.clone(), commands, ended, output);
         self.registry
-            .insert(session_id.clone(), state, kill_requests);
+            .insert(session_id.clone(), state, Arc::new(handle));
         let supervisor = Supervisor::new(
             session_id.clone(),
             self.runtime_directory.clone(),
             Arc::clone(&self.registry),
             self.shutdown.clone(),
-            receiver,
+            command_receiver,
+            ended_sender,
         );
         tokio::spawn(supervisor.run(link));
         SessionRecord {
             id: session_id,
             state,
         }
+    }
+
+    fn holder_socket(&self, session_id: &SessionId) -> PathBuf {
+        holder_directory(&self.runtime_directory, session_id).join(SOCKET_FILE)
     }
 
     /// A random identifier that no session and no holder directory has.

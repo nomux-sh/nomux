@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use nomux_transport::LocalListener;
+use tokio::task::spawn_local;
 use tokio::time::sleep;
 use tracing::warn;
 
@@ -22,7 +23,9 @@ pub(crate) async fn serve(listener: LocalListener, context: Arc<Context>) {
             () = context.shutdown.requested() => return,
             accepted = listener.accept() => match accepted {
                 Ok(stream) => {
-                    tokio::spawn(client_connection::serve(stream, Arc::clone(&context)));
+                    // An attach holds a reader of a ring buffer, which stays
+                    // on the thread that mapped the memory.
+                    spawn_local(client_connection::serve(stream, Arc::clone(&context)));
                 }
                 Err(error) => {
                     warn!(%error, "a connection was not accepted");

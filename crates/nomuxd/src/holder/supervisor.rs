@@ -1,5 +1,6 @@
-//! The task that owns the connection to one holder.
+//! The task that owns the connection with the lease to one holder.
 
+use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 use std::io;
@@ -9,13 +10,15 @@ use std::time::Duration;
 
 use nomux_holder_protocol::SessionId;
 use nomux_holder_protocol::discovery::{DiscoveredHolder, HolderState, scan};
-use nomux_holder_protocol::wire::{ChildSignal, ChildStatus, ErrorCode, Reply, Request};
-use tokio::sync::{mpsc, oneshot};
+use nomux_holder_protocol::wire::{
+    ChildSignal, ChildStatus, ErrorCode, MAX_PAYLOAD_LENGTH, Reply, Request, WindowSize,
+};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::{Instant, sleep, sleep_until};
 use tracing::{debug, error, info, warn};
 
 use super::backoff::Backoff;
-use super::connection::{HolderConnection, HolderLink, open};
+use super::connection::{HolderConnection, HolderLink, open_with_lease};
 use crate::session_registry::{SessionRegistry, SessionState};
 use crate::shutdown::Shutdown;
 
@@ -27,54 +30,96 @@ const HANGUP_GRACE: Duration = Duration::from_secs(2);
 /// learns the end of the command without a timer.
 const NEVER_WRITTEN: u64 = u64::MAX;
 
-/// A request to end the session. The task answers on `done` when the command
-/// has ended.
-pub(crate) struct KillRequest {
-    pub(crate) done: oneshot::Sender<Result<(), KillError>>,
+/// The answer to a command that writes to the holder.
+pub(crate) type WriteDone = oneshot::Sender<Result<(), WriteError>>;
+
+/// What a request handler or an attached client asks the task to do. Only
+/// this task can write to the holder, because its connection has the lease.
+pub(crate) enum SessionCommand {
+    /// End the session. The task answers when the command has ended.
+    Kill { done: WriteDone },
+    /// Write bytes to the terminal. With `done`, the task answers when the
+    /// holder has the bytes.
+    Input {
+        bytes: Vec<u8>,
+        done: Option<WriteDone>,
+    },
+    /// Change the size of the terminal window.
+    Resize { size: WindowSize, done: WriteDone },
 }
 
-/// Why a session did not end.
+/// Why the holder did not do a command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum KillError {
+pub(crate) enum WriteError {
     /// A different daemon took the single-writer lease of the holder.
     LeaseLost,
-    /// The holder did not send the signal.
+    /// The holder refused the request.
     Refused(ErrorCode),
 }
 
-impl fmt::Display for KillError {
+impl fmt::Display for WriteError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::LeaseLost => {
                 formatter.write_str("a different daemon has the lease of the session")
             }
-            Self::Refused(code) => write!(formatter, "the holder refused the signal: {code:?}"),
+            Self::Refused(ErrorCode::ChildExited) => {
+                formatter.write_str("the command of the session has ended")
+            }
+            Self::Refused(code) => write!(formatter, "the holder refused the request: {code:?}"),
         }
     }
 }
 
-impl Error for KillError {}
+impl Error for WriteError {}
+
+/// How a session ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SessionEnd {
+    /// The command ended with an exit code.
+    Exited { code: i32 },
+    /// A signal ended the command.
+    Signaled { signal: i32 },
+    /// The holder is gone, and the daemon did not get the exit status.
+    Lost,
+}
 
 /// How one connection to the holder ended.
 enum Served {
-    /// The command of the session has ended.
-    SessionEnded,
+    SessionEnded(SessionEnd),
     /// A different daemon took the single-writer lease.
     LeaseLost,
     ConnectionLost(io::Error),
 }
 
+/// What the reply to a request that is with the holder means.
+enum Expected {
+    /// `WaitOutput`: the command has ended.
+    EndOfCommand,
+    Status,
+    /// A signal for a kill request.
+    Signal,
+    /// `Input` or `Resize`.
+    Write(Option<WriteDone>),
+}
+
 /// Owns the connection to the holder of one session for the life of the
-/// session: it watches for the end of the command, ends the session on
+/// session: it watches for the end of the command, writes to the holder on
 /// request, and connects again after the connection is lost.
 pub(crate) struct Supervisor {
     session_id: SessionId,
     runtime_directory: PathBuf,
     registry: Arc<SessionRegistry>,
     shutdown: Shutdown,
-    kill_requests: mpsc::Receiver<KillRequest>,
+    commands: mpsc::Receiver<SessionCommand>,
+    /// Tells the attached clients how the session ended.
+    ended: watch::Sender<Option<SessionEnd>>,
     /// The requests that wait for the end of the session.
-    kill_waiters: Vec<oneshot::Sender<Result<(), KillError>>>,
+    kill_waiters: Vec<WriteDone>,
+    /// When the command gets `SIGKILL`, after a kill request.
+    force_kill_at: Option<Instant>,
+    /// The requests of the current connection that have no reply yet.
+    in_flight: VecDeque<(u32, Expected)>,
 }
 
 impl Supervisor {
@@ -83,35 +128,39 @@ impl Supervisor {
         runtime_directory: PathBuf,
         registry: Arc<SessionRegistry>,
         shutdown: Shutdown,
-        kill_requests: mpsc::Receiver<KillRequest>,
+        commands: mpsc::Receiver<SessionCommand>,
+        ended: watch::Sender<Option<SessionEnd>>,
     ) -> Self {
         Self {
             session_id,
             runtime_directory,
             registry,
             shutdown,
-            kill_requests,
+            commands,
+            ended,
             kill_waiters: Vec::new(),
+            force_kill_at: None,
+            in_flight: VecDeque::new(),
         }
     }
 
     /// Runs until the session ends. Without a link, the task connects to
     /// the holder first.
     pub(crate) async fn run(mut self, mut link: Option<HolderLink>) {
-        loop {
+        let end = loop {
             let current = match link.take() {
                 Some(link) => link,
                 None => match self.reconnect().await {
                     Some(link) => link,
-                    None => break,
+                    None => break SessionEnd::Lost,
                 },
             };
             let state = SessionState::Running {
-                pid: current.command_pid,
+                pid: current.hello.child_pid,
             };
             self.registry.set_state(&self.session_id, state);
             match self.serve(current.connection).await {
-                Served::SessionEnded => break,
+                Served::SessionEnded(end) => break end,
                 Served::LeaseLost => return self.give_way_to_new_daemon(),
                 Served::ConnectionLost(error) => {
                     warn!(session = %self.session_id, %error, "the connection to the holder is lost");
@@ -119,9 +168,10 @@ impl Supervisor {
                         .set_state(&self.session_id, SessionState::Unreachable);
                 }
             }
-        }
-        info!(session = %self.session_id, "the session ended");
+        };
+        info!(session = %self.session_id, ?end, "the session ended");
         self.registry.remove(&self.session_id);
+        self.ended.send_replace(Some(end));
         self.answer_kill_waiters(Ok(()));
     }
 
@@ -129,11 +179,14 @@ impl Supervisor {
     /// lease last has it, thus this daemon stops.
     fn give_way_to_new_daemon(mut self) {
         error!(session = %self.session_id, "a different daemon took the lease of the holder; this daemon stops");
-        self.answer_kill_waiters(Err(KillError::LeaseLost));
+        self.answer_kill_waiters(Err(WriteError::LeaseLost));
         self.shutdown.trigger();
     }
 
     async fn serve(&mut self, mut connection: HolderConnection) -> Served {
+        // The requests of an earlier connection get no reply. Their waiters
+        // learn that when their channel closes.
+        self.in_flight.clear();
         match self.converse(&mut connection).await {
             Ok(served) => served,
             Err(error) => Served::ConnectionLost(error),
@@ -141,44 +194,145 @@ impl Supervisor {
     }
 
     async fn converse(&mut self, connection: &mut HolderConnection) -> io::Result<Served> {
-        connection.send(wait_for_end()).await?;
+        self.request(connection, wait_for_end(), Expected::EndOfCommand)
+            .await?;
         // A kill request from before a lost connection continues here.
-        let mut force_at = if self.kill_waiters.is_empty() {
-            None
-        } else {
-            Some(hang_up(connection).await?)
-        };
+        if !self.kill_waiters.is_empty() {
+            self.hang_up(connection).await?;
+        }
         loop {
             tokio::select! {
-                reply = connection.receive() => match reply? {
-                    Reply::Output { .. } => connection.send(Request::Status).await?,
-                    Reply::Status(ChildStatus::Running) => connection.send(wait_for_end()).await?,
-                    Reply::Status(_) => return Ok(Served::SessionEnded),
-                    Reply::Error(ErrorCode::LeaseRequired) => return Ok(Served::LeaseLost),
-                    // The command ended before the signal. The reply to
-                    // `WaitOutput` says so too.
-                    Reply::Error(ErrorCode::ChildExited) => {}
-                    Reply::Error(code) => {
-                        warn!(session = %self.session_id, ?code, "the holder refused a request");
-                        self.answer_kill_waiters(Err(KillError::Refused(code)));
-                        force_at = None;
+                reply = connection.receive() => {
+                    let (request_id, reply) = reply?;
+                    if let Some(served) = self.handle_reply(connection, request_id, reply).await? {
+                        return Ok(served);
                     }
-                    // `Done`, and the replies to requests that this task
-                    // does not send.
-                    _ => {}
-                },
-                Some(request) = self.kill_requests.recv() => {
-                    if self.kill_waiters.is_empty() {
-                        force_at = Some(hang_up(connection).await?);
-                    }
-                    self.kill_waiters.push(request.done);
                 }
-                () = sleep_until(force_at.unwrap_or_else(Instant::now)), if force_at.is_some() => {
-                    connection.send(Request::Signal(ChildSignal::Kill)).await?;
-                    force_at = None;
+                Some(command) = self.commands.recv() => self.handle_command(connection, command).await?,
+                () = sleep_until(self.force_kill_at.unwrap_or_else(Instant::now)), if self.force_kill_at.is_some() => {
+                    self.force_kill_at = None;
+                    self.request(connection, Request::Signal(ChildSignal::Kill), Expected::Signal).await?;
                 }
             }
         }
+    }
+
+    async fn handle_command(
+        &mut self,
+        connection: &mut HolderConnection,
+        command: SessionCommand,
+    ) -> io::Result<()> {
+        match command {
+            SessionCommand::Kill { done } => {
+                if self.kill_waiters.is_empty() {
+                    self.hang_up(connection).await?;
+                }
+                self.kill_waiters.push(done);
+            }
+            SessionCommand::Input { bytes, done } => {
+                // The answer belongs to the last frame: the holder answers
+                // the frames in their sequence.
+                let mut frames = bytes.chunks(MAX_PAYLOAD_LENGTH).peekable();
+                let mut done = done;
+                while let Some(frame) = frames.next() {
+                    let done = if frames.peek().is_none() {
+                        done.take()
+                    } else {
+                        None
+                    };
+                    self.request(connection, Request::Input(frame), Expected::Write(done))
+                        .await?;
+                }
+            }
+            SessionCommand::Resize { size, done } => {
+                self.request(
+                    connection,
+                    Request::Resize(size),
+                    Expected::Write(Some(done)),
+                )
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Does what the reply to an earlier request needs. Returns how the
+    /// connection ended, if the reply ends it.
+    async fn handle_reply(
+        &mut self,
+        connection: &mut HolderConnection,
+        request_id: u32,
+        reply: Reply,
+    ) -> io::Result<Option<Served>> {
+        let Some(index) = self.in_flight.iter().position(|(id, _)| *id == request_id) else {
+            return Ok(None);
+        };
+        let Some((_, expected)) = self.in_flight.remove(index) else {
+            return Ok(None);
+        };
+        match (expected, reply) {
+            (Expected::Write(done), Reply::Error(ErrorCode::LeaseRequired)) => {
+                answer(done, Err(WriteError::LeaseLost));
+                return Ok(Some(Served::LeaseLost));
+            }
+            (_, Reply::Error(ErrorCode::LeaseRequired)) => return Ok(Some(Served::LeaseLost)),
+            (Expected::EndOfCommand, Reply::Output { .. }) => {
+                self.request(connection, Request::Status, Expected::Status)
+                    .await?;
+            }
+            (Expected::Status, Reply::Status(ChildStatus::Running)) => {
+                self.request(connection, wait_for_end(), Expected::EndOfCommand)
+                    .await?;
+            }
+            (Expected::Status, Reply::Status(ChildStatus::Exited { code })) => {
+                return Ok(Some(Served::SessionEnded(SessionEnd::Exited { code })));
+            }
+            (Expected::Status, Reply::Status(ChildStatus::Signaled { signal })) => {
+                return Ok(Some(Served::SessionEnded(SessionEnd::Signaled { signal })));
+            }
+            // The command ended before the signal. The reply to `WaitOutput`
+            // says so too.
+            (Expected::Signal, Reply::Done | Reply::Error(ErrorCode::ChildExited)) => {}
+            (Expected::Signal, Reply::Error(code)) => {
+                warn!(session = %self.session_id, ?code, "the holder refused a signal");
+                self.answer_kill_waiters(Err(WriteError::Refused(code)));
+                self.force_kill_at = None;
+            }
+            (Expected::Write(done), Reply::Done) => answer(done, Ok(())),
+            (Expected::Write(done), Reply::Error(code)) => {
+                debug!(session = %self.session_id, ?code, "the holder refused a write");
+                answer(done, Err(WriteError::Refused(code)));
+            }
+            (_, reply) => {
+                warn!(session = %self.session_id, ?reply, "the holder sent a reply that does not answer its request");
+            }
+        }
+        Ok(None)
+    }
+
+    /// Sends one request and records what its reply means.
+    async fn request(
+        &mut self,
+        connection: &mut HolderConnection,
+        request: Request<'_>,
+        expected: Expected,
+    ) -> io::Result<()> {
+        let request_id = connection.send(request).await?;
+        self.in_flight.push_back((request_id, expected));
+        Ok(())
+    }
+
+    /// Sends `SIGHUP`, the signal that the end of a terminal gives to its
+    /// processes. `SIGKILL` follows after the grace time.
+    async fn hang_up(&mut self, connection: &mut HolderConnection) -> io::Result<()> {
+        self.request(
+            connection,
+            Request::Signal(ChildSignal::Hangup),
+            Expected::Signal,
+        )
+        .await?;
+        self.force_kill_at = Some(Instant::now() + HANGUP_GRACE);
+        Ok(())
     }
 
     /// Connects to the holder again. The pause between two attempts grows,
@@ -198,7 +352,7 @@ impl Supervisor {
                     }
                     HolderState::Starting => {}
                     HolderState::Live => {
-                        match open(&holder.socket_path(), &self.session_id).await {
+                        match open_with_lease(&holder.socket_path(), &self.session_id).await {
                             Ok(link) => return Some(link),
                             Err(error) => {
                                 debug!(session = %self.session_id, %error, "cannot connect to the holder");
@@ -223,11 +377,17 @@ impl Supervisor {
             .find(|holder| holder.session_id == self.session_id))
     }
 
-    fn answer_kill_waiters(&mut self, result: Result<(), KillError>) {
+    fn answer_kill_waiters(&mut self, result: Result<(), WriteError>) {
         for waiter in self.kill_waiters.drain(..) {
-            // A waiter that is gone stopped waiting.
-            let _ = waiter.send(result);
+            answer(Some(waiter), result);
         }
+    }
+}
+
+fn answer(done: Option<WriteDone>, result: Result<(), WriteError>) {
+    if let Some(done) = done {
+        // A waiter that is gone stopped waiting.
+        let _ = done.send(result);
     }
 }
 
@@ -235,13 +395,4 @@ fn wait_for_end() -> Request<'static> {
     Request::WaitOutput {
         after: NEVER_WRITTEN,
     }
-}
-
-/// Sends `SIGHUP`, the signal that the end of a terminal gives to its
-/// processes. Returns the time when `SIGKILL` follows.
-async fn hang_up(connection: &mut HolderConnection) -> io::Result<Instant> {
-    connection
-        .send(Request::Signal(ChildSignal::Hangup))
-        .await?;
-    Ok(Instant::now() + HANGUP_GRACE)
 }

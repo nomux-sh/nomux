@@ -14,9 +14,14 @@
 //!   daemon, and the rule that one daemon uses it at a time.
 //! - `listener`, `client_connection`, `handshake`, `handlers`: the client
 //!   side. One task serves one client connection.
-//! - `sessions`, `session_registry`, `session_id`: the operations on
-//!   sessions and the list of the sessions that the daemon knows.
-//! - `holder`: the holder side. One task owns the connection to one holder.
+//! - `sessions`, `session_registry`, `session_handle`, `session_id`,
+//!   `session_error`: the operations on sessions, the list of the sessions
+//!   that the daemon knows, and the ways into one session.
+//! - `holder`: the holder side. One task owns the connection with the lease
+//!   to one holder. A second connection reads the terminal while a client
+//!   is attached.
+//! - `attachment`: one attached client: the screen and the output go to the
+//!   client, and the input comes from it.
 //! - `shutdown`, `in_flight_requests`: the stop of the daemon.
 //! - `detach`, `logging`, `arguments`: the process setup.
 //!
@@ -28,11 +33,12 @@
 //!
 //! # Status
 //!
-//! The daemon creates, lists and ends sessions. It does not send terminal
-//! data to a client yet, and it has no state database, no extension host and
-//! no remote transport.
+//! The daemon creates, lists and ends sessions, and it attaches clients to
+//! them. It has no state database, no extension host and no remote
+//! transport.
 
 mod arguments;
+mod attachment;
 mod client_connection;
 mod daemon;
 mod detach;
@@ -44,6 +50,8 @@ mod instance_lock;
 mod listener;
 mod logging;
 mod runtime_directory;
+mod session_error;
+mod session_handle;
 mod session_id;
 mod session_registry;
 mod sessions;
@@ -88,7 +96,8 @@ fn serve() -> io::Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    runtime.block_on(daemon::run())
+    // The tasks of the client connections are local to this thread.
+    runtime.block_on(tokio::task::LocalSet::new().run_until(daemon::run()))
 }
 
 /// Makes the daemon the leader of a new session. Thus the end of the

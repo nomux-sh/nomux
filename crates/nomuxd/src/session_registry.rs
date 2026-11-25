@@ -1,12 +1,11 @@
 //! The sessions that the daemon knows, and their state.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use nomux_holder_protocol::SessionId;
-use tokio::sync::mpsc;
 
-use crate::holder::KillRequest;
+use crate::session_handle::SessionHandle;
 
 /// The state of a session, as the daemon knows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,8 +28,7 @@ pub(crate) struct SessionRecord {
 
 struct Entry {
     state: SessionState,
-    /// The way to the task that owns the connection to the holder.
-    kill_requests: mpsc::Sender<KillRequest>,
+    handle: Arc<SessionHandle>,
 }
 
 /// The list of the sessions. The task of each holder keeps the state of its
@@ -41,17 +39,8 @@ pub(crate) struct SessionRegistry {
 }
 
 impl SessionRegistry {
-    pub(crate) fn insert(
-        &self,
-        id: SessionId,
-        state: SessionState,
-        kill_requests: mpsc::Sender<KillRequest>,
-    ) {
-        let entry = Entry {
-            state,
-            kill_requests,
-        };
-        self.entries().insert(id, entry);
+    pub(crate) fn insert(&self, id: SessionId, state: SessionState, handle: Arc<SessionHandle>) {
+        self.entries().insert(id, Entry { state, handle });
     }
 
     pub(crate) fn set_state(&self, id: &SessionId, state: SessionState) {
@@ -82,10 +71,11 @@ impl SessionRegistry {
         records
     }
 
-    /// The way to ask the task of the session `id` to end the session.
-    pub(crate) fn kill_requests(&self, id: &SessionId) -> Option<mpsc::Sender<KillRequest>> {
+    /// The state of the session `id` and the ways into it.
+    pub(crate) fn find(&self, id: &SessionId) -> Option<(SessionState, Arc<SessionHandle>)> {
         let entries = self.entries();
-        Some(entries.get(id)?.kill_requests.clone())
+        let entry = entries.get(id)?;
+        Some((entry.state, Arc::clone(&entry.handle)))
     }
 
     fn entries(&self) -> MutexGuard<'_, HashMap<SessionId, Entry>> {
