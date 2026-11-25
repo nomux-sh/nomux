@@ -12,6 +12,7 @@ The user documentation is not here. It is in the [`docs`](https://github.com/nom
 | [holder.md](holder.md) | The holder: process model, ring buffer, control protocol, discovery files | in use |
 | [daemon.md](daemon.md) | The daemon: process model, socket, lifecycle, how it finds and holds the holders | in use |
 | [cli.md](cli.md) | The CLI: commands, JSON schema, exit codes | in use |
+| [extensions.md](extensions.md) | The extension host: installed extensions, life cycle of a process, isolation, limits | in use |
 
 ## Status
 

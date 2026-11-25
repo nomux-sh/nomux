@@ -122,7 +122,7 @@ The binaries are not signed and not notarized. Code signing and notarization sta
 | `crates/nomux-holder` | binary `nomux-holder` | Session holder: owns the PTY of one session. No async runtime | first version: PTY, ring buffer, screen state, control socket, discovery files |
 | `crates/nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows | first version: the Unix socket of the local host, the control channel and the terminal channels of an attach |
 | `crates/nomux-status` | library | Agent status resolver, rules, aggregation | structure only |
-| `crates/nomux-ext-host` | library | Extension host of the daemon | structure only |
+| `crates/nomux-ext-host` | library | Extension host of the daemon | first version: installed extensions, a process for each extension in use, calls, events, isolation of failures. The daemon does not use it yet |
 | `crates/nomuxd` | binary `nomuxd` | Daemon | first version: creates, lists and ends sessions, finds the holders after a restart, attaches clients to a session |
 | `crates/nomux-client` | library | Protocol client for the CLI, the desktop client and the mobile clients | first version: connection, handshake, requests for sessions and for the daemon, attach |
 | `crates/nomux-cli` | binary `nomux` | CLI | first version: `new`, `ls`, `attach`, `detach`, `kill`, `daemon status`, `daemon stop`, `version` |

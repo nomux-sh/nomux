@@ -14,7 +14,7 @@ Rules for coding agents and for people who work in this repository. `CLAUDE.md` 
 | `crates/nomux-holder` | Binary `nomux-holder`: owns the PTY of one session. |
 | `crates/nomux-transport` | Unix socket, SSH channels, QUIC streams, credit windows. Now: the socket of the daemon on the local host, the framing of the control channel and the framing of the terminal channels of an attach. |
 | `crates/nomux-status` | Agent status resolver, rules, aggregation. |
-| `crates/nomux-ext-host` | Extension host of the daemon. |
+| `crates/nomux-ext-host` | Extension host of the daemon: the installed extensions, the process of each extension in use, calls, events and the isolation of failures. [docs/extensions.md](docs/extensions.md) describes it. |
 | `crates/nomuxd` | Binary `nomuxd`: the daemon. [docs/daemon.md](docs/daemon.md) describes it. |
 | `crates/nomux-client` | Protocol client for the CLI, the desktop client and the mobile clients: the requests, and the terminal of an attach as a stream of output and a sink for input. It has no terminal handling. |
 | `crates/nomux-cli` | Binary `nomux`: the CLI. [docs/cli.md](docs/cli.md) has the commands, the keys of an attach, the JSON schema and the exit codes. |
