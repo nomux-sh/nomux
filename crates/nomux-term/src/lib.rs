@@ -11,8 +11,11 @@
 //!   screen in a new terminal. The daemon sends it to a client that attaches.
 //! - [`Terminal::incomplete_tail`] is the number of bytes at the end of the
 //!   output that are a sequence or a character that is not complete.
-//! - [`Osc`] is an OSC sequence that the VT library does not handle. The
-//!   holder gets the agent status and the prompt marks from these sequences.
+//! - [`Osc`] is an OSC sequence that the VT library does not handle.
+//!   [`Osc::record`] parses the sequences with which a program or a shell
+//!   reports its state: the program status (OSC 7501), the prompt marks
+//!   (OSC 133) and the notifications (OSC 9, OSC 777). [`osc`] has the
+//!   parsers.
 //!
 //! The types of the VT library are not in this interface, thus the project
 //! can replace the library.
@@ -53,7 +56,7 @@ mod cell;
 mod conversion;
 mod cursor;
 mod modes;
-mod osc;
+pub mod osc;
 mod redraw;
 mod screen;
 mod sequence_scanner;

@@ -416,6 +416,7 @@ name = "nomux-term"
 version = "0.0.0"
 dependencies = [
  "alacritty_terminal",
+ "base64",
  "bitflags",
  "memchr",
 ]

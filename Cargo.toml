@@ -22,6 +22,7 @@ nomux-holder-protocol = { path = "crates/nomux-holder-protocol", version = "0.0.
 nomux-term = { path = "crates/nomux-term", version = "0.0.0" }
 nomux-transport = { path = "crates/nomux-transport", version = "0.0.0" }
 
+base64 = "0.22.1"
 clap = { version = "4.6.10", features = ["derive"] }
 getrandom = "0.4.3"
 libc = "0.2.191"
