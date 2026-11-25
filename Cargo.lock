@@ -336,7 +336,7 @@ dependencies = [
 
 [[package]]
 name = "nomux-cli"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "clap",
  "nomux-client",
@@ -349,7 +349,7 @@ dependencies = [
 
 [[package]]
 name = "nomux-client"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "nomux-core",
  "nomux-proto",
@@ -359,11 +359,11 @@ dependencies = [
 
 [[package]]
 name = "nomux-core"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "nomux-end-to-end"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "nomux-client",
  "nomux-holder-protocol",
@@ -378,11 +378,11 @@ dependencies = [
 
 [[package]]
 name = "nomux-ext-host"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "nomux-holder"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "libc",
  "nomux-core",
@@ -395,7 +395,7 @@ dependencies = [
 
 [[package]]
 name = "nomux-holder-protocol"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "libc",
  "rustix",
@@ -413,11 +413,11 @@ dependencies = [
 
 [[package]]
 name = "nomux-status"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "nomux-term"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
  "base64",
@@ -427,7 +427,7 @@ dependencies = [
 
 [[package]]
 name = "nomux-transport"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "nomux-proto",
  "prost",
@@ -437,7 +437,7 @@ dependencies = [
 
 [[package]]
 name = "nomuxd"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "getrandom",
  "nomux-core",
@@ -942,7 +942,7 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "xtask"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "zmij"

@@ -12,7 +12,7 @@ The repository now has the Cargo workspace, the developer tools, CI and the firs
 
 ## Quick start
 
-1. Install the three binaries: see "Install". Before the first release, build them (see "Build") and put `target/release` into `PATH`.
+1. Install the three binaries: see "Install".
 
 2. Start a session and attach to it. The first command starts the daemon.
 
@@ -51,8 +51,6 @@ A session does not need the daemon: it continues when the daemon stops (`nomux d
 Each command accepts `--json`. [docs/cli.md](docs/cli.md) has the commands, the keys of an attach, the JSON schema and the exit codes.
 
 ## Install
-
-No release exists yet. The commands in this section work from the first release.
 
 Each release has one archive for each target and a `SHA256SUMS` file. An archive contains `nomux`, `nomuxd`, `nomux-holder`, this file and the two license files.
 
