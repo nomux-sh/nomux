@@ -1,0 +1,45 @@
+# Configuration for git-cliff: https://git-cliff.org/docs/configuration
+# The release process generates the changelog section of a release with:
+#   git cliff --unreleased --tag <version> --prepend CHANGELOG.md
+
+[changelog]
+body = """
+{% if version %}\
+## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+## [Unreleased]
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim }}
+{% for commit in commits %}
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}\
+{% if commit.breaking %}**Breaking:** {% endif %}\
+{{ commit.message | upper_first }}\
+{% endfor %}
+{% endfor %}
+"""
+trim = true
+
+[git]
+conventional_commits = true
+# A commit that is not a conventional commit is not in the changelog.
+# The commitlint job in CI rejects such a commit before the merge.
+filter_unconventional = true
+split_commits = false
+protect_breaking_commits = true
+filter_commits = false
+tag_pattern = "v[0-9].*"
+topo_order = false
+sort_commits = "oldest"
+# The HTML comments set the sequence of the groups. The template removes them.
+commit_parsers = [
+    { message = "^feat", group = "<!-- 0 -->Added" },
+    { message = "^fix", group = "<!-- 1 -->Fixed" },
+    { message = "^perf", group = "<!-- 2 -->Performance" },
+    { message = "^refactor", group = "<!-- 3 -->Changed" },
+    { message = "^revert", group = "<!-- 4 -->Reverted" },
+    { message = "^docs", group = "<!-- 5 -->Documentation" },
+    { body = ".*security", group = "<!-- 6 -->Security" },
+    { message = "^chore\\(release\\)", skip = true },
+    { message = "^(chore|ci|build|test|style)", skip = true },
+]
