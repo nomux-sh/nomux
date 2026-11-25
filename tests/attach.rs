@@ -94,8 +94,13 @@ fn the_session_gets_the_window_size_of_the_client_and_each_change_of_it() {
     // The command prints the size of its terminal at each change. The keys
     // and the window size use two connections, thus a test that types a
     // command after a resize does not know which of the two arrives first.
-    let report = "trap 'stty size' WINCH; while :; do sleep 0.1; done";
+    let report = "trap 'stty size' WINCH; touch ready; while :; do sleep 0.1; done";
     let id = new_session(&sandbox, &["sh", "-c", report]);
+    // A program without a handler for SIGWINCH ignores the signal. The
+    // signal of the attach must not arrive before the trap.
+    wait_for("the command set its trap", || {
+        sandbox.home().join("ready").exists().then_some(())
+    });
 
     // A new session has 24 rows and 80 columns.
     let mut client = sandbox.nomux_in_window(&["attach", &id], 20, 70);
