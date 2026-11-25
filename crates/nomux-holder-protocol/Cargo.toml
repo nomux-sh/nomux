@@ -1,0 +1,23 @@
+[package]
+name = "nomux-holder-protocol"
+description = "Contract between a nomux holder and the daemon: control messages, ring buffer layout and discovery files."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+rustix = { workspace = true, features = ["fs", "mm", "net"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
