@@ -9,6 +9,20 @@ repository.workspace = true
 homepage.workspace = true
 authors.workspace = true
 publish.workspace = true
+# `tests/test_extension` is a binary target, not a test.
+autotests = false
+
+# The extension of the integration tests. It is a binary target because
+# Cargo gives the path of a binary to the tests of its package.
+[[bin]]
+name = "nomux-test-extension"
+path = "tests/test_extension/main.rs"
+test = false
+doc = false
+
+[[test]]
+name = "extension_host"
+path = "tests/extension_host/main.rs"
 
 [dependencies]
 nomux-extension.workspace = true
@@ -17,6 +31,9 @@ serde.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "sync", "time"] }
 toml.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true
