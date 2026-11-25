@@ -28,7 +28,7 @@ Rules for coding agents and for people who work in this repository. `CLAUDE.md` 
 | `cliff.toml`, `CHANGELOG.md` | Changelog configuration and the changelog. |
 | `install.sh` | Install script for the release archives. POSIX `sh`. |
 | `scripts` | Release tools: the workspace version, the build of one target, the archive of one target and its check, the release notes, the test of `install.sh`. |
-| `.github/workflows` | `ci.yml` (Rust checks, repository lint, actionlint, install script), `fuzz.yml` (fuzz targets: a short run for a pull request, a long run each night), `pull-request.yml` (sign-off, commit messages) and `release.yml` (archives and GitHub release for a version tag). |
+| `.github/workflows` | `ci.yml` (Rust checks, repository lint, actionlint, install script), `fuzz.yml` (fuzz targets: a short run for a pull request, a long run each night), `pull-request.yml` (sign-off, commit messages), `release.yml` (archives and GitHub release for a version tag) and `release-build.yml` (the static Linux archive, built when a pull request changes the dependencies or the release tools). |
 
 ## Rules for this repository
 
