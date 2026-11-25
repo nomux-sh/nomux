@@ -101,7 +101,7 @@ Rules:
 | Crate | Type | Responsibility | State |
 |---|---|---|---|
 | `nomux-core` | library | Shared types, errors, configuration, glossary types | in use: the version output of the binaries |
-| `nomux-term` | library | Thin abstraction over the VT library, which lets the project replace the library | structure only |
+| `nomux-term` | library | Thin abstraction over the VT library (`alacritty_terminal`), which lets the project replace the library | in use: the screen state, the redraw sequence and the OSC sequences |
 | `nomux-holder-protocol` | library | Contract between a holder and the daemon: control messages, ring buffer layout, discovery files | in use by the holder |
 | `nomux-holder` | binary | The holder. No async runtime | owns the PTY, the ring buffer, the control socket and the discovery files |
 | `nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows | structure only |
@@ -120,7 +120,7 @@ Planned direction of the dependencies:
 - `nomux-client` uses `nomux-core`, `nomux-term` and `nomux-transport`.
 - `nomux-cli` uses `nomux-client`.
 
-Now the holder depends on `nomux-core` and `nomux-holder-protocol`, the other two binaries depend on `nomux-core` only, and the other libraries have no dependencies.
+Now the holder depends on `nomux-core` and `nomux-holder-protocol`, and the other two binaries depend on `nomux-core` only. `nomux-term` depends on the VT library, and no crate uses `nomux-term` yet. The other libraries have no dependencies.
 A crate gets a dependency when its code uses it.
 
 ## State

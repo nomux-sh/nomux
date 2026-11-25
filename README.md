@@ -77,7 +77,7 @@ The binaries are not signed and not notarized. Code signing and notarization sta
 | Path | Type | Contents | State |
 |---|---|---|---|
 | `crates/nomux-core` | library | Shared types, errors, configuration | in use: the version output of the binaries |
-| `crates/nomux-term` | library | Thin abstraction over the VT library | structure only |
+| `crates/nomux-term` | library | Thin abstraction over the VT library (`alacritty_terminal`) | in use: the screen state, the redraw sequence and the OSC sequences |
 | `crates/nomux-holder-protocol` | library | Contract between a holder and the daemon: control messages, ring buffer layout, discovery files | in use by the holder |
 | `crates/nomux-holder` | binary `nomux-holder` | Session holder: owns the PTY of one session. No async runtime | first version: PTY, ring buffer, control socket, discovery files |
 | `crates/nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows | structure only |
@@ -87,7 +87,7 @@ The binaries are not signed and not notarized. Code signing and notarization sta
 | `crates/nomux-client` | library | Protocol client for the CLI, the desktop client and the mobile clients | structure only |
 | `crates/nomux-cli` | binary `nomux` | CLI | prints its version only |
 | `xtask` | binary | Developer tasks: `cargo xtask` | in use |
-| `bench` | directory | Performance tests and the performance targets | structure only |
+| `bench` | directory | Performance tests and the performance targets | in use: the VT library benchmark |
 | `fuzz` | directory | Fuzz targets | structure only |
 | `tests` | directory | End-to-end tests | structure only |
 | `docs` | directory | Developer notes. Start with [docs/architecture.md](docs/architecture.md) | in use |

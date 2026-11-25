@@ -9,7 +9,7 @@ Rules for coding agents and for people who work in this repository. `CLAUDE.md` 
 | Path | Responsibility |
 |---|---|
 | `crates/nomux-core` | Types that more than one crate uses. Now: the `--version` output of the three binaries. |
-| `crates/nomux-term` | Abstraction over the VT library. |
+| `crates/nomux-term` | Abstraction over the VT library (`alacritty_terminal`): screen state, redraw sequence, OSC sequences. |
 | `crates/nomux-holder-protocol` | Contract between a holder and the daemon: control messages, ring buffer layout, discovery files. |
 | `crates/nomux-holder` | Binary `nomux-holder`: owns the PTY of one session. |
 | `crates/nomux-transport` | Unix socket, SSH channels, QUIC streams, credit windows. |
@@ -19,7 +19,8 @@ Rules for coding agents and for people who work in this repository. `CLAUDE.md` 
 | `crates/nomux-client` | Protocol client for the CLI, the desktop client and the mobile clients. |
 | `crates/nomux-cli` | Binary `nomux`: the CLI. |
 | `xtask` | Developer tasks. `cargo xtask ci` runs the checks. |
-| `bench`, `fuzz`, `tests` | Performance targets, fuzz targets and end-to-end tests. Each has a `README.md` only. |
+| `bench` | Performance targets and the benchmarks. Each benchmark is a Cargo workspace of its own, which `cargo xtask ci` does not build. |
+| `fuzz`, `tests` | Fuzz targets and end-to-end tests. Each has a `README.md` only. |
 | `docs` | Developer notes of the core. |
 | `Cargo.toml` | Workspace members, shared package fields, lint policy, release profile. |
 | `deny.toml`, `clippy.toml`, `rust-toolchain.toml` | License and source policy, clippy settings, pinned toolchain. |
