@@ -10,5 +10,14 @@ homepage.workspace = true
 authors.workspace = true
 publish.workspace = true
 
+[dependencies]
+nomux-proto.workspace = true
+prost.workspace = true
+tokio = { workspace = true, features = ["io-util", "net"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
+
 [lints]
 workspace = true
