@@ -15,10 +15,12 @@
 //!
 //! # Status
 //!
-//! This crate contains only the `--version` output that the three binaries
-//! share. The glossary types, the error type and the configuration model are
-//! not written yet.
+//! This crate contains the `--version` output that the three binaries share
+//! and the lookup of a binary of the same installation. The glossary types,
+//! the error type and the configuration model are not written yet.
 
+mod companion_binary;
 mod version;
 
+pub use companion_binary::companion_binary;
 pub use version::version_only_main;

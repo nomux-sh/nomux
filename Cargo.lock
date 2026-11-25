@@ -224,6 +224,12 @@ dependencies = [
 [[package]]
 name = "nomux-client"
 version = "0.0.0"
+dependencies = [
+ "nomux-core",
+ "nomux-proto",
+ "nomux-transport",
+ "tokio",
+]
 
 [[package]]
 name = "nomux-core"
