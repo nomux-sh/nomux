@@ -8,6 +8,7 @@ use std::sync::Arc;
 use nomux_transport::{LocalListener, SOCKET_FILE};
 use tracing::info;
 
+use crate::arguments::RunningDaemon;
 use crate::handlers::Context;
 use crate::in_flight_requests::InFlightRequests;
 use crate::instance_lock::InstanceLock;
@@ -17,12 +18,12 @@ use crate::sessions::Sessions;
 use crate::shutdown::Shutdown;
 
 /// Runs the daemon until a stop is requested.
-pub(crate) async fn run() -> io::Result<()> {
+pub(crate) async fn run(running_daemon: RunningDaemon) -> io::Result<()> {
     let runtime_directory = runtime_directory::locate()?;
     runtime_directory::prepare(&runtime_directory)?;
     // The lock comes first. Only its owner can remove the socket file and
     // take the leases of the holders.
-    let lock = InstanceLock::acquire(&runtime_directory)?;
+    let lock = InstanceLock::acquire(&runtime_directory, running_daemon)?;
     let socket_path = runtime_directory.join(SOCKET_FILE);
     remove_socket_of_earlier_daemon(&socket_path)?;
     let listener = LocalListener::bind(&socket_path)?;
