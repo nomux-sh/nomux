@@ -6,14 +6,14 @@ The user documentation is not here. It is in the [`docs`](https://github.com/nom
 
 ## Contents
 
-| File | Subject |
-|---|---|
-| [architecture.md](architecture.md) | Components of the core and the responsibilities of the holder, the daemon and the client |
+| File | Subject | State |
+|---|---|---|
+| [architecture.md](architecture.md) | Components of the core and the responsibilities of the holder, the daemon and the client | in use |
 
 ## Status
 
-Milestone M0 adds the architecture overview.
-Each later milestone adds the notes for the components that it builds. Milestone M1 adds the notes for the holder, the journal and the attach sequence.
+The directory has the architecture overview.
+The notes for a component come together with its code. The notes for the holder, the journal and the attach sequence are the next ones. Refer to the [roadmap](https://github.com/nomux-sh/docs/blob/main/src/content/docs/project/roadmap.md).
 
 ## License
 

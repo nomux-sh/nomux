@@ -6,30 +6,28 @@ This repository is a part of [nomux](https://github.com/nomux-sh), a native and 
 
 ## Status
 
-In development. There is no public release.
+In development. Versions earlier than 1.0.0 are pre-releases: interfaces can change between minor versions.
 
-The current milestone is M0: the workspace, the tools and CI.
-The three binaries print their version for `--version` and do nothing else.
-Milestone M1 adds the holder, the daemon and the first CLI commands.
+The repository now has the Cargo workspace, the developer tools and CI. The three binaries print their version and do nothing else. The holder, the daemon and the CLI commands are the next work: refer to the [roadmap](https://github.com/nomux-sh/docs/blob/main/src/content/docs/project/roadmap.md).
 
 ## Layout
 
-| Path | Type | Contents | First code |
+| Path | Type | Contents | State |
 |---|---|---|---|
-| `crates/nomux-core` | library | Shared types, errors, configuration | M0 (build information), M1 |
-| `crates/nomux-term` | library | Thin abstraction over the VT library | M1 |
-| `crates/nomux-holder` | binary `nomux-holder` | Session holder: owns the PTY of one session. No async runtime | M1 |
-| `crates/nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows | M1, M2, M8 |
-| `crates/nomux-status` | library | Agent status resolver, rules, aggregation | M4 |
-| `crates/nomux-ext-host` | library | Extension host of the daemon | M3 |
-| `crates/nomuxd` | binary `nomuxd` | Daemon | M1 |
-| `crates/nomux-client` | library | Protocol client for the CLI, the desktop client and the mobile clients | M1 |
-| `crates/nomux-cli` | binary `nomux` | CLI | M1 |
-| `xtask` | binary | Developer tasks: `cargo xtask` | M0 |
-| `bench` | directory | Performance tests and the performance targets | M1 |
-| `fuzz` | directory | Fuzz targets | M1 |
-| `tests` | directory | End-to-end tests | M1 |
-| `docs` | directory | Developer notes. Start with [docs/architecture.md](docs/architecture.md) | M0 |
+| `crates/nomux-core` | library | Shared types, errors, configuration | in use: the version output of the binaries |
+| `crates/nomux-term` | library | Thin abstraction over the VT library | structure only |
+| `crates/nomux-holder` | binary `nomux-holder` | Session holder: owns the PTY of one session. No async runtime | prints its version only |
+| `crates/nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows | structure only |
+| `crates/nomux-status` | library | Agent status resolver, rules, aggregation | structure only |
+| `crates/nomux-ext-host` | library | Extension host of the daemon | structure only |
+| `crates/nomuxd` | binary `nomuxd` | Daemon | prints its version only |
+| `crates/nomux-client` | library | Protocol client for the CLI, the desktop client and the mobile clients | structure only |
+| `crates/nomux-cli` | binary `nomux` | CLI | prints its version only |
+| `xtask` | binary | Developer tasks: `cargo xtask` | in use |
+| `bench` | directory | Performance tests and the performance targets | structure only |
+| `fuzz` | directory | Fuzz targets | structure only |
+| `tests` | directory | End-to-end tests | structure only |
+| `docs` | directory | Developer notes. Start with [docs/architecture.md](docs/architecture.md) | in use |
 
 ## Build
 
@@ -56,23 +54,19 @@ Install the tools one time:
 cargo install --locked cargo-nextest cargo-deny cargo-machete
 ```
 
-Run the format, lint and test checks with one command:
+Run the checks with one command:
 
 ```sh
 cargo xtask ci
 ```
 
-`cargo xtask ci` runs these commands and stops at the first failure:
+`cargo xtask ci` runs the commands that CI runs, and stops at the first failure:
 
 ```sh
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo nextest run --workspace
-```
-
-CI also runs these two checks. Run them before you add or remove a dependency:
-
-```sh
+cargo test --workspace --doc
 cargo deny check     # licenses, security advisories, sources
 cargo machete        # dependencies that no code uses
 ```
@@ -81,9 +75,11 @@ The lint policy is in the `[workspace.lints]` section of `Cargo.toml`. The licen
 
 ## Contributing
 
-- Commit messages follow [Conventional Commits](https://www.conventionalcommits.org).
-- Sign off each commit (`git commit -s`). The sign-off states that you agree to the [Developer Certificate of Origin](https://developercertificate.org).
-- `CHANGELOG.md` lists the changes. The release process generates it with [git-cliff](https://git-cliff.org) and `cliff.toml`.
+Read the [contribution guide](https://github.com/nomux-sh/.github/blob/main/CONTRIBUTING.md) of the organization and [AGENTS.md](AGENTS.md), which has the rules for this repository.
+
+- A commit message is one subject line, `type: description`, and the sign-off (`git commit -s`).
+- Enable the commit hook one time in each clone: `git config core.hooksPath .githooks`.
+- [git-cliff](https://git-cliff.org) writes `CHANGELOG.md` from the commit subjects. The [release guide](https://github.com/nomux-sh/.github/blob/main/RELEASING.md) has the steps.
 
 ## Security
 

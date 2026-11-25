@@ -4,12 +4,12 @@ This directory is for the performance tests and the idle CPU tests of the core.
 
 ## Status
 
-Milestone M0 contains no benchmark. There is nothing to measure before the holder and the daemon exist.
-Milestone M1 adds the first benchmarks and the CI job that enforces the targets below.
+Structure only. There is no benchmark, because there is nothing to measure before the holder and the daemon exist.
+The first benchmarks come with the holder and the daemon, together with the CI job that enforces the targets below. Refer to the [roadmap](https://github.com/nomux-sh/docs/blob/main/src/content/docs/project/roadmap.md).
 
 ## Targets
 
-From milestone M1, CI measures each target that applies to this repository.
+When the benchmarks exist, CI measures each target that applies to this repository.
 If a measurement is worse than its target, the build fails.
 
 | Measurement | Target | Owner |
