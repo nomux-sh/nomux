@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [git-cliff](https://git-cliff.org) writes this file from the commit subjects.
 To see the changes that are not in a version, run `git cliff --unreleased`.
 
+## [0.2.0] - 2026-11-25
+
+### Added
+
+- Add the journal format and the session metadata
+- Write the journal in the holder and add its read request
+- Add the extension host library
+- Read the hosts of the global configuration file
+- Add an SSH client to the transport layer
+- Let a new daemon replace the daemon that runs
+- Add remote hosts, the host commands and --host
+
+### Documentation
+
+- Describe the journal and the session state directory
+- Describe the extension host
+- Describe remote hosts
 ## [0.1.1] - 2026-11-25
 
 ### Fixed
