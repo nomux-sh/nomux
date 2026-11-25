@@ -1,0 +1,57 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+# The minimum supported Rust version is the pinned toolchain in
+# `rust-toolchain.toml`. CI tests no older compiler.
+rust-version = "1.100"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/nomux-sh/nomux"
+homepage = "https://nomux.sh"
+authors = ["The nomux Authors"]
+# No crate is published before the first public release. The release work
+# removes this line for `nomux-core` and `nomux-client`.
+publish = false
+
+[workspace.dependencies]
+nomux-core = { path = "crates/nomux-core", version = "0.0.0" }
+
+# Lint policy. Each crate opts in with `[lints] workspace = true`.
+# CI runs clippy with `-D warnings`, thus each `warn` below fails the build.
+# `deny` is for rules that must also fail a local `cargo build` or `cargo check`.
+[workspace.lints.rust]
+# Each unsafe operation must be in its own `unsafe` block, also inside an `unsafe fn`.
+unsafe_op_in_unsafe_fn = "deny"
+# No unsafe code by default. A crate that must use it (the holder: `mmap`, `memfd`)
+# permits it for each item with `#[expect(unsafe_code)]` and a `SAFETY` comment.
+unsafe_code = "deny"
+# Each public item has documentation. Each public type can be printed in a log.
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+# An item that is `pub` but not reachable from outside the crate must be `pub(crate)`.
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Each unsafe block has a `SAFETY` comment.
+undocumented_unsafe_blocks = "deny"
+# No debug output and no unfinished code on `main`.
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+# The holder and the daemon must not stop on a recoverable error.
+# `clippy.toml` permits `unwrap` in tests.
+unwrap_used = "warn"
+
+# Release profile from the performance architecture: small and fast binaries.
+# `panic = "abort"` removes the unwind tables. A panic stops the process.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
