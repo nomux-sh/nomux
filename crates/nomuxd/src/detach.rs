@@ -6,6 +6,7 @@ use std::io;
 use std::os::unix::fs::OpenOptionsExt;
 use std::process::{Command, Stdio};
 
+use crate::arguments::{REPLACE_OPTION, RunningDaemon};
 use crate::runtime_directory;
 
 /// The log of a detached daemon, in the runtime directory. The name has a
@@ -19,7 +20,7 @@ const OWNER_READ_WRITE: u32 = 0o600;
 /// that waits for it. The daemon leaves the session of its starter itself.
 /// Its standard error goes to the log file, because a detached process has
 /// no terminal.
-pub(crate) fn start_detached_daemon() -> io::Result<()> {
+pub(crate) fn start_detached_daemon(running_daemon: RunningDaemon) -> io::Result<()> {
     let runtime_directory = runtime_directory::locate()?;
     runtime_directory::prepare(&runtime_directory)?;
     let log = OpenOptions::new()
@@ -27,7 +28,12 @@ pub(crate) fn start_detached_daemon() -> io::Result<()> {
         .create(true)
         .mode(OWNER_READ_WRITE)
         .open(runtime_directory.join(LOG_FILE))?;
+    let options: &[&str] = match running_daemon {
+        RunningDaemon::Keep => &[],
+        RunningDaemon::Replace => &[REPLACE_OPTION],
+    };
     Command::new(env::current_exe()?)
+        .args(options)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(log)

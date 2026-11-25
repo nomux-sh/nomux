@@ -3,8 +3,9 @@
 //! session continues.
 
 use std::fs;
+use std::process::Command;
 
-use nomux_end_to_end::{Sandbox, kill_process, kill_process_group, process_runs, wait_for};
+use nomux_end_to_end::{Sandbox, binary, kill_process, kill_process_group, process_runs, wait_for};
 use nomux_holder_protocol::discovery::{HolderState, PID_FILE};
 use serde_json::Value;
 
@@ -112,6 +113,37 @@ fn daemon_stop_keeps_the_sessions_and_is_idempotent() {
     );
 
     assert_eq!(sandbox.sessions(), [session_document(&id, pid)]);
+}
+
+#[test]
+fn a_daemon_that_replaces_the_daemon_that_runs_takes_its_sessions() {
+    let sandbox = Sandbox::new();
+    let (id, pid) = new_session(&sandbox);
+    let first_daemon = sandbox.daemon_pid();
+    let holder = sandbox.holder_pid(&id);
+
+    // Without `--replace`, the second daemon ends and changes nothing.
+    let refused = Command::new(binary("nomuxd"))
+        .env("HOME", sandbox.home())
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert_eq!(sandbox.daemon_pid(), first_daemon);
+
+    let replaced = Command::new(binary("nomuxd"))
+        .args(["--detach", "--replace"])
+        .env("HOME", sandbox.home())
+        .status()
+        .unwrap();
+    assert!(replaced.success());
+
+    wait_for("the first daemon ends", || {
+        (!process_runs(first_daemon)).then_some(())
+    });
+    assert_eq!(sandbox.sessions(), [session_document(&id, pid)]);
+    assert_ne!(sandbox.daemon_pid(), first_daemon);
+    assert_eq!(sandbox.holder_pid(&id), holder);
+    assert!(process_runs(holder));
 }
 
 #[test]

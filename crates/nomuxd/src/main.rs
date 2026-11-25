@@ -34,8 +34,8 @@
 //! # Status
 //!
 //! The daemon creates, lists and ends sessions, and it attaches clients to
-//! them. It has no state database, no extension host and no remote
-//! transport.
+//! them. A client on a different host reaches the socket through SSH. The
+//! daemon has no state database and no extension host.
 
 mod arguments;
 mod attachment;
@@ -63,7 +63,7 @@ use std::process::ExitCode;
 
 use rustix::io::Errno;
 
-use crate::arguments::{Invocation, USAGE};
+use crate::arguments::{Invocation, RunningDaemon, USAGE};
 
 const EXIT_USAGE: u8 = 2;
 
@@ -72,8 +72,8 @@ fn main() -> ExitCode {
         Ok(Invocation::Version) => {
             return nomux_core::version_only_main(nomux_core::version_line!());
         }
-        Ok(Invocation::Detach) => detach::start_detached_daemon(),
-        Ok(Invocation::Serve) => serve(),
+        Ok(Invocation::Detach(running_daemon)) => detach::start_detached_daemon(running_daemon),
+        Ok(Invocation::Serve(running_daemon)) => serve(running_daemon),
         Err(message) => {
             eprint!("nomuxd: {message}\n\n{USAGE}");
             return ExitCode::from(EXIT_USAGE);
@@ -88,7 +88,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn serve() -> io::Result<()> {
+fn serve(running_daemon: RunningDaemon) -> io::Result<()> {
     leave_session_of_starter()?;
     logging::start();
     // The daemon waits for I/O almost all the time. One thread is sufficient
@@ -97,7 +97,7 @@ fn serve() -> io::Result<()> {
         .enable_all()
         .build()?;
     // The tasks of the client connections are local to this thread.
-    runtime.block_on(tokio::task::LocalSet::new().run_until(daemon::run()))
+    runtime.block_on(tokio::task::LocalSet::new().run_until(daemon::run(running_daemon)))
 }
 
 /// Makes the daemon the leader of a new session. Thus the end of the
