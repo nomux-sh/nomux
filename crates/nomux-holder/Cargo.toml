@@ -12,6 +12,15 @@ publish.workspace = true
 
 [dependencies]
 nomux-core.workspace = true
+nomux-holder-protocol.workspace = true
+rustix = { workspace = true, features = ["event", "fs", "net", "process", "pty", "shm", "stdio", "termios"] }
+signal-hook.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

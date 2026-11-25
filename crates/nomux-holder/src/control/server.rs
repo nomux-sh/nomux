@@ -1,0 +1,231 @@
+//! The control socket of the holder: accepts the connections of the daemon,
+//! keeps the single-writer lease and answers the requests.
+
+use std::fs::{self, Permissions};
+use std::io;
+use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
+use std::os::unix::fs::PermissionsExt;
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::Path;
+
+use nomux_holder_protocol::wire::{ChildStatus, ErrorCode, Frame, Hello, Reply, Request};
+
+use super::connection::{Connection, PendingWait, send_reply};
+use super::peer::peer_user_id;
+use crate::session::Session;
+
+/// The largest number of connections at one time. During a daemon update,
+/// the old daemon and the new daemon are connected together.
+pub(crate) const MAX_CONNECTIONS: usize = 4;
+
+const OWNER_READ_WRITE: u32 = 0o600;
+
+pub(crate) struct ControlServer {
+    listener: UnixListener,
+    connections: [Option<Connection>; MAX_CONNECTIONS],
+    /// The slot of the connection that has the single-writer lease.
+    lease: Option<usize>,
+    /// The read-only descriptor of the ring buffer. Each connection gets a
+    /// copy with the hello.
+    ring: OwnedFd,
+}
+
+impl ControlServer {
+    /// Makes the socket at `path`. The directory of `path` must be private
+    /// to the user.
+    pub(crate) fn bind(path: &Path, ring: OwnedFd) -> io::Result<Self> {
+        let listener = UnixListener::bind(path)?;
+        fs::set_permissions(path, Permissions::from_mode(OWNER_READ_WRITE))?;
+        listener.set_nonblocking(true)?;
+        Ok(Self {
+            listener,
+            connections: [const { None }; MAX_CONNECTIONS],
+            lease: None,
+            ring,
+        })
+    }
+
+    pub(crate) fn listener(&self) -> BorrowedFd<'_> {
+        self.listener.as_fd()
+    }
+
+    pub(crate) fn connection(&self, slot: usize) -> Option<BorrowedFd<'_>> {
+        let connection = self.connections[slot].as_ref()?;
+        Some(connection.stream.as_fd())
+    }
+
+    /// Accepts the connections that wait. A connection from a different
+    /// user, and a connection when all slots are in use, is closed
+    /// immediately.
+    pub(crate) fn accept(&mut self, hello: &Hello) -> io::Result<()> {
+        let mut hello_frame = Vec::new();
+        hello.encode(&mut hello_frame);
+        loop {
+            let stream = match self.listener.accept() {
+                Ok((stream, _)) => stream,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
+                Err(error) if is_failed_connection(&error) => continue,
+                Err(error) => return Err(error),
+            };
+            if let Err(error) = self.admit(stream, &hello_frame) {
+                eprintln!("nomux-holder: connection refused: {error}");
+            }
+        }
+    }
+
+    fn admit(&mut self, stream: UnixStream, hello_frame: &[u8]) -> io::Result<()> {
+        if peer_user_id(&stream)? != rustix::process::getuid().as_raw() {
+            return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+        }
+        let free_slot = self.connections.iter_mut().find(|slot| slot.is_none());
+        let Some(slot) = free_slot else {
+            return Err(io::Error::other("too many connections"));
+        };
+        *slot = Some(Connection::open(stream, hello_frame, self.ring.as_fd())?);
+        Ok(())
+    }
+
+    /// Reads and answers the requests of one connection. Returns `true` if
+    /// the connection got the exit status of the child.
+    pub(crate) fn serve(&mut self, slot: usize, session: &mut Session) -> bool {
+        let Some(connection) = self.connections[slot].as_mut() else {
+            return false;
+        };
+        match serve_connection(connection, slot, &mut self.lease, session) {
+            Ok(exit_status_delivered) => exit_status_delivered,
+            Err(error) => {
+                if error.kind() != io::ErrorKind::UnexpectedEof {
+                    eprintln!("nomux-holder: connection closed: {error}");
+                }
+                self.close(slot);
+                false
+            }
+        }
+    }
+
+    /// Answers the `WaitOutput` requests that can end now.
+    pub(crate) fn complete_waits(&mut self, write_position: u64, child_exited: bool) {
+        for slot in 0..MAX_CONNECTIONS {
+            let Some(connection) = self.connections[slot].as_mut() else {
+                continue;
+            };
+            let Some(wait) = connection
+                .pending_wait
+                .take_if(|wait| child_exited || write_position > wait.after)
+            else {
+                continue;
+            };
+            let reply = Reply::Output { write_position };
+            let sent = send_reply(
+                &connection.stream,
+                &mut connection.outgoing,
+                wait.request_id,
+                reply,
+            );
+            if sent.is_err() {
+                self.close(slot);
+            }
+        }
+    }
+
+    fn close(&mut self, slot: usize) {
+        self.connections[slot] = None;
+        if self.lease == Some(slot) {
+            self.lease = None;
+        }
+    }
+}
+
+fn serve_connection(
+    connection: &mut Connection,
+    slot: usize,
+    lease: &mut Option<usize>,
+    session: &mut Session,
+) -> io::Result<bool> {
+    connection.receive()?;
+    let Connection {
+        stream,
+        frames,
+        outgoing,
+        pending_wait,
+    } = connection;
+    let mut exit_status_delivered = false;
+    loop {
+        let frame = frames
+            .next_frame()
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let Some(frame) = frame else {
+            return Ok(exit_status_delivered);
+        };
+        let reply = answer(frame, slot, lease, pending_wait, session);
+        if let Some(reply) = reply {
+            send_reply(stream, outgoing, frame.request_id, reply)?;
+            exit_status_delivered |=
+                matches!(reply, Reply::Status(status) if status != ChildStatus::Running);
+        }
+    }
+}
+
+/// Does one request. Returns `None` if the reply comes later.
+fn answer(
+    frame: Frame<'_>,
+    slot: usize,
+    lease: &mut Option<usize>,
+    pending_wait: &mut Option<PendingWait>,
+    session: &mut Session,
+) -> Option<Reply> {
+    let has_lease = *lease == Some(slot);
+    let reply = match Request::decode(frame) {
+        Err(error) => Reply::Error(error.into()),
+        Ok(Request::AcquireLease) => {
+            *lease = Some(slot);
+            Reply::Done
+        }
+        Ok(Request::WaitOutput { after }) => {
+            return wait_output(pending_wait, frame.request_id, after, session);
+        }
+        Ok(Request::Status) => Reply::Status(session.status()),
+        Ok(Request::Input(bytes)) => write_request(has_lease, || session.write_input(bytes)),
+        Ok(Request::Resize(size)) => write_request(has_lease, || session.resize(size)),
+        Ok(Request::Signal(signal)) => write_request(has_lease, || session.signal_child(signal)),
+    };
+    Some(reply)
+}
+
+/// Answers immediately if the daemon does not have all the output, or if
+/// the child ended. If not, keeps the request until that is true.
+fn wait_output(
+    pending_wait: &mut Option<PendingWait>,
+    request_id: u32,
+    after: u64,
+    session: &Session,
+) -> Option<Reply> {
+    if pending_wait.is_some() {
+        return Some(Reply::Error(ErrorCode::WaitPending));
+    }
+    let write_position = session.write_position();
+    if session.child_exited() || write_position > after {
+        return Some(Reply::Output { write_position });
+    }
+    *pending_wait = Some(PendingWait { request_id, after });
+    None
+}
+
+/// Does a request that needs the single-writer lease.
+fn write_request(has_lease: bool, operation: impl FnOnce() -> Result<(), ErrorCode>) -> Reply {
+    if !has_lease {
+        return Reply::Error(ErrorCode::LeaseRequired);
+    }
+    match operation() {
+        Ok(()) => Reply::Done,
+        Err(code) => Reply::Error(code),
+    }
+}
+
+/// An error of `accept` that belongs to one connection, not to the listener.
+fn is_failed_connection(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::Interrupted | io::ErrorKind::ConnectionAborted
+    )
+}

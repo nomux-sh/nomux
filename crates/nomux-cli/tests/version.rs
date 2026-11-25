@@ -1,5 +1,5 @@
-//! Runs the real `nomux` binary. `nomux-holder` and `nomuxd` have the same
-//! `main` function, thus one binary guards the wiring of all three.
+//! Runs the real `nomux` binary. `nomuxd` has the same `main` function, thus
+//! this test guards the wiring of both. `nomux-holder` has its own test.
 
 use std::process::Command;
 
