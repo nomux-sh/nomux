@@ -3,7 +3,7 @@
 This document shows the components of the nomux core and the responsibility of each component.
 It is an overview. The protocol specifications are in the [`proto`](https://github.com/nomux-sh/proto) repository.
 
-The repository now has the workspace structure only. No component in this document is implemented yet.
+The holder has its first version: [holder.md](holder.md) describes it. The other components are not implemented yet.
 The "State" section shows what exists and where the plan is.
 
 ## Components
@@ -41,6 +41,8 @@ One holder owns the PTY of one session. The holder is a separate, small binary.
 
 Responsibilities:
 
+The first four responsibilities and the discovery files are implemented. [holder.md](holder.md) has the details and the parts that are open.
+
 - Open the PTY and start the command of the session.
 - Always read the PTY, also when no client is connected.
 - Give the output to the VT parser, to the OSC parser (OSC 7501, 133, 9, 777) and to a ring buffer of fixed size. The ring buffer is shared memory (`memfd`). The daemon maps it and reads it without a copy.
@@ -52,7 +54,7 @@ Responsibilities:
 
 Rules:
 
-- The holder has no async runtime. It uses `rustix` (`openpty`, `poll`, `memfd`, `mmap`) directly.
+- The holder has no async runtime. It uses `rustix` (`openpt`, `poll`, `memfd`, `mmap`) directly.
 - The holder stays alive when the daemon stops, crashes, gets `kill -9` or is updated.
 - The holder does not talk to clients. Only the daemon connects to a holder.
 - The protocol between the holder and the daemon has the strictest version rules. A daemon update does not replace a holder that runs.
@@ -100,7 +102,8 @@ Rules:
 |---|---|---|---|
 | `nomux-core` | library | Shared types, errors, configuration, glossary types | in use: the version output of the binaries |
 | `nomux-term` | library | Thin abstraction over the VT library, which lets the project replace the library | structure only |
-| `nomux-holder` | binary | The holder. No async runtime | prints its version only |
+| `nomux-holder-protocol` | library | Contract between a holder and the daemon: control messages, ring buffer layout, discovery files | in use by the holder |
+| `nomux-holder` | binary | The holder. No async runtime | owns the PTY, the ring buffer, the control socket and the discovery files |
 | `nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows | structure only |
 | `nomux-status` | library | Status resolver, rules, aggregation. Pure code without I/O | structure only |
 | `nomux-ext-host` | library | Extension host of the daemon | structure only |
@@ -111,21 +114,22 @@ Rules:
 Planned direction of the dependencies:
 
 - `nomux-core` depends on no other nomux crate.
-- `nomux-holder` uses `nomux-core` and `nomux-term`. It must not use a crate that needs an async runtime.
-- `nomuxd` uses `nomux-core`, `nomux-term`, `nomux-transport`, `nomux-status` and `nomux-ext-host`.
+- `nomux-holder-protocol` depends on no other nomux crate. It has no async runtime.
+- `nomux-holder` uses `nomux-core`, `nomux-holder-protocol` and `nomux-term`. It must not use a crate that needs an async runtime.
+- `nomuxd` uses `nomux-core`, `nomux-holder-protocol`, `nomux-term`, `nomux-transport`, `nomux-status` and `nomux-ext-host`. It finds the holders and talks to them only through `nomux-holder-protocol`.
 - `nomux-client` uses `nomux-core`, `nomux-term` and `nomux-transport`.
 - `nomux-cli` uses `nomux-client`.
 
-Now the three binaries depend on `nomux-core` only, and the libraries have no dependencies.
+Now the holder depends on `nomux-core` and `nomux-holder-protocol`, the other two binaries depend on `nomux-core` only, and the other libraries have no dependencies.
 A crate gets a dependency when its code uses it.
 
 ## State
 
-The repository has the Cargo workspace, the developer tools and CI. The three binaries print their version and do nothing else.
+The repository has the Cargo workspace, the developer tools and CI. The holder runs a command in a PTY and serves the daemon side of its contract. The daemon and the CLI print their version and do nothing else.
 
 The work comes in this sequence:
 
-1. The holder, the daemon, attach, the warm pool, lazy restore, the first CLI commands, the selection of the VT library and the Unix socket transport.
+1. The rest of the holder (VT state, journal, checkpoint, OSC parser), the daemon, attach, the warm pool, lazy restore, the first CLI commands, the selection of the VT library and the Unix socket transport.
 2. Remote hosts: the SSH transport and the bootstrap.
 3. The extension host.
 4. The agent status engine.
