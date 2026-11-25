@@ -11,7 +11,18 @@ authors.workspace = true
 publish.workspace = true
 
 [dependencies]
+getrandom.workspace = true
 nomux-core.workspace = true
+nomux-holder-protocol.workspace = true
+nomux-proto.workspace = true
+nomux-transport.workspace = true
+rustix = { workspace = true, features = ["process"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt", "signal", "sync", "time"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

@@ -20,6 +20,7 @@ nomux-core = { path = "crates/nomux-core", version = "0.0.0" }
 nomux-holder-protocol = { path = "crates/nomux-holder-protocol", version = "0.0.0" }
 nomux-transport = { path = "crates/nomux-transport", version = "0.0.0" }
 
+getrandom = "0.4.3"
 libc = "0.2.191"
 nomux-proto = "0.2.0"
 prost = "0.14.6"
@@ -27,6 +28,8 @@ rustix = "1.1.6"
 signal-hook = { version = "0.4.6", default-features = false }
 tempfile = "3.27.0"
 tokio = { version = "1.54.1", default-features = false }
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt"] }
 
 # Lint policy. Each crate opts in with `[lints] workspace = true`.
 # CI runs clippy with `-D warnings`, thus each `warn` below fails the build.
