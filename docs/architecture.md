@@ -111,7 +111,7 @@ Rules:
 | `nomux-holder` | binary | The holder. No async runtime | owns the PTY, the ring buffer, the screen state, the control socket and the discovery files |
 | `nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows | in use: the Unix socket of the local host, the framing of the control channel and the framing of the terminal channels of an attach |
 | `nomux-status` | library | Status resolver, rules, aggregation. Pure code without I/O | structure only |
-| `nomux-ext-host` | library | Extension host of the daemon | structure only |
+| `nomux-ext-host` | library | Extension host of the daemon | first version, described in [extensions.md](extensions.md). The daemon does not use it yet |
 | `nomuxd` | binary | The daemon | creates, lists and ends sessions; finds the holders after a restart; attaches clients to a session |
 | `nomux-client` | library | Protocol client for the CLI, the desktop client and the mobile clients | in use: connection, handshake, the requests for sessions and for the daemon, and the attach |
 | `nomux-cli` | binary `nomux` | The CLI | `new`, `ls`, `attach`, `detach`, `kill`, `daemon status`, `daemon stop`, `version` |
@@ -127,7 +127,7 @@ Planned direction of the dependencies:
 - `nomux-client` uses `nomux-core`, `nomux-term` and `nomux-transport`.
 - `nomux-cli` uses `nomux-client` and `nomux-core`. It uses no type of `nomux-proto`.
 
-Now the holder depends on `nomux-core`, `nomux-holder-protocol` and `nomux-term`. The daemon depends on `nomux-core`, `nomux-holder-protocol` and `nomux-transport`. The client library depends on `nomux-core` and `nomux-transport`, and the CLI depends on the client library and `nomux-core`. The client library does not use `nomux-term` yet: it gives the bytes of the terminal to its user. `nomux-term` depends on the VT library. `nomux-status` and `nomux-ext-host` have no dependencies and no users.
+Now the holder depends on `nomux-core`, `nomux-holder-protocol` and `nomux-term`. The daemon depends on `nomux-core`, `nomux-holder-protocol` and `nomux-transport`. The client library depends on `nomux-core` and `nomux-transport`, and the CLI depends on the client library and `nomux-core`. The client library does not use `nomux-term` yet: it gives the bytes of the terminal to its user. `nomux-term` depends on the VT library. `nomux-ext-host` depends on the `nomux-extension` crate, which the `extension-api` repository publishes, and has no users. `nomux-status` has no dependencies and no users.
 A crate gets a dependency when its code uses it.
 
 Two definitions exist in two crates, because the client side must not depend on the holder contract: the runtime directory `~/.nomux/run` is in `nomux-holder-protocol` (for the holders) and in `nomux-transport` (for the socket of the daemon). The daemon uses the first one for the two purposes, and an end-to-end test fails if the client looks for the socket in a different directory.
