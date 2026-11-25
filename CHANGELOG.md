@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [git-cliff](https://git-cliff.org) writes this file from the commit subjects.
 To see the changes that are not in a version, run `git cliff --unreleased`.
 
+## [0.2.1] - 2026-11-25
+
+### Fixed
+
+- Build the musl release binaries with a C compiler for musl
+
+### Documentation
+
+- List the release build workflow in the agent rules
 ## [0.2.0] - 2026-11-25
 
 ### Added
