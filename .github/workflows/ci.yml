@@ -1,0 +1,57 @@
+name: CI
+
+# The jobs call the reusable workflows of the organization. The steps are in
+# https://github.com/nomux-sh/.github/tree/main/.github/workflows
+
+on:
+  pull_request:
+  schedule:
+    # Each day at 03:17 UTC.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Pull requests: Linux only, for a fast result. The nightly run adds macOS.
+  rust:
+    name: Rust
+    if: github.event_name == 'pull_request'
+    uses: nomux-sh/.github/.github/workflows/rust-ci.yml@main
+    with:
+      os: '["ubuntu-latest"]'
+      working-directory: .
+      run-deny: true
+      run-machete: true
+
+  dco:
+    name: DCO
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: nomux-sh/.github/.github/workflows/dco.yml@main
+
+  commitlint:
+    name: Commit messages
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: nomux-sh/.github/.github/workflows/commitlint.yml@main
+
+  # Nightly and manual runs: Linux and macOS.
+  rust-all-hosts:
+    name: Rust (all hosts)
+    if: github.event_name != 'pull_request'
+    uses: nomux-sh/.github/.github/workflows/rust-ci.yml@main
+    with:
+      os: '["ubuntu-latest","macos-latest"]'
+      working-directory: .
+      run-deny: true
+      run-machete: true
