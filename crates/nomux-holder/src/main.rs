@@ -6,7 +6,10 @@
 //! session in a new PTY, always reads the PTY, and writes the output to a
 //! ring buffer in shared memory that the daemon reads. It gives the same
 //! output to a VT parser, thus it knows the current screen and can give the
-//! redraw sequence of that screen to the daemon. It keeps what the programs
+//! redraw sequence of that screen to the daemon. It appends the same output
+//! to a journal on disk, with a checkpoint of the screen at intervals, thus
+//! the output that left the ring buffer stays readable, also after the
+//! holder ended. It keeps what the programs
 //! report in the output: the program status (OSC 7501), the input line state
 //! (OSC 133) and the notifications (OSC 9, OSC 777). The daemon controls
 //! the holder through a Unix socket and finds it through its discovery
@@ -22,10 +25,6 @@
 //!   `tokio` or on a crate that starts a runtime.
 //! - The holder does not talk to clients. Only the daemon connects to it.
 //! - The holder stays small. The targets are in `bench/README.md`.
-//!
-//! # Status
-//!
-//! The holder does not have the journal and the checkpoint yet.
 
 mod arguments;
 mod child;
@@ -35,9 +34,11 @@ mod discovery_directory;
 mod event_loop;
 mod foreground_program;
 mod input_queue;
+mod journal;
 mod program_reports;
 mod pty;
 mod session;
+mod session_state_directory;
 mod shared_memory;
 
 use std::env;
@@ -51,7 +52,9 @@ use crate::arguments::{Invocation, SessionArguments, USAGE};
 use crate::child_exit_signal::ChildExitSignal;
 use crate::control::ControlServer;
 use crate::discovery_directory::DiscoveryDirectory;
+use crate::journal::{Journal, JournalLimits};
 use crate::session::Session;
+use crate::session_state_directory::SessionStateDirectory;
 
 const EXIT_USAGE: u8 = 2;
 
@@ -85,7 +88,15 @@ fn run(arguments: &SessionArguments) -> io::Result<()> {
         .map_err(|error| with_context("cannot make the discovery directory", &error))?;
     let server = ControlServer::bind(&directory.socket_path(), memory.read_only)
         .map_err(|error| with_context("cannot make the control socket", &error))?;
-    let session = Session::start(arguments, ring)
+    let state_directory = SessionStateDirectory::create(arguments)
+        .map_err(|error| with_context("cannot make the session state directory", &error))?;
+    let journal = Journal::create(
+        state_directory.journal_directory(),
+        state_directory.epoch(),
+        JournalLimits::DEFAULT,
+    )
+    .map_err(|error| with_context("cannot start the journal", &error))?;
+    let session = Session::start(arguments, ring, state_directory, journal)
         .map_err(|error| with_context("cannot start the command", &error))?;
     directory.mark_ready()?;
 

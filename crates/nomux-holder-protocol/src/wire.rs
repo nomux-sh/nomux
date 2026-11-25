@@ -5,10 +5,11 @@
 //! that, the daemon sends a [`Request`] and the holder answers each request
 //! with one [`Reply`] that has the same request identifier.
 //!
-//! Three messages come with a file descriptor as `SCM_RIGHTS` ancillary data:
-//! the hello (the ring buffer), [`Reply::Redraw`] (the redraw sequence) and
-//! [`Reply::ProgramReports`] (the program reports). A descriptor arrives
-//! with the first byte of its message.
+//! Four messages come with a file descriptor as `SCM_RIGHTS` ancillary data:
+//! the hello (the ring buffer), [`Reply::Redraw`] (the redraw sequence),
+//! [`Reply::ProgramReports`] (the program reports) and a [`Reply::Journal`]
+//! that has bytes (the output bytes). A descriptor arrives with the first
+//! byte of its message.
 //!
 //! The encoding is written by hand and has fixed little-endian fields. The
 //! rules that keep an old holder compatible with a new daemon are:

@@ -81,14 +81,47 @@ mod segment_header;
 mod segment_name;
 mod segment_reader;
 
+use std::io;
+use std::os::fd::AsFd;
+
 pub use reader::{Checkpoint, JournalRange, JournalReader};
 pub use record_encoder::RecordEncoder;
 pub use segment_files::{SegmentFile, segment_files};
 pub use segment_header::SegmentHeader;
 pub use segment_name::SegmentName;
 
+use crate::shared_bytes;
+
 /// The epoch of the first holder of a session. The value 0 is not an epoch.
 pub const FIRST_EPOCH: u32 = 1;
 
 /// The largest number of output bytes in one output record.
 pub const MAX_OUTPUT_LENGTH: usize = 128 * 1024;
+
+/// The largest number of bytes that one
+/// [`Reply::Journal`](crate::wire::Reply::Journal) carries.
+pub const MAX_RANGE_LENGTH: usize = 256 * 1024;
+
+/// Writes the bytes of a journal range at the start of `memory`. The holder
+/// calls this.
+///
+/// `memory` must be shared memory that is at least `bytes.len()` bytes long.
+///
+/// # Errors
+///
+/// Returns the error of `mmap`. Empty `bytes` are an error.
+pub fn write_range(memory: impl AsFd, bytes: &[u8]) -> io::Result<()> {
+    shared_bytes::write(memory.as_fd(), bytes)
+}
+
+/// Copies the `length` bytes of a journal range out of the memory that came
+/// with a [`Reply::Journal`](crate::wire::Reply::Journal). The daemon calls
+/// this.
+///
+/// # Errors
+///
+/// Returns an error if `length` is larger than [`MAX_RANGE_LENGTH`] or than
+/// the memory, or if `fstat` or `mmap` fails.
+pub fn read_range(memory: impl AsFd, length: u32) -> io::Result<Vec<u8>> {
+    shared_bytes::read(memory.as_fd(), length, MAX_RANGE_LENGTH)
+}

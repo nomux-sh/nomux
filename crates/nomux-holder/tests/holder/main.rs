@@ -3,6 +3,8 @@
 
 mod compatibility;
 mod fixture;
+mod journal;
 mod program_reports;
 mod redraw;
 mod session;
+mod session_state;

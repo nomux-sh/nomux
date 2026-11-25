@@ -1,5 +1,6 @@
-//! The one loop of the holder. It waits in `poll` with no timeout while the
-//! child runs, thus an idle holder uses no CPU time.
+//! The one loop of the holder. While the child runs, it waits in `poll`
+//! with no timeout, or until the journal must write the output bytes that
+//! wait in memory. Thus an idle holder uses no CPU time.
 
 use std::array;
 use std::io;
@@ -30,7 +31,9 @@ pub(crate) fn run(
 ) -> io::Result<()> {
     let mut exit_deadline = None;
     loop {
-        let ready = wait(&session, &server, &child_exit, exit_deadline)?;
+        let flush_deadline = session.journal_flush_deadline();
+        let deadline = earliest(exit_deadline, flush_deadline);
+        let ready = wait(&session, &server, &child_exit, deadline)?;
 
         if !ready[CHILD_EXIT].is_empty() {
             child_exit.clear()?;
@@ -54,6 +57,9 @@ pub(crate) fn run(
             }
         }
         server.complete_waits(&session);
+        if flush_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            session.flush_journal();
+        }
 
         let ended = exit_deadline
             .is_some_and(|deadline| exit_status_delivered || Instant::now() >= deadline);
@@ -97,6 +103,13 @@ fn wait(
             Err(Errno::INTR) => {}
             Err(error) => return Err(error.into()),
         }
+    }
+}
+
+fn earliest(first: Option<Instant>, second: Option<Instant>) -> Option<Instant> {
+    match (first, second) {
+        (Some(first), Some(second)) => Some(first.min(second)),
+        (deadline, None) | (None, deadline) => deadline,
     }
 }
 

@@ -1,8 +1,9 @@
 //! The session: the terminal, the child command, the ring buffer, the
-//! screen state and the program reports.
+//! screen state, the program reports and the journal.
 
 use std::io;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
+use std::time::Instant;
 
 use nomux_holder_protocol::SessionId;
 use nomux_holder_protocol::ring::RingWriter;
@@ -19,8 +20,10 @@ use crate::arguments::SessionArguments;
 use crate::child::ChildProcess;
 use crate::foreground_program::ForegroundProgram;
 use crate::input_queue::InputQueue;
+use crate::journal::Journal;
 use crate::program_reports::ProgramReportStore;
 use crate::pty;
+use crate::session_state_directory::SessionStateDirectory;
 
 /// The largest number of bytes that one read moves from the terminal to the
 /// ring buffer. The kernel gives 4096 bytes at most for one read of a
@@ -44,13 +47,21 @@ pub(crate) struct Session {
     screen: Terminal,
     /// What the programs reported in each byte that the ring buffer got.
     reports: ProgramReportStore,
+    /// Each byte that the ring buffer got, on disk.
+    journal: Journal,
+    state_directory: SessionStateDirectory,
     input: InputQueue,
     size: WindowSize,
 }
 
 impl Session {
     /// Opens the pseudoterminal and starts the child command.
-    pub(crate) fn start(arguments: &SessionArguments, ring: RingWriter) -> io::Result<Self> {
+    pub(crate) fn start(
+        arguments: &SessionArguments,
+        ring: RingWriter,
+        state_directory: SessionStateDirectory,
+        journal: Journal,
+    ) -> io::Result<Self> {
         let screen_size = screen_size(arguments.size).ok_or(io::ErrorKind::InvalidInput)?;
         let pty = pty::open(arguments.size)?;
         let child = ChildProcess::spawn(
@@ -67,6 +78,8 @@ impl Session {
             ring,
             screen: Terminal::new(screen_size),
             reports: ProgramReportStore::default(),
+            journal,
+            state_directory,
             input: InputQueue::default(),
             size: arguments.size,
         })
@@ -78,6 +91,7 @@ impl Session {
             session_id: self.id.clone(),
             child_pid: self.child.pid(),
             size: self.size,
+            epoch: self.state_directory.epoch(),
         }
     }
 
@@ -95,13 +109,16 @@ impl Session {
     }
 
     /// Moves one chunk of output from the terminal into the ring buffer,
-    /// gives the same bytes to the screen state and keeps what the programs
-    /// reported in them. Returns `false` if the terminal had no bytes.
+    /// gives the same bytes to the screen state and to the journal, and
+    /// keeps what the programs reported in them. Returns `false` if the
+    /// terminal had no bytes.
     pub(crate) fn read_output(&mut self) -> io::Result<bool> {
         let Some(terminal) = &self.terminal else {
             return Ok(false);
         };
+        self.journal.before_output(&mut self.screen, self.size);
         let (screen, reports, input) = (&mut self.screen, &mut self.reports, &mut self.input);
+        let journal = &mut self.journal;
         let foreground = ForegroundProgram::of(terminal.as_fd());
         let read = self.ring.write_with(OUTPUT_CHUNK, |chunk| {
             let count = rustix::io::read(terminal, &mut *chunk)?;
@@ -110,6 +127,7 @@ impl Session {
                     keep_record(record, reports, input, &foreground);
                 }
             });
+            journal.append(&chunk[..count]);
             Ok::<_, Errno>(count)
         });
         match read {
@@ -120,6 +138,7 @@ impl Session {
                 Ok(false)
             }
             Ok(_) => {
+                self.journal.output_written(&mut self.screen, self.size);
                 // The answer to a program status query.
                 self.flush_input();
                 Ok(true)
@@ -148,6 +167,22 @@ impl Session {
         let mut sequence = Vec::new();
         self.screen.write_redraw(&mut sequence);
         sequence
+    }
+
+    /// The time at which the event loop must call
+    /// [`flush_journal`](Self::flush_journal).
+    pub(crate) fn journal_flush_deadline(&self) -> Option<Instant> {
+        self.journal.flush_deadline()
+    }
+
+    /// Writes the output bytes that wait in memory to the journal.
+    pub(crate) fn flush_journal(&mut self) {
+        self.journal.flush(&mut self.screen, self.size);
+    }
+
+    /// Output bytes from the journal: see `Journal::read`.
+    pub(crate) fn read_journal(&self, from: u64, max_length: usize) -> io::Result<(u64, Vec<u8>)> {
+        self.journal.read(from, max_length)
     }
 
     /// The number of changes to the program reports.
@@ -189,6 +224,8 @@ impl Session {
         pty::resize(terminal, size).map_err(|_| ErrorCode::Failed)?;
         self.screen.resize(screen_size);
         self.size = size;
+        self.journal.window_resized();
+        report_state_error(self.state_directory.record_window_size(size));
         Ok(())
     }
 
@@ -221,7 +258,16 @@ impl Session {
         }
         self.terminal = None;
         self.input.clear();
+        self.journal.finish(&mut self.screen, self.size);
+        report_state_error(self.state_directory.record_end(self.child.status()));
         Ok(true)
+    }
+}
+
+/// The session continues when its metadata cannot be written.
+fn report_state_error(result: io::Result<()>) {
+    if let Err(error) = result {
+        eprintln!("nomux-holder: cannot write the session metadata: {error}");
     }
 }
 
