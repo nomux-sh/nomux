@@ -9,12 +9,13 @@ use std::io;
 
 use nomux_proto::frame::{FrameError, FrameHeader, FrameKind, HEADER_LEN, MAX_PAYLOAD_LEN};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
+
+use crate::byte_stream::{ReadHalf, WriteHalf};
 
 /// The receiving direction of a connection that carries terminal frames.
 #[derive(Debug)]
 pub struct FrameReader {
-    stream: OwnedReadHalf,
+    stream: ReadHalf,
     /// The bytes that came from the stream. The frame that
     /// [`receive`](Self::receive) returned last is at the start.
     incoming: Vec<u8>,
@@ -24,7 +25,7 @@ pub struct FrameReader {
 }
 
 impl FrameReader {
-    pub(crate) fn new(stream: OwnedReadHalf, incoming: Vec<u8>) -> Self {
+    pub(crate) fn new(stream: ReadHalf, incoming: Vec<u8>) -> Self {
         Self {
             stream,
             incoming,
@@ -94,7 +95,7 @@ impl FrameReader {
 /// The sending direction of a connection that carries terminal frames.
 #[derive(Debug)]
 pub struct FrameWriter {
-    stream: OwnedWriteHalf,
+    stream: WriteHalf,
     /// The header and the payload of one frame, thus one write sends them.
     outgoing: Vec<u8>,
     /// `true` while a part of a frame is on the stream and the other part
@@ -103,7 +104,7 @@ pub struct FrameWriter {
 }
 
 impl FrameWriter {
-    pub(crate) fn new(stream: OwnedWriteHalf) -> Self {
+    pub(crate) fn new(stream: WriteHalf) -> Self {
         Self {
             stream,
             outgoing: Vec::new(),
@@ -182,7 +183,8 @@ mod tests {
 
     fn reader() -> (FrameReader, UnixStream) {
         let (near, far) = UnixStream::pair().unwrap();
-        let (reader, _writer) = EnvelopeStream::new(near).into_frames();
+        let (read, write) = near.into_split();
+        let (reader, _writer) = EnvelopeStream::new(read, write).into_frames();
         (reader, far)
     }
 
@@ -244,7 +246,8 @@ mod tests {
         use prost::Message;
 
         let (near, mut peer) = UnixStream::pair().unwrap();
-        let mut envelopes = EnvelopeStream::new(near);
+        let (read, write) = near.into_split();
+        let mut envelopes = EnvelopeStream::new(read, write);
         let event = Envelope {
             kind: Some(envelope::Kind::Event(Event { seq: 1 })),
         };
