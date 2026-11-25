@@ -5,6 +5,7 @@
 //! The tests run the binaries that Cargo built into the target directory.
 //! `tests/README.md` says how to run them.
 
+mod extension_package;
 mod key_latency;
 mod remote_host;
 mod ssh_server;
@@ -24,6 +25,7 @@ use rustix::process::{Pid, Signal};
 use serde_json::Value;
 use tempfile::TempDir;
 
+pub use crate::extension_package::extension_package;
 pub use crate::key_latency::{key_to_echo, latency_row};
 pub use crate::remote_host::RemoteHost;
 pub use crate::ssh_server::{SshServer, generate_key, public_key, sshd_path};

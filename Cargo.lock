@@ -1134,6 +1134,7 @@ dependencies = [
 name = "nomux-end-to-end"
 version = "0.2.1"
 dependencies = [
+ "base64",
  "nomux-client",
  "nomux-holder-protocol",
  "nomux-proto",

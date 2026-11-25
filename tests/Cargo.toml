@@ -39,6 +39,10 @@ name = "attach_protocol"
 path = "attach_protocol.rs"
 
 [[test]]
+name = "extensions"
+path = "extensions.rs"
+
+[[test]]
 name = "remote_host"
 path = "remote_host.rs"
 
@@ -64,6 +68,7 @@ serde_json.workspace = true
 tempfile.workspace = true
 
 [dev-dependencies]
+base64.workspace = true
 nomux-client.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "time"] }
 

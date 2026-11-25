@@ -7,6 +7,7 @@ This directory is the package `nomux-end-to-end`: the end-to-end tests of the co
 | File | Subject |
 |---|---|
 | `attach.rs` | `nomux attach` in a pseudoterminal: the screen of a session that already drew, the keys and their echo, the window size, detach and a second attach with the same screen, two clients, `nomux detach`, `SIGKILL` of the daemon during an attach, a flood of output for a client that takes no output, the exit status of the session, `new --attach`, and the command after `--` |
+| `extensions.rs` | The `nomux ext` commands and the extension host of the daemon, with the test extension of `nomux-ext-host`: an install without an approval installs nothing, the first call starts the process and the idle process stops, the `sessions.list` service with and without its scope, a process that fails and starts again, an extension that the daemon disables after failures, an attach to a session while a call of an extension that hangs waits, the stop of the daemon, `ext rm`, and `ext validate` |
 | `attach_protocol.rs` | The attach of the client library: a client that attaches again gets only the output that it does not have, also after a restart of the daemon, and the screen when the daemon no longer has that output. The errors of `Session.Resize` and `Session.Input` |
 | `remote_host.rs` | A remote host through SSH, with an `sshd` that each test starts: `host add` installs the binaries from a release archive, the session commands and an attach with `--host`, an attach that continues after the connection was cut with each byte one time, a host key that is not known or that changed, a daemon without a common protocol version that is replaced while its session continues, `host doctor` for a good host and for a wrong permission, ssh-agent, `ProxyJump`, and a server that refuses connections to Unix sockets |
 | `session_lifecycle.rs` | The CLI starts the daemon and a session. The session continues after `SIGKILL` of the daemon, after `SIGKILL` of the process group of the daemon, after `nomux daemon stop` and after `nomuxd --replace`, and a new daemon finds it. A holder that does not run leaves the list. Exit codes |
@@ -17,6 +18,7 @@ This directory is the package `nomux-end-to-end`: the end-to-end tests of the co
 | `support/remote_host.rs` | A client and a remote host for a test: two home directories, a key, the file of known hosts, and a release archive of the binaries of the build |
 | `support/ssh_server.rs` | An `sshd` that runs as the user of the tests on a free port of this computer, with a host key and an authorized key of its own |
 | `support/tcp_relay.rs` | A TCP relay between the client and the `sshd`: a test cuts its connections, and a measurement gives it a delay |
+| `support/extension_package.rs` | A package of the test extension: a manifest and the binary `nomux-test-extension` of the package `nomux-ext-host` |
 | `support/incompatible_daemon.rs` | The binary `nomux-test-incompatible-daemon`: a process in the place of a daemon that refuses each client as a daemon without a common protocol version does |
 | `support/key_latency.rs` | The measurement of the time from a key to its echo |
 | `measurements/attach.rs` | Not a test: the program that measures the attach path |
@@ -39,7 +41,7 @@ A test of `remote_host.rs` starts `/usr/sbin/sshd` (or `/usr/bin/sshd`) as the u
 cargo nextest run --workspace
 ```
 
-Cargo gives a test the path of a binary only for the binaries of the same package, and this package has no binary. Thus the tests look for the three binaries in the target directory, where a build of the workspace puts them. To run only this package, build the workspace first:
+Cargo gives a test the path of a binary only for the binaries of the same package, and this package has no binary. Thus the tests look for the three binaries and for the test extension in the target directory, where a build of the workspace puts them. To run only this package, build the workspace first:
 
 ```sh
 cargo build --workspace && cargo nextest run -p nomux-end-to-end
