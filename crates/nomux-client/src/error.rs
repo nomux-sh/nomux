@@ -1,0 +1,79 @@
+//! Why a connection or a request failed.
+
+use std::error::Error;
+use std::fmt;
+use std::io;
+
+use nomux_proto::wire::v1 as wire;
+
+/// A connection to the daemon or a request did not succeed.
+#[derive(Debug)]
+pub enum ClientError {
+    /// No daemon listens on the socket.
+    DaemonNotRunning,
+    /// The daemon cannot start.
+    DaemonStart(io::Error),
+    /// The connection failed, or the daemon sent something that is not a
+    /// valid reply.
+    Connection(io::Error),
+    /// The client and the daemon have no common protocol version.
+    VersionIncompatible(String),
+    /// The user does not have permission.
+    PermissionDenied(String),
+    /// The item that the request names does not exist.
+    NotFound(String),
+    /// The operation did not complete in the permitted time.
+    Timeout(String),
+    /// The daemon did not do the request for a different reason.
+    Failed(String),
+}
+
+impl ClientError {
+    /// The error for a reply that the protocol does not permit.
+    pub(crate) fn invalid_reply(message: &'static str) -> Self {
+        Self::Connection(io::Error::new(io::ErrorKind::InvalidData, message))
+    }
+}
+
+impl From<wire::Error> for ClientError {
+    fn from(error: wire::Error) -> Self {
+        let message = error.message;
+        match wire::ErrorCode::try_from(error.code) {
+            Ok(wire::ErrorCode::NotFound) => Self::NotFound(message),
+            Ok(wire::ErrorCode::Timeout) => Self::Timeout(message),
+            Ok(wire::ErrorCode::PermissionDenied) => Self::PermissionDenied(message),
+            Ok(wire::ErrorCode::VersionIncompatible) => Self::VersionIncompatible(message),
+            // A code from a later protocol version is an error without a
+            // more exact reason.
+            Ok(wire::ErrorCode::Failed | wire::ErrorCode::Unspecified) | Err(_) => {
+                Self::Failed(message)
+            }
+        }
+    }
+}
+
+impl fmt::Display for ClientError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DaemonNotRunning => formatter.write_str("the daemon does not run"),
+            Self::DaemonStart(error) => write!(formatter, "the daemon cannot start: {error}"),
+            Self::Connection(error) => {
+                write!(formatter, "the connection to the daemon failed: {error}")
+            }
+            Self::VersionIncompatible(message)
+            | Self::PermissionDenied(message)
+            | Self::NotFound(message)
+            | Self::Timeout(message)
+            | Self::Failed(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl Error for ClientError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::DaemonStart(error) | Self::Connection(error) => Some(error),
+            _ => None,
+        }
+    }
+}
