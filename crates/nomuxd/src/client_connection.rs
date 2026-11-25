@@ -9,28 +9,41 @@ use nomux_proto::wire::v1::{
 use nomux_transport::EnvelopeStream;
 use tracing::debug;
 
-use crate::handlers::{self, Context};
+use crate::handlers::{self, Context, Outcome};
 use crate::handshake;
 
 /// Serves one connection until the client closes it or breaks the protocol.
-pub(crate) async fn serve(mut stream: EnvelopeStream, context: Arc<Context>) {
-    if let Err(error) = converse(&mut stream, &context).await {
+pub(crate) async fn serve(stream: EnvelopeStream, context: Arc<Context>) {
+    if let Err(error) = converse(stream, &context).await {
         debug!(%error, "a client connection ended with an error");
     }
 }
 
-async fn converse(stream: &mut EnvelopeStream, context: &Context) -> io::Result<()> {
-    if !shake_hands(stream).await? {
+async fn converse(mut stream: EnvelopeStream, context: &Context) -> io::Result<()> {
+    if !shake_hands(&mut stream).await? {
         return Ok(());
     }
     // The requests of one connection are answered in their sequence.
-    while let Some(request) = next_request(stream).await? {
-        let _in_flight = context.in_flight_requests.begin().await;
-        let result = match request.body {
+    while let Some(request) = next_request(&mut stream).await? {
+        let in_flight = context.in_flight_requests.begin().await;
+        let outcome = match request.body {
             Some(body) => handlers::handle(body, context).await,
-            None => response::Result::Error(failed("the daemon does not know this request")),
+            None => Outcome::Respond(response::Result::Error(failed(
+                "the daemon does not know this request",
+            ))),
         };
-        respond(stream, request.id, result).await?;
+        match outcome {
+            Outcome::Respond(result) => respond(&mut stream, request.id, result).await?,
+            Outcome::Attach(attachment) => {
+                let accepted = response::Result::SessionAttach(attachment.response());
+                respond(&mut stream, request.id, accepted).await?;
+                // The request is complete. The attach is not a request: it
+                // ends when the daemon closes the connections.
+                drop(in_flight);
+                attachment.run(stream).await;
+                return Ok(());
+            }
+        }
     }
     Ok(())
 }

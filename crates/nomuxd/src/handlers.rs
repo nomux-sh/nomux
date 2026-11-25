@@ -6,6 +6,7 @@ mod session;
 
 use nomux_proto::wire::v1::{Error, ErrorCode, request, response};
 
+use crate::attachment::Attachment;
 use crate::in_flight_requests::InFlightRequests;
 use crate::sessions::Sessions;
 use crate::shutdown::Shutdown;
@@ -17,8 +18,17 @@ pub(crate) struct Context {
     pub(crate) in_flight_requests: InFlightRequests,
 }
 
-/// Does one request and gives the result for the response.
-pub(crate) async fn handle(body: request::Body, context: &Context) -> response::Result {
+/// What the connection does after a request.
+pub(crate) enum Outcome {
+    /// Send the response. The connection stays a control channel.
+    Respond(response::Result),
+    /// Send the response of the attach. Then the connection carries the
+    /// terminal frames of the attach.
+    Attach(Attachment),
+}
+
+/// Does one request.
+pub(crate) async fn handle(body: request::Body, context: &Context) -> Outcome {
     let result = match body {
         request::Body::Hello(_) => Err(Error {
             code: ErrorCode::Failed.into(),
@@ -29,6 +39,15 @@ pub(crate) async fn handle(body: request::Body, context: &Context) -> response::
         request::Body::SessionCreate(request) => session::create(request, context).await,
         request::Body::SessionList(_) => Ok(session::list(context)),
         request::Body::SessionKill(request) => session::kill(&request, context).await,
+        request::Body::SessionAttach(request) => {
+            return match session::attach(&request, context).await {
+                Ok(attachment) => Outcome::Attach(attachment),
+                Err(error) => Outcome::Respond(response::Result::Error(error)),
+            };
+        }
+        request::Body::SessionDetach(request) => session::detach(&request, context),
+        request::Body::SessionInput(request) => session::input(request, context).await,
+        request::Body::SessionResize(request) => session::resize(&request, context).await,
     };
-    result.unwrap_or_else(response::Result::Error)
+    Outcome::Respond(result.unwrap_or_else(response::Result::Error))
 }
