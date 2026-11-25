@@ -26,6 +26,9 @@ jobs:
     uses: nomux-sh/.github/.github/workflows/rust-ci.yml@main
     with:
       os: '["ubuntu-latest","macos-latest"]'
+      # The macOS runners have a queue. Pull requests run clippy on Linux
+      # only. The nightly run does clippy on macOS.
+      clippy-os: '["ubuntu-latest"]'
       working-directory: .
       run-deny: true
       run-machete: true
