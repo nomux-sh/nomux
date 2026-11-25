@@ -5,6 +5,9 @@
 //! two bytes after it are a resize: the first byte selects the rows and the
 //! second byte selects the columns. Thus a file with terminal output is a
 //! valid input, and a mutation of one byte keeps the other steps.
+//!
+//! A resize can select 1 column, which `nomux-term` refuses. The terminal
+//! then keeps its size, as the terminal of a holder that refuses a `Resize`.
 
 use nomux_term::{Osc, Size, Terminal};
 
@@ -17,18 +20,19 @@ const INITIAL_COLUMNS: u16 = 20;
 /// the screen are where the defects are.
 const MAX_ROWS: u8 = 32;
 const MAX_COLUMNS: u8 = 128;
-/// The VT library cannot keep a wide character in 1 column:
-/// <https://github.com/nomux-sh/nomux/issues/24>. Until `nomux-term` refuses
-/// that size, a script does not use it.
-const MIN_COLUMNS: u8 = 2;
 
 /// One step of a script.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step<'input> {
     /// The program writes these bytes.
     Feed(&'input [u8]),
-    /// The terminal gets this size.
-    Resize(Size),
+    /// The window gets this size.
+    Resize {
+        /// The number of rows: 1 or more.
+        rows: u16,
+        /// The number of columns: 1 or more.
+        columns: u16,
+    },
 }
 
 impl Step<'_> {
@@ -37,7 +41,11 @@ impl Step<'_> {
     pub fn apply(self, terminal: &mut Terminal, unhandled_osc: impl FnMut(Osc<'_>)) {
         match self {
             Self::Feed(output) => terminal.feed(output, unhandled_osc),
-            Self::Resize(size) => terminal.resize(size),
+            Self::Resize { rows, columns } => {
+                if let Some(size) = Size::new(rows, columns) {
+                    terminal.resize(size);
+                }
+            }
         }
     }
 }
@@ -63,10 +71,10 @@ impl<'input> Iterator for TerminalScript<'input> {
         match self.rest {
             [RESIZE_MARK, rows, columns, rest @ ..] => {
                 self.rest = rest;
-                Some(Step::Resize(size(
-                    1 + u16::from(rows % MAX_ROWS),
-                    u16::from(MIN_COLUMNS + columns % (MAX_COLUMNS - MIN_COLUMNS + 1)),
-                )))
+                Some(Step::Resize {
+                    rows: 1 + u16::from(rows % MAX_ROWS),
+                    columns: 1 + u16::from(columns % MAX_COLUMNS),
+                })
             }
             // The end of the input, or a resize that the end of the input cut.
             [] | [RESIZE_MARK, ..] => None,
@@ -83,9 +91,9 @@ impl<'input> Iterator for TerminalScript<'input> {
 /// The terminal that each script starts with.
 #[must_use]
 pub fn new_terminal() -> Terminal {
-    Terminal::new(size(INITIAL_ROWS, INITIAL_COLUMNS))
+    Terminal::new(initial_size())
 }
 
-fn size(rows: u16, columns: u16) -> Size {
-    Size::new(rows, columns).expect("the two numbers are not zero")
+fn initial_size() -> Size {
+    Size::new(INITIAL_ROWS, INITIAL_COLUMNS).expect("a terminal can have the size")
 }
