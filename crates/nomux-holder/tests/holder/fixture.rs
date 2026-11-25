@@ -198,8 +198,11 @@ impl Client {
                 assert_eq!(frame.request_id, request_id);
                 return Reply::decode(frame).expect("the test helper works");
             }
-            let (count, descriptor) = receive_with_descriptor(&self.stream, self.frames.unfilled())
-                .expect("the test helper works");
+            let received = receive_with_descriptor(&self.stream, self.frames.unfilled());
+            let (count, descriptor) = received.unwrap_or_else(|error| {
+                let output = String::from_utf8_lossy(&self.output);
+                panic!("no reply to request {request_id}: {error}, output: {output:?}")
+            });
             assert_ne!(count, 0, "the holder closed the connection");
             self.frames.advance(count);
             if descriptor.is_some() {
