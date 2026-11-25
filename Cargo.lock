@@ -361,6 +361,18 @@ name = "nomux-core"
 version = "0.0.0"
 
 [[package]]
+name = "nomux-end-to-end"
+version = "0.0.0"
+dependencies = [
+ "nomux-holder-protocol",
+ "nomux-proto",
+ "prost",
+ "rustix",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "nomux-ext-host"
 version = "0.0.0"
 
