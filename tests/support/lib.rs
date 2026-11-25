@@ -1,10 +1,13 @@
 //! Support for the end-to-end tests: a private home directory, the `nomux`
-//! CLI, and the processes of the daemon and the holders.
+//! CLI, a terminal for the commands that need one, and the processes of the
+//! daemon and the holders.
 //!
 //! The tests run the binaries that Cargo built into the target directory.
 //! `tests/README.md` says how to run them.
 
-use std::path::PathBuf;
+mod terminal_client;
+
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -16,8 +19,10 @@ use rustix::process::{Pid, Signal};
 use serde_json::Value;
 use tempfile::TempDir;
 
+pub use crate::terminal_client::TerminalClient;
+
 /// The longest time that a test waits for a condition.
-const TIMEOUT: Duration = Duration::from_secs(20);
+pub(crate) const TIMEOUT: Duration = Duration::from_secs(20);
 
 /// The path of a nomux binary in the target directory of this build.
 ///
@@ -91,11 +96,28 @@ pub fn kill_process_group(process_group: u32) {
         .expect("the process group gets SIGKILL");
 }
 
-fn raw_pid(pid: u32) -> Pid {
+pub(crate) fn raw_pid(pid: u32) -> Pid {
     i32::try_from(pid)
         .ok()
         .and_then(Pid::from_raw)
         .expect("a process ID is a positive number")
+}
+
+/// The resident memory of the process `pid` in kibibytes.
+///
+/// # Panics
+///
+/// Panics if `ps` does not give the value.
+#[must_use]
+pub fn resident_memory_kib(pid: u32) -> u64 {
+    let output = Command::new("ps")
+        .args(["-o", "rss=", "-p", &pid.to_string()])
+        .output()
+        .expect("ps starts");
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("ps gives the memory of process {pid}: {output:?}"))
 }
 
 /// The result of one run of the `nomux` CLI.
@@ -178,16 +200,57 @@ impl Sandbox {
     /// Panics if the CLI cannot start.
     #[must_use]
     pub fn nomux(&self, arguments: &[&str]) -> CliRun {
-        Command::new(binary("nomux"))
-            .args(arguments)
-            .env("HOME", self.home.path())
-            .env("SHELL", "/bin/sh")
-            .env_remove("NOMUX_LOG")
-            .current_dir(self.home.path())
+        self.nomux_command(arguments)
             .stdin(Stdio::null())
             .output()
             .expect("the CLI starts")
             .into()
+    }
+
+    /// Starts `nomux` with `arguments` in a terminal of 24 rows and 80
+    /// columns.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the terminal or the CLI cannot start.
+    #[must_use]
+    pub fn nomux_in_terminal(&self, arguments: &[&str]) -> TerminalClient {
+        self.nomux_in_window(arguments, 24, 80)
+    }
+
+    /// Starts `nomux` with `arguments` in a terminal with a window of
+    /// `rows` and `columns`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the terminal or the CLI cannot start.
+    #[must_use]
+    pub fn nomux_in_window(&self, arguments: &[&str], rows: u16, columns: u16) -> TerminalClient {
+        TerminalClient::start(self.nomux_command(arguments), rows, columns)
+    }
+
+    fn nomux_command(&self, arguments: &[&str]) -> Command {
+        let mut command = Command::new(binary("nomux"));
+        command
+            .args(arguments)
+            .env("HOME", self.home.path())
+            .env("SHELL", "/bin/sh")
+            .env_remove("NOMUX_LOG")
+            .current_dir(self.home.path());
+        command
+    }
+
+    /// The home directory of the sandbox. A command of a session starts
+    /// there.
+    #[must_use]
+    pub fn home(&self) -> &Path {
+        self.home.path()
+    }
+
+    /// The socket of the daemon of this home directory.
+    #[must_use]
+    pub fn daemon_socket(&self) -> PathBuf {
+        self.runtime_directory().join("nomuxd.sock")
     }
 
     /// Runs `nomux` and makes sure that it succeeded.
