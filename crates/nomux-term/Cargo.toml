@@ -10,5 +10,11 @@ homepage.workspace = true
 authors.workspace = true
 publish.workspace = true
 
+[dependencies]
+# The VT library. The default features add `serde`, which this crate does not use.
+alacritty_terminal = { version = "0.26.0", default-features = false }
+bitflags = "2.4"
+memchr = "2.7"
+
 [lints]
 workspace = true
