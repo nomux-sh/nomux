@@ -3,7 +3,7 @@
 This document shows the components of the nomux core and the responsibility of each component.
 It is an overview. The protocol specifications are in the [`proto`](https://github.com/nomux-sh/proto) repository.
 
-The holder has its first version: [holder.md](holder.md) describes it. The other components are not implemented yet.
+The holder, the daemon, the client library and the CLI have their first version: [holder.md](holder.md), [daemon.md](daemon.md) and [cli.md](cli.md) describe them. The other components are not implemented yet.
 The "State" section shows what exists and where the plan is.
 
 ## Components
@@ -65,6 +65,8 @@ One daemon runs on each host.
 
 Responsibilities:
 
+The first version creates, lists and ends sessions, finds the holders again after a restart and takes their lease. [daemon.md](daemon.md) has the details and the parts that are open.
+
 - **Sessions:** Find the holders from their discovery files and connect to them, also after a daemon restart. Take the single-writer lease. Send terminal data to the clients. Keep a small pool of holders that already have a shell (warm pool), thus a new session starts immediately.
 - **State:** Keep the data model, the status resolver and the event log in SQLite (WAL mode).
 - **Extensions:** Start the daemon part of each extension as a separate process when a client needs it. Apply the permissions of the extension.
@@ -74,6 +76,7 @@ Responsibilities:
 
 Rules:
 
+- One daemon runs for each user and each runtime directory. A second daemon ends with an error.
 - The daemon does not own a PTY. Thus a daemon failure stops no session.
 - Terminal data does not go through the component that owns the state.
 - The daemon calculates data such as metrics or git status only while a client watches it.
@@ -83,6 +86,8 @@ Rules:
 The client library `nomux-client` is the client side of the protocol. The CLI, the desktop client and the mobile clients use it.
 
 Responsibilities:
+
+The first version connects to the daemon of the local host, starts it when it does not run, does the handshake and sends the requests for sessions and for the daemon. [cli.md](cli.md) has the commands of the CLI.
 
 - Connect to a daemon through a transport: a Unix socket on the local host, SSH or QUIC for a remote host.
 - Do the handshake: protocol version, oldest supported version and capability flags.
@@ -100,36 +105,40 @@ Rules:
 
 | Crate | Type | Responsibility | State |
 |---|---|---|---|
-| `nomux-core` | library | Shared types, errors, configuration, glossary types | in use: the version output of the binaries |
+| `nomux-core` | library | Shared types, errors, configuration, glossary types | in use: the version output of the binaries, the lookup of a binary of the same installation |
 | `nomux-term` | library | Thin abstraction over the VT library (`alacritty_terminal`), which lets the project replace the library | in use: the screen state, the redraw sequence and the OSC sequences |
 | `nomux-holder-protocol` | library | Contract between a holder and the daemon: control messages, ring buffer layout, discovery files | in use by the holder |
 | `nomux-holder` | binary | The holder. No async runtime | owns the PTY, the ring buffer, the control socket and the discovery files |
-| `nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows | structure only |
+| `nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows | in use: the Unix socket of the local host and the framing of the control channel |
 | `nomux-status` | library | Status resolver, rules, aggregation. Pure code without I/O | structure only |
 | `nomux-ext-host` | library | Extension host of the daemon | structure only |
-| `nomuxd` | binary | The daemon | prints its version only |
-| `nomux-client` | library | Protocol client for the CLI, the desktop client and the mobile clients | structure only |
-| `nomux-cli` | binary `nomux` | The CLI | prints its version only |
+| `nomuxd` | binary | The daemon | creates, lists and ends sessions; finds the holders after a restart |
+| `nomux-client` | library | Protocol client for the CLI, the desktop client and the mobile clients | in use: connection, handshake and the requests for sessions and for the daemon |
+| `nomux-cli` | binary `nomux` | The CLI | `new`, `ls`, `kill`, `daemon status`, `daemon stop`, `version` |
+| `nomux-end-to-end` (in `tests`) | tests | End-to-end tests with the three binaries | in use |
 
 Planned direction of the dependencies:
 
 - `nomux-core` depends on no other nomux crate.
 - `nomux-holder-protocol` depends on no other nomux crate. It has no async runtime.
 - `nomux-holder` uses `nomux-core`, `nomux-holder-protocol` and `nomux-term`. It must not use a crate that needs an async runtime.
+- `nomux-transport` depends on no other nomux crate of this repository. It uses the messages of the `nomux-proto` crate, which the `proto` repository publishes.
 - `nomuxd` uses `nomux-core`, `nomux-holder-protocol`, `nomux-term`, `nomux-transport`, `nomux-status` and `nomux-ext-host`. It finds the holders and talks to them only through `nomux-holder-protocol`.
 - `nomux-client` uses `nomux-core`, `nomux-term` and `nomux-transport`.
-- `nomux-cli` uses `nomux-client`.
+- `nomux-cli` uses `nomux-client` and `nomux-core`. It uses no type of `nomux-proto`.
 
-Now the holder depends on `nomux-core` and `nomux-holder-protocol`, and the other two binaries depend on `nomux-core` only. `nomux-term` depends on the VT library, and no crate uses `nomux-term` yet. The other libraries have no dependencies.
+Now the holder depends on `nomux-core` and `nomux-holder-protocol`. The daemon depends on `nomux-core`, `nomux-holder-protocol` and `nomux-transport`. The client library depends on `nomux-core` and `nomux-transport`, and the CLI depends on the client library and `nomux-core`. `nomux-term` depends on the VT library, and no crate uses `nomux-term` yet. `nomux-status` and `nomux-ext-host` have no dependencies and no users.
 A crate gets a dependency when its code uses it.
+
+Two definitions exist in two crates, because the client side must not depend on the holder contract: the runtime directory `~/.nomux/run` is in `nomux-holder-protocol` (for the holders) and in `nomux-transport` (for the socket of the daemon). The daemon uses the first one for the two purposes, and an end-to-end test fails if the client looks for the socket in a different directory.
 
 ## State
 
-The repository has the Cargo workspace, the developer tools and CI. The holder runs a command in a PTY and serves the daemon side of its contract. The daemon and the CLI print their version and do nothing else.
+The repository has the Cargo workspace, the developer tools and CI. The holder runs a command in a PTY and serves the daemon side of its contract. The daemon starts holders, finds them again after a restart and serves the clients on a Unix socket. The CLI creates, lists and ends sessions.
 
 The work comes in this sequence:
 
-1. The rest of the holder (VT state, journal, checkpoint, OSC parser), the daemon, attach, the warm pool, lazy restore, the first CLI commands, the selection of the VT library and the Unix socket transport.
+1. The rest of the holder (VT state, journal, checkpoint, OSC parser), attach, the warm pool, lazy restore, the state database of the daemon and the selection of the VT library.
 2. Remote hosts: the SSH transport and the bootstrap.
 3. The extension host.
 4. The agent status engine.
