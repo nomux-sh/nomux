@@ -1,12 +1,12 @@
 # CLI
 
 This document describes the command-line interface (`nomux`): its commands, its JSON output and its exit codes.
-The code is in `crates/nomux-cli`. The CLI is a thin client: it reads the command line, makes one connection with `nomux-client`, sends one request and prints the result. [daemon.md](daemon.md) describes the daemon that answers.
+The code is in `crates/nomux-cli`. The CLI is a thin client: it reads the command line, connects to the daemon with `nomux-client`, sends its requests and prints the result. Only `attach` uses the terminal of the user. [daemon.md](daemon.md) describes the daemon that answers.
 
 ## Rules
 
-- No command asks a question. A command reads only its arguments and its environment.
-- Each command has the same exit codes.
+- No command asks a question. A command reads only its arguments and its environment. The exception is `attach`, which gives the keyboard and the screen of the user to a session.
+- Each command has the same exit codes. `attach` adds the exit status of the command of the session: see "`attach`".
 - Each command accepts `--json` and `--quiet`. The two options cannot be used together.
 - A command that needs the daemon starts it when no daemon answers. The CLI runs `nomuxd --detach` and waits for 5 seconds at most until the socket answers. The commands `daemon status` and `daemon stop` start no daemon.
 - The text output has colour only for the state of a session, only when the standard output is a terminal, and only when the `NO_COLOR` variable is not set. The JSON output and the quiet output never have colour.
@@ -19,8 +19,10 @@ nomux [--json | --quiet] <command>
 
 | Command | Function |
 |---|---|
-| `new [--cwd <dir>] [--cmd <command> [argument...]]` | Starts a new session and prints its identifier |
+| `new [--cwd <dir>] [--attach] [-- <command> [argument...]]` | Starts a new session and prints its identifier. With `--attach`, attaches to it |
 | `ls` | Lists the sessions |
+| `attach <id>` | Shows a session in the terminal of the user until the user detaches or the session ends |
+| `detach <id>` | Detaches the clients that are attached to a session. The session continues |
 | `kill <id>` | Ends a session and waits until its command has ended |
 | `daemon status` | Shows if the daemon runs |
 | `daemon stop` | Stops the daemon. The sessions continue |
@@ -29,14 +31,66 @@ nomux [--json | --quiet] <command>
 ### `new`
 
 - `--cwd <dir>` is the working directory of the command. The default is the current directory of the CLI. A relative path is relative to that directory.
-- `--cmd <command> [argument...]` is the command of the session. All the arguments after `--cmd` belong to the command, thus `--cmd` is the last option. The default is the shell of the user.
+- `--attach` attaches the terminal to the new session, as `attach` does. The command then prints the result of the attach and not the session identifier. Without a terminal, the command fails and starts no session.
+- `-- <command> [argument...]` is the command of the session. The default is the shell of the user.
+- `--cmd <command> [argument...]` is a second form of the same. The two forms cannot be used together.
+
+**Each argument after `--` or `--cmd` belongs to the command of the session, also an argument that is an option of `nomux`.** Thus the options of `nomux` come before the command:
 
 ```sh
 nomux new
-nomux new --cwd ~/project --cmd vim -u NONE notes.txt
+nomux new --json -- sleep 300            # --json is an option of nomux
+nomux new -- sleep 300 --json            # --json is an argument of sleep
+nomux new --cwd ~/project -- vim -u NONE notes.txt
+nomux new --attach -- htop
 ```
 
-The session does not need the CLI or the daemon after that. To get the terminal of a session, a later version adds `attach`.
+The session does not need the CLI or the daemon after that.
+
+### `attach`
+
+`attach <id>` makes the terminal of the user the terminal of the session:
+
+1. The session gets the window size of the terminal.
+2. The terminal shows the current screen of the session. A program that already drew its screen, for example an editor, is visible immediately.
+3. Each key goes to the session, and the terminal shows each byte that the session writes. The terminal is in raw mode: `Ctrl-C` and `Ctrl-Z` go to the programs of the session.
+4. When the window gets a different size, the session gets the new size.
+
+The command needs a terminal on its standard input. More than one terminal can be attached to one session at the same time: each one shows the same output, and each one can type.
+The session has one window size: the size of the terminal that attached or changed its size last. A terminal with a different size shows the output as the programs made it for that size.
+
+**Keys.** `Ctrl-\` is the prefix key of `nomux`. A terminal that is not in raw mode sends `SIGQUIT` for this key, thus almost no program gives it a function.
+
+| Keys | Function |
+|---|---|
+| `Ctrl-\` and then `d` | Detach. The session continues |
+| `Ctrl-\` two times | Send one `Ctrl-\` to the session |
+| `Ctrl-\` and then a different key | Send the two keys to the session |
+
+`nomux attach --help` shows these keys. The keys cannot be changed in this version.
+
+**End.** An attach ends in one of these manners. The terminal gets its earlier mode back in each of them, also when the CLI gets a signal or fails.
+
+| Event | Message | Exit code |
+|---|---|---|
+| The user detaches, `nomux detach` detaches the client, or the terminal closes | `detached from session <id>` | 0 |
+| The command of the session ends | `session <id> ended with exit status <n>` | `<n>`: the exit status of the command |
+| A signal ends the command of the session | `session <id> ended by signal <n>` | 128 + `<n>`, as a shell gives it |
+| The session ends and the daemon cannot get the exit status | `session <id> ended; its exit status is not known` | 1 |
+| The daemon stops or fails | An error that says that the session continues and how to attach again | 1 |
+| The CLI gets `SIGTERM`, `SIGHUP`, `SIGINT` or `SIGQUIT` | An error | 1 |
+| No session has the identifier | An error | 2 |
+
+Thus the exit code of `attach` can be a value that the table "Exit codes" does not have, and the values 1 to 5 can come from the command of the session. With `--json`, the document of a session that ended goes to the standard output, and an error goes to the standard error.
+
+The CLI does not use the alternate screen of the terminal: after the attach, the terminal shows the last screen of the session, and the message is on the next line.
+
+### `detach`
+
+`detach <id>` detaches each client that is attached to the session, from a different terminal or from a script. Each of these clients ends as after the detach keys. The session continues.
+The command succeeds also if no client is attached. If no session has the identifier, the exit code is 2.
+
+A client detaches itself with the detach keys. The command has no form without an identifier yet: a later version takes the identifier from the environment of the session.
 
 ### `kill`
 
@@ -58,6 +112,10 @@ k3xq2abc
 $ nomux ls
 ID        STATE    PID
 k3xq2abc  running  41873
+$ nomux attach k3xq2abc
+detached from session k3xq2abc
+$ nomux detach k3xq2abc
+detached 0 clients from session k3xq2abc
 $ nomux kill k3xq2abc
 session k3xq2abc ended
 $ nomux ls
@@ -87,7 +145,7 @@ With `--quiet`, a command prints only what a script needs:
 | `new` | The session identifier |
 | `ls` | One session identifier on each line |
 | `version` | The version number |
-| `kill`, `daemon status`, `daemon stop` | Nothing. The exit code is the result |
+| `new --attach`, `attach`, `detach`, `kill`, `daemon status`, `daemon stop` | Nothing. The exit code is the result |
 
 ### Errors
 
@@ -106,6 +164,8 @@ A wrong command line prints the usage message of the argument parser and has the
 | 5 | `version_mismatch` | The CLI and the daemon have no common protocol version. Update the older of the two |
 
 The codes 1 to 5 are the values of `ErrorCode` in the control protocol.
+
+`attach` and `new --attach` have one more source of the exit code: if the session ends during the attach, the exit code is the exit status of its command. "`attach`" has the table.
 
 ## JSON output
 
@@ -136,6 +196,34 @@ With `--json`, a command prints one JSON document on one line.
 ```
 
 `sessions` is an array of the object that `new` gives, in the sequence of the identifiers. It is empty if there is no session.
+
+### `attach` and `new --attach`
+
+```json
+{"schema_version":1,"attach":{"id":"k3xq2abc","end":"detached"}}
+{"schema_version":1,"attach":{"id":"k3xq2abc","end":"exited","exit_code":0}}
+{"schema_version":1,"attach":{"id":"k3xq2abc","end":"signaled","signal":9}}
+```
+
+The command prints the document after the attach ended.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `attach.id` | string | The session identifier |
+| `attach.end` | string | `detached`: the client detached and the session continues. `exited`: the command ended with an exit code. `signaled`: a signal ended the command. `lost`: the session ended and its exit status is not known. `unknown`: the daemon is newer than the CLI and sent a reason that the CLI does not know |
+| `attach.exit_code` | number | The exit code of the command. Only if `end` is `exited` |
+| `attach.signal` | number | The signal number. Only if `end` is `signaled` |
+
+### `detach`
+
+```json
+{"schema_version":1,"detached":{"id":"k3xq2abc","clients":2}}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `detached.id` | string | The session identifier |
+| `detached.clients` | number | The number of clients that were attached to the session |
 
 ### `kill`
 
@@ -190,10 +278,12 @@ A wrong command line is not a JSON document: the argument parser writes its usag
 ## Tests
 
 - `crates/nomux-cli/src/output/json.rs` has the full text of each document. A changed field fails these tests.
-- `tests/` has the end-to-end tests that run the real `nomux`, `nomuxd` and `nomux-holder` and examine the exit codes.
+- `crates/nomux-cli/src/arguments.rs` has the rule for the arguments after `--` and `--cmd`. `crates/nomux-cli/src/attach` has the detach keys and the mode of the terminal, also after a panic.
+- `tests/` has the end-to-end tests that run the real `nomux`, `nomuxd` and `nomux-holder` and examine the exit codes. `tests/attach.rs` runs `nomux attach` in a pseudoterminal and examines the screen.
 
 ## Open points for the next versions
 
-- `attach <id>` and `detach`.
+- A setting for the detach keys, and `detach` without an identifier in a session.
+- The scrollback: an attach shows the screen of the session and not the lines that left it.
 - The other commands and the `--host` option of the command reference.
 - The context from `NOMUX_*` variables.
