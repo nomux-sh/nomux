@@ -8,6 +8,8 @@ use nomux_core::configuration::ConfigurationError;
 use nomux_proto::wire::v1 as wire;
 use nomux_transport::ssh::SshError;
 
+use crate::extension::ExtensionCallError;
+
 /// A connection to the daemon or a request did not succeed.
 #[derive(Debug)]
 pub enum ClientError {
@@ -28,6 +30,8 @@ pub enum ClientError {
     Timeout(String),
     /// The daemon did not do the request for a different reason.
     Failed(String),
+    /// A method of an extension answered a call with an error.
+    ExtensionAnswered(ExtensionCallError),
 }
 
 impl ClientError {
@@ -92,6 +96,7 @@ impl fmt::Display for ClientError {
             | Self::NotFound(message)
             | Self::Timeout(message)
             | Self::Failed(message) => formatter.write_str(message),
+            Self::ExtensionAnswered(error) => error.fmt(formatter),
         }
     }
 }

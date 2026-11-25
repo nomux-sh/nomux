@@ -301,7 +301,10 @@ impl Client {
 
     /// Sends one request and waits for its result. A failure result of the
     /// daemon becomes an error.
-    async fn call(&mut self, body: request::Body) -> Result<response::Result, ClientError> {
+    pub(crate) async fn call(
+        &mut self,
+        body: request::Body,
+    ) -> Result<response::Result, ClientError> {
         timeout(REQUEST_TIMEOUT, self.exchange(body))
             .await
             .map_err(|_| request_timeout())?
@@ -360,7 +363,7 @@ pub(crate) struct AttachedFrames {
     pub(crate) epoch: u32,
 }
 
-fn unexpected_result() -> ClientError {
+pub(crate) fn unexpected_result() -> ClientError {
     ClientError::invalid_reply("the response has the result of a different request")
 }
 

@@ -17,6 +17,9 @@
 //!   [`TerminalInput`] sends the input. The attach connects again when its
 //!   connection ends.
 //! - [`check_host`]: the checks of a remote host, as [`HostCheck`] values.
+//! - [`Extension`], [`ExtensionPackage`] and [`ExtensionPermissions`]: the
+//!   extensions of a host. [`Client::install_extension`] installs one in two
+//!   steps, and [`Client::call_extension`] calls a method of one.
 //! - [`ClientError`]: why a connection or a request failed.
 //! - [`ClientKind`], [`Session`], [`SessionState`], [`NewSession`],
 //!   [`WindowSize`] and [`HostInfo`]: the data of the requests and the
@@ -31,15 +34,17 @@
 //!
 //! # Status
 //!
-//! The crate has the control requests for sessions and for the daemon, the
-//! attach to a session, and the two kinds of host: the local host and a
-//! remote host through SSH. Events are not written yet.
+//! The crate has the control requests for sessions, for extensions and for
+//! the daemon, the attach to a session, and the two kinds of host: the local
+//! host and a remote host through SSH. Events are not written yet.
 
 mod bootstrap;
 mod client;
 mod client_kind;
 mod doctor;
 mod error;
+mod extension;
+mod extension_requests;
 mod host;
 mod host_info;
 mod local_host;
@@ -54,6 +59,10 @@ pub use client::Client;
 pub use client_kind::ClientKind;
 pub use doctor::{HostCheck, check_host};
 pub use error::ClientError;
+pub use extension::{
+    Extension, ExtensionCallError, ExtensionErrorCode, ExtensionPackage, ExtensionPermissions,
+    ExtensionState,
+};
 pub use host::Host;
 pub use host_info::HostInfo;
 pub use session::{NewSession, Session, SessionState};
