@@ -1,6 +1,6 @@
 //! The exit codes of `nomux`. Each command uses the same codes.
 
-use nomux_client::{AttachEnd, ClientError};
+use nomux_client::{AttachEnd, ClientError, ExtensionErrorCode};
 
 pub(crate) const SUCCESS: u8 = 0;
 pub(crate) const ERROR: u8 = 1;
@@ -19,6 +19,14 @@ pub(crate) fn of_error(error: &ClientError) -> u8 {
         | ClientError::DaemonStart(_)
         | ClientError::Connection(_)
         | ClientError::Failed(_) => ERROR,
+        ClientError::ExtensionAnswered(error) => match error.code {
+            ExtensionErrorCode::NotFound => NOT_FOUND,
+            ExtensionErrorCode::Timeout => TIMEOUT,
+            ExtensionErrorCode::PermissionDenied => NO_PERMISSION,
+            ExtensionErrorCode::Failed
+            | ExtensionErrorCode::InvalidArgument
+            | ExtensionErrorCode::Cancelled => ERROR,
+        },
     }
 }
 
