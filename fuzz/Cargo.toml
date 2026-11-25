@@ -99,3 +99,10 @@ path = "fuzz_targets/journal_reader.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "osc_records"
+path = "fuzz_targets/osc_records.rs"
+test = false
+doc = false
+bench = false
