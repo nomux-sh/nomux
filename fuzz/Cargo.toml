@@ -1,0 +1,94 @@
+# The fuzz targets of the core.
+#
+# This is a separate workspace. `cargo-fuzz` needs a nightly compiler, and the
+# core workspace uses the pinned stable toolchain. Thus the checks of the core
+# workspace do not build this crate. `rust-toolchain.toml` in this directory
+# pins the nightly compiler.
+[package]
+name = "nomux-fuzz"
+description = "Fuzz targets of the nomux core. Run one with `cargo xtask fuzz`."
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/nomux-sh/nomux"
+authors = ["The nomux Authors"]
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+# The parser of the VT library is the reference of the `incomplete_tail`
+# target. The version is the version that `nomux-term` uses.
+alacritty_terminal = { version = "=0.26.0", default-features = false }
+libfuzzer-sys = "0.4.13"
+nomux-holder-protocol = { path = "../crates/nomux-holder-protocol" }
+nomux-term = { path = "../crates/nomux-term" }
+tempfile = "3.27.0"
+
+# The lint policy of the core workspace. Cargo cannot share a lint table
+# between two workspaces.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unsafe_code = "deny"
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "warn"
+
+# A crash report needs the line numbers.
+[profile.release]
+debug = "line-tables-only"
+
+[[bin]]
+name = "terminal_feed"
+path = "fuzz_targets/terminal_feed.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "redraw_round_trip"
+path = "fuzz_targets/redraw_round_trip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "incomplete_tail"
+path = "fuzz_targets/incomplete_tail.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "holder_wire_decode"
+path = "fuzz_targets/holder_wire_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "program_reports_decode"
+path = "fuzz_targets/program_reports_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ring_reader"
+path = "fuzz_targets/ring_reader.rs"
+test = false
+doc = false
+bench = false

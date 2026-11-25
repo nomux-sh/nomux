@@ -1,0 +1,4 @@
+# `cargo-fuzz` needs the sanitizer options of a nightly compiler.
+[toolchain]
+channel = "nightly-2026-11-20"
+profile = "minimal"
