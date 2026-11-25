@@ -178,6 +178,27 @@ fn a_window_with_more_cells_than_the_limit_is_refused() {
     client.read_until("24 80");
 }
 
+/// The screen state cannot keep a wide character in 1 column.
+#[test]
+fn a_window_of_1_column_is_refused() {
+    let runtime = runtime_directory();
+    let _holder = Holder::start(runtime.path(), "narrow", &[], &["/bin/sh"]);
+    let mut client = Client::connect(runtime.path());
+    assert_eq!(client.request(Request::AcquireLease), Reply::Done);
+    let too_narrow = WindowSize {
+        rows: ROWS,
+        columns: Size::MIN_COLUMNS - 1,
+    };
+
+    assert_eq!(
+        client.request(Request::Resize(too_narrow)),
+        Reply::Error(ErrorCode::InvalidPayload)
+    );
+
+    client.type_line("stty size");
+    client.read_until("24 80");
+}
+
 /// One redraw reply.
 struct Snapshot {
     position: usize,

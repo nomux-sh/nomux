@@ -8,6 +8,7 @@ use std::time::Duration;
 use nomux_holder_protocol::SessionId;
 use nomux_holder_protocol::discovery::default_runtime_directory;
 use nomux_holder_protocol::wire::WindowSize;
+use nomux_term::Size;
 
 pub(crate) const USAGE: &str = "\
 Usage: nomux-holder --session <identifier> [options] -- <command> [argument...]
@@ -93,8 +94,11 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Inv
     let program = arguments
         .next()
         .ok_or("the command is missing after `--`")?;
-    if size.rows == 0 || size.columns == 0 {
-        return Err("--rows and --columns must be larger than 0".to_owned());
+    if size.rows == 0 {
+        return Err("--rows must be larger than 0".to_owned());
+    }
+    if size.columns < Size::MIN_COLUMNS {
+        return Err(format!("--columns must be {} or more", Size::MIN_COLUMNS));
     }
     if size.cells() > WindowSize::MAX_CELLS {
         return Err(format!(
@@ -158,6 +162,12 @@ mod tests {
         assert_eq!(session.size.rows, 50);
         assert_eq!(session.program, "sh");
         assert_eq!(session.program_arguments, ["--version", "--rows", "1"]);
+    }
+
+    #[test]
+    fn a_window_of_1_column_is_rejected() {
+        let result = parse_text(&["--session", "s1", "--columns", "1", "--", "sh"]);
+        assert_eq!(result, Err("--columns must be 2 or more".to_owned()));
     }
 
     #[test]

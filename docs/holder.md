@@ -32,7 +32,7 @@ nomux-holder --session <identifier> [options] -- <command> [argument...]
 | `--session <identifier>` | necessary | The session identifier: 1 to 64 characters from `A-Z`, `a-z`, `0-9`, `-` and `_` |
 | `--runtime-directory <path>` | `~/.nomux/run` | The directory for the discovery files |
 | `--working-directory <path>` | the current directory | The working directory of the command |
-| `--rows <number>`, `--columns <number>` | 24, 80 | The size of the terminal window: 1048576 cells at most |
+| `--rows <number>`, `--columns <number>` | 24, 80 | The size of the terminal window: 1 row or more, 2 columns or more, and 1048576 cells at most |
 | `--ring-capacity <bytes>` | 262144 | The size of the ring buffer: a power of two, 4096 or more |
 | `--exit-timeout <seconds>` | 30 | The time to keep the exit status for the daemon |
 
@@ -125,7 +125,8 @@ The state is a `nomux_term::Terminal` of the size of the terminal window. [`nomu
 
 - The holder gives each chunk to the terminal in the step that writes the chunk to the ring buffer. Thus the screen state always has each byte that the ring buffer got, and no other byte.
 - The terminal keeps no scrollback. The memory of the screen state depends only on the size of the window: approximately 50 bytes for each cell, because the VT library keeps the primary screen and the alternate screen.
-- A window has 1048576 cells at most (`WindowSize::MAX_CELLS`). The holder does not start with a larger window, and it answers a larger `Resize` with `InvalidPayload`.
+- A window has 2 columns or more (`nomux_term::Size::MIN_COLUMNS`) and 1048576 cells at most (`WindowSize::MAX_CELLS`). A wide character uses 2 columns, and the VT library cannot keep one in a screen of 1 column. `Size::new` of `nomux-term` refuses a size that the screen state cannot have, and the holder makes each size with it. Thus the holder does not start with a window outside these limits, and it answers such a `Resize` with `InvalidPayload`: the window keeps its size.
+- A holder of version 0.1.0 accepts a window of 1 column and can stop then. A daemon must not send that size.
 - `Resize` changes the size of the PTY and then the size of the screen state.
 - The terminal gives the holder each OSC sequence that the VT library does not handle. "Program reports" shows what the holder keeps from them.
 - After the command ended, the holder keeps the screen state. The daemon can ask for the last screen.
@@ -354,7 +355,7 @@ The holder answers each request with one message that has the same request ident
 |---|---|---|---|---|
 | `0x0101` | `AcquireLease` | Empty | | `Done` |
 | `0x0102` | `Input` | The bytes for the terminal | necessary | `Done` |
-| `0x0103` | `Resize` | Rows (2), columns (2). Not 0, and 1048576 cells at most | necessary | `Done` |
+| `0x0103` | `Resize` | Rows (2), columns (2). 1 row or more, 2 columns or more, and 1048576 cells at most | necessary | `Done` |
 | `0x0104` | `Signal` | Signal (1): 1 `SIGHUP`, 2 `SIGINT`, 3 `SIGTERM`, 4 `SIGKILL` | necessary | `Done` |
 | `0x0105` | `Status` | Empty | | `Status` |
 | `0x0106` | `WaitOutput` | The position that the daemon already has (8) | | `Output`, possibly later |
