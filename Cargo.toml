@@ -18,6 +18,7 @@ publish = false
 [workspace.dependencies]
 nomux-client = { path = "crates/nomux-client", version = "0.2.1" }
 nomux-core = { path = "crates/nomux-core", version = "0.2.1" }
+nomux-ext-host = { path = "crates/nomux-ext-host", version = "0.2.1" }
 nomux-holder-protocol = { path = "crates/nomux-holder-protocol", version = "0.2.1" }
 nomux-term = { path = "crates/nomux-term", version = "0.2.1" }
 nomux-transport = { path = "crates/nomux-transport", version = "0.2.1" }
@@ -31,7 +32,7 @@ libc = "0.2.191"
 # its own framing.
 lz4_flex = { version = "0.14.2", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
 nomux-extension = { version = "0.1.0", features = ["manifest"] }
-nomux-proto = "0.3.0"
+nomux-proto = "0.4.0"
 prost = "0.14.6"
 # The SSH client. The `ring` backend has a license that `deny.toml` permits;
 # the default backend (`aws-lc-rs`) does not. Without `flate2`: no compression.

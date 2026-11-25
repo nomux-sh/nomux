@@ -22,6 +22,8 @@
 //!   is attached.
 //! - `attachment`: one attached client: the screen and the output go to the
 //!   client, and the input comes from it.
+//! - `extensions`: the extension host of the daemon and the host services
+//!   that an extension can call. `nomux-ext-host` runs the extensions.
 //! - `shutdown`, `in_flight_requests`: the stop of the daemon.
 //! - `detach`, `logging`, `arguments`: the process setup.
 //!
@@ -30,18 +32,21 @@
 //! - The daemon does not own a PTY. A holder owns it, thus a daemon restart
 //!   stops no session.
 //! - The daemon talks to a holder only through `nomux-holder-protocol`.
+//! - An extension is a separate process. Its failure stays in that process.
 //!
 //! # Status
 //!
 //! The daemon creates, lists and ends sessions, and it attaches clients to
-//! them. A client on a different host reaches the socket through SSH. The
-//! daemon has no state database and no extension host.
+//! them. A client on a different host reaches the socket through SSH. It
+//! installs extensions from a directory and calls their methods. The daemon
+//! has no state database.
 
 mod arguments;
 mod attachment;
 mod client_connection;
 mod daemon;
 mod detach;
+mod extensions;
 mod handlers;
 mod handshake;
 mod holder;

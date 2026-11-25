@@ -9,6 +9,7 @@ use nomux_transport::{LocalListener, SOCKET_FILE};
 use tracing::info;
 
 use crate::arguments::RunningDaemon;
+use crate::extensions;
 use crate::handlers::Context;
 use crate::in_flight_requests::InFlightRequests;
 use crate::instance_lock::InstanceLock;
@@ -30,19 +31,24 @@ pub(crate) async fn run(running_daemon: RunningDaemon) -> io::Result<()> {
 
     let shutdown = Shutdown::new();
     shutdown.trigger_on_signals()?;
-    let sessions = Sessions::new(runtime_directory, shutdown.clone());
+    let sessions = Arc::new(Sessions::new(runtime_directory, shutdown.clone()));
     // A client that connects now waits in the queue of the socket. It gets
     // its answer after the daemon has the sessions of the earlier daemon.
     sessions.adopt_holders().await?;
+    let extensions = extensions::open(Arc::clone(&sessions))?;
     info!(socket = %socket_path.display(), "the daemon listens");
 
     let context = Arc::new(Context {
         sessions,
+        extensions,
         shutdown,
         in_flight_requests: InFlightRequests::default(),
     });
     listener::serve(listener, Arc::clone(&context)).await;
 
+    // A call of an extension that waits gets its answer now: the extension
+    // stopped. No request starts an extension after this.
+    context.extensions.shutdown().await;
     // The connections close when this function returns. Before that, each
     // request gets its response, and the socket and the lock go away. Thus
     // a client that sees the end of its connection can start a new daemon.
