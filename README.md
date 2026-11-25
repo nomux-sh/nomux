@@ -98,9 +98,9 @@ The binaries are not signed and not notarized. Code signing and notarization sta
 | Path | Type | Contents | State |
 |---|---|---|---|
 | `crates/nomux-core` | library | Shared types, errors, configuration | in use: the version output of the binaries, the lookup of a binary of the same installation |
-| `crates/nomux-term` | library | Thin abstraction over the VT library (`alacritty_terminal`) | in use: the screen state, the redraw sequence and the OSC sequences |
-| `crates/nomux-holder-protocol` | library | Contract between a holder and the daemon: control messages, ring buffer layout, discovery files | in use by the holder |
-| `crates/nomux-holder` | binary `nomux-holder` | Session holder: owns the PTY of one session. No async runtime | first version: PTY, ring buffer, control socket, discovery files |
+| `crates/nomux-term` | library | Thin abstraction over the VT library (`alacritty_terminal`) | in use by the holder: the screen state, the redraw sequence and the OSC sequences |
+| `crates/nomux-holder-protocol` | library | Contract between a holder and the daemon: control messages, ring buffer layout, redraw memory, discovery files | in use by the holder |
+| `crates/nomux-holder` | binary `nomux-holder` | Session holder: owns the PTY of one session. No async runtime | first version: PTY, ring buffer, screen state, control socket, discovery files |
 | `crates/nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows | first version: the Unix socket of the local host |
 | `crates/nomux-status` | library | Agent status resolver, rules, aggregation | structure only |
 | `crates/nomux-ext-host` | library | Extension host of the daemon | structure only |
