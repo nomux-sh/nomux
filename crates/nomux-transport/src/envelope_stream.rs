@@ -7,6 +7,8 @@ use prost::Message;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 
+use crate::frame_stream::{FrameReader, FrameWriter};
+
 /// A protobuf varint of 64 bits has 10 bytes at most.
 const MAX_LENGTH_PREFIX: usize = 10;
 
@@ -67,6 +69,19 @@ impl EnvelopeStream {
                 };
             }
         }
+    }
+
+    /// Changes the connection from the control channel to the terminal
+    /// channels of an attach: the frames from the peer and the frames to the
+    /// peer. The bytes that already came after the last envelope are the
+    /// start of the first frame.
+    #[must_use]
+    pub fn into_frames(self) -> (FrameReader, FrameWriter) {
+        let (read, write) = self.stream.into_split();
+        (
+            FrameReader::new(read, self.incoming),
+            FrameWriter::new(write),
+        )
     }
 
     /// Takes one envelope out of the received bytes, if they contain a
