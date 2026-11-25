@@ -18,13 +18,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Pull requests: Linux only, for a fast result. The nightly run adds macOS.
+  # Pull requests: Linux and macOS. The holder has code for each host, and
+  # only a run on macOS tests the macOS code.
   rust:
     name: rust
     if: github.event_name == 'pull_request'
     uses: nomux-sh/.github/.github/workflows/rust-ci.yml@main
     with:
-      os: '["ubuntu-latest"]'
+      os: '["ubuntu-latest","macos-latest"]'
       working-directory: .
       run-deny: true
       run-machete: true
