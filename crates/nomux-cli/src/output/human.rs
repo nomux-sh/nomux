@@ -5,8 +5,9 @@ use std::fmt::Write;
 use std::io::{self, IsTerminal};
 
 use nomux_client::{AttachEnd, HostInfo, Session, SessionState};
+use nomux_core::configuration::HostEntry;
 
-use crate::report::Report;
+use crate::report::{AddedHost, HostDiagnosis, Report};
 
 const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[33m";
@@ -50,6 +51,12 @@ pub(super) fn report(report: &Report, style: Style) -> String {
             "nomuxd does not run\n".to_owned()
         }
         Report::DaemonStopped { was_running: true } => "nomuxd stopped\n".to_owned(),
+        Report::HostAdded(added) => host_added(added),
+        Report::Hosts(hosts) if hosts.is_empty() => "no hosts\n".to_owned(),
+        Report::Hosts(hosts) => host_table(hosts),
+        Report::HostRemoved { name } => format!("host {name} removed\n"),
+        Report::HostsChecked(hosts) if hosts.is_empty() => "no hosts\n".to_owned(),
+        Report::HostsChecked(hosts) => hosts.iter().map(host_diagnosis).collect(),
         Report::Version => format!("{}\n", nomux_core::version_line!()),
     }
 }
@@ -64,12 +71,63 @@ pub(super) fn quiet_report(report: &Report) -> String {
             .flat_map(|session| [session.id.as_str(), "\n"])
             .collect(),
         Report::Version => format!("{}\n", env!("CARGO_PKG_VERSION")),
+        Report::Hosts(hosts) => hosts
+            .iter()
+            .flat_map(|host| [host.name.as_str(), "\n"])
+            .collect(),
         Report::SessionKilled { .. }
         | Report::AttachEnded { .. }
         | Report::ClientsDetached { .. }
         | Report::DaemonStatus(_)
-        | Report::DaemonStopped { .. } => String::new(),
+        | Report::DaemonStopped { .. }
+        | Report::HostAdded(_)
+        | Report::HostRemoved { .. }
+        | Report::HostsChecked(_) => String::new(),
     }
+}
+
+fn host_added(added: &AddedHost) -> String {
+    let installation = &added.installation;
+    let binaries = if installation.installed_now {
+        "installed"
+    } else {
+        "already there"
+    };
+    format!(
+        "host {} added: {} {}, nomux in ~/.nomux/bin/{} ({binaries}), {}",
+        added.entry.name,
+        installation.system,
+        installation.machine,
+        installation.label,
+        daemon_status(&added.daemon)
+    )
+}
+
+fn host_table(hosts: &[HostEntry]) -> String {
+    const NAME: &str = "NAME";
+    let name_width = column_width(NAME, hosts.iter().map(|host| host.name.as_str()));
+    let mut table = format!("{NAME:<name_width$}  SSH\n");
+    for host in hosts {
+        // A write to a `String` does not fail.
+        let _ = writeln!(table, "{:<name_width$}  {}", host.name, host.ssh);
+    }
+    table
+}
+
+/// The name of the host, then one line for each check: `ok` or `FAIL`, the
+/// name of the check and what it found.
+fn host_diagnosis(host: &HostDiagnosis) -> String {
+    let name_width = column_width("", host.checks.iter().map(|check| check.name));
+    let mut text = format!("{}\n", host.name);
+    for check in &host.checks {
+        let result = if check.passed { "ok" } else { "FAIL" };
+        let _ = writeln!(
+            text,
+            "  {result:<4}  {:<name_width$}  {}",
+            check.name, check.detail
+        );
+    }
+    text
 }
 
 fn attach_end(id: &str, end: AttachEnd) -> String {
@@ -171,6 +229,32 @@ mod tests {
             "ID                 STATE        PID\n\
              ab                 running      7\n\
              a-long-identifier  unreachable  -\n"
+        );
+    }
+
+    #[test]
+    fn each_check_of_a_host_is_one_line_with_its_result() {
+        use nomux_client::HostCheck;
+
+        let diagnosis = HostDiagnosis {
+            name: "vps".to_owned(),
+            checks: vec![
+                HostCheck {
+                    name: "connection",
+                    passed: true,
+                    detail: "deploy@vps port 22".to_owned(),
+                },
+                HostCheck {
+                    name: "permissions",
+                    passed: false,
+                    detail: "~/.nomux/run has the mode drwxr-xr-x".to_owned(),
+                },
+            ],
+        };
+
+        assert_eq!(
+            host_diagnosis(&diagnosis),
+            "vps\n  ok    connection   deploy@vps port 22\n  FAIL  permissions  ~/.nomux/run has the mode drwxr-xr-x\n"
         );
     }
 

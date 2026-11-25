@@ -1115,6 +1115,8 @@ dependencies = [
  "nomux-core",
  "nomux-proto",
  "nomux-transport",
+ "sha2",
+ "tempfile",
  "tokio",
 ]
 

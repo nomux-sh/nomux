@@ -1,5 +1,5 @@
-//! The daemon of this user on the local host: where it listens and how a
-//! client starts it.
+//! The local host: where the daemon of this user listens and how a client
+//! starts it.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -16,12 +16,42 @@ const DAEMON_BINARY: &str = "nomuxd";
 const START_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_INTERVAL: Duration = Duration::from_millis(20);
 
-pub(crate) fn socket_path() -> Result<PathBuf, ClientError> {
-    nomux_transport::default_socket_path().ok_or_else(|| {
-        ClientError::Failed(
-            "the HOME variable is not set, thus the daemon socket has no path".to_owned(),
-        )
-    })
+/// The local host, with the socket of the daemon of this user.
+#[derive(Debug)]
+pub(crate) struct LocalHost {
+    socket: PathBuf,
+}
+
+impl LocalHost {
+    pub(crate) fn of_this_user() -> Result<Self, ClientError> {
+        let socket = nomux_transport::default_socket_path().ok_or_else(|| {
+            ClientError::Failed(
+                "the HOME variable is not set, thus the daemon socket has no path".to_owned(),
+            )
+        })?;
+        Ok(Self { socket })
+    }
+
+    /// Connects to the daemon. Returns `None` if no daemon runs.
+    pub(crate) async fn running_client(
+        &self,
+        kind: ClientKind,
+    ) -> Result<Option<Client>, ClientError> {
+        match Client::connect(&self.socket, kind).await {
+            Ok(client) => Ok(Some(client)),
+            Err(ClientError::DaemonNotRunning) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Connects to the daemon. If no daemon runs, starts one and waits
+    /// until it answers.
+    pub(crate) async fn client(&self, kind: ClientKind) -> Result<Client, ClientError> {
+        match self.running_client(kind).await? {
+            Some(client) => Ok(client),
+            None => start(&self.socket, kind).await,
+        }
+    }
 }
 
 /// Starts a daemon that continues after this process ends, and connects to
@@ -29,7 +59,7 @@ pub(crate) fn socket_path() -> Result<PathBuf, ClientError> {
 ///
 /// If a different process starts a daemon at the same time, only one of the
 /// two daemons stays, and this function connects to that one.
-pub(crate) async fn start(socket: &Path, kind: ClientKind) -> Result<Client, ClientError> {
+async fn start(socket: &Path, kind: ClientKind) -> Result<Client, ClientError> {
     // `nomuxd --detach` starts the daemon as a separate process and ends.
     let status = Command::new(companion_binary(DAEMON_BINARY))
         .arg("--detach")

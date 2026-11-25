@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use super::human::state_name;
 use crate::exit_code;
-use crate::report::Report;
+use crate::report::{AddedHost, HostDiagnosis, Report};
 
 /// The version of the JSON schema. It increases when a field is removed or
 /// changes its meaning. A new field does not increase it.
@@ -29,8 +29,78 @@ enum Body<'a> {
     Detached(DetachedDocument<'a>),
     Daemon(DaemonDocument<'a>),
     Stopped(bool),
+    Host(AddedHostDocument<'a>),
+    Hosts(Vec<HostDocument<'a>>),
+    Removed(&'a str),
+    Doctor(Vec<DiagnosisDocument<'a>>),
     Version(&'a str),
     Error(ErrorDocument<'a>),
+}
+
+#[derive(Serialize)]
+struct HostDocument<'a> {
+    name: &'a str,
+    ssh: &'a str,
+}
+
+#[derive(Serialize)]
+struct AddedHostDocument<'a> {
+    name: &'a str,
+    ssh: &'a str,
+    system: &'a str,
+    machine: &'a str,
+    target: &'a str,
+    directory: String,
+    installed: bool,
+    daemon: DaemonDocument<'a>,
+}
+
+impl<'a> From<&'a AddedHost> for AddedHostDocument<'a> {
+    fn from(added: &'a AddedHost) -> Self {
+        let installation = &added.installation;
+        Self {
+            name: &added.entry.name,
+            ssh: &added.entry.ssh,
+            system: &installation.system,
+            machine: &installation.machine,
+            target: &installation.target,
+            directory: format!("~/.nomux/bin/{}", installation.label),
+            installed: installation.installed_now,
+            daemon: Some(&added.daemon).into(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct DiagnosisDocument<'a> {
+    host: &'a str,
+    ok: bool,
+    checks: Vec<CheckDocument<'a>>,
+}
+
+#[derive(Serialize)]
+struct CheckDocument<'a> {
+    name: &'a str,
+    ok: bool,
+    detail: &'a str,
+}
+
+impl<'a> From<&'a HostDiagnosis> for DiagnosisDocument<'a> {
+    fn from(host: &'a HostDiagnosis) -> Self {
+        Self {
+            host: &host.name,
+            ok: host.checks.iter().all(|check| check.passed),
+            checks: host
+                .checks
+                .iter()
+                .map(|check| CheckDocument {
+                    name: check.name,
+                    ok: check.passed,
+                    detail: &check.detail,
+                })
+                .collect(),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -127,6 +197,20 @@ pub(super) fn report(report: &Report) -> String {
         }),
         Report::DaemonStatus(info) => Body::Daemon(info.as_ref().into()),
         Report::DaemonStopped { was_running } => Body::Stopped(*was_running),
+        Report::HostAdded(added) => Body::Host(added.into()),
+        Report::Hosts(hosts) => Body::Hosts(
+            hosts
+                .iter()
+                .map(|host| HostDocument {
+                    name: &host.name,
+                    ssh: &host.ssh,
+                })
+                .collect(),
+        ),
+        Report::HostRemoved { name } => Body::Removed(name),
+        Report::HostsChecked(hosts) => {
+            Body::Doctor(hosts.iter().map(DiagnosisDocument::from).collect())
+        }
         Report::Version => Body::Version(env!("CARGO_PKG_VERSION")),
     };
     line(body)
@@ -241,6 +325,67 @@ mod tests {
         assert_eq!(
             report(&Report::DaemonStopped { was_running: true }),
             "{\"schema_version\":1,\"stopped\":true}\n"
+        );
+    }
+
+    #[test]
+    fn host_documents() {
+        use nomux_client::{HostCheck, Installation};
+        use nomux_core::configuration::HostEntry;
+
+        let entry = HostEntry {
+            name: "vps".to_owned(),
+            ssh: "deploy@vps.example.com".to_owned(),
+        };
+        let added = AddedHost {
+            entry: entry.clone(),
+            installation: Installation {
+                system: "Linux".to_owned(),
+                machine: "x86_64".to_owned(),
+                target: "x86_64-unknown-linux-musl".to_owned(),
+                label: "1.2.3".to_owned(),
+                daemon_socket: "/home/deploy/.nomux/run/nomuxd.sock".to_owned(),
+                installed_now: true,
+            },
+            daemon: HostInfo {
+                daemon_version: "1.2.3".to_owned(),
+                daemon_pid: 7,
+                session_count: 0,
+            },
+        };
+        assert_eq!(
+            report(&Report::HostAdded(added)),
+            "{\"schema_version\":1,\"host\":{\"name\":\"vps\",\"ssh\":\"deploy@vps.example.com\",\"system\":\"Linux\",\"machine\":\"x86_64\",\"target\":\"x86_64-unknown-linux-musl\",\"directory\":\"~/.nomux/bin/1.2.3\",\"installed\":true,\"daemon\":{\"running\":true,\"version\":\"1.2.3\",\"pid\":7,\"sessions\":0}}}\n"
+        );
+        assert_eq!(
+            report(&Report::Hosts(vec![entry])),
+            "{\"schema_version\":1,\"hosts\":[{\"name\":\"vps\",\"ssh\":\"deploy@vps.example.com\"}]}\n"
+        );
+        assert_eq!(
+            report(&Report::HostRemoved {
+                name: "vps".to_owned()
+            }),
+            "{\"schema_version\":1,\"removed\":\"vps\"}\n"
+        );
+        let checked = Report::HostsChecked(vec![HostDiagnosis {
+            name: "vps".to_owned(),
+            checks: vec![
+                HostCheck {
+                    name: "connection",
+                    passed: true,
+                    detail: "deploy@vps port 22".to_owned(),
+                },
+                HostCheck {
+                    name: "permissions",
+                    passed: false,
+                    detail: "wrong mode".to_owned(),
+                },
+            ],
+        }]);
+        assert_eq!(checked.exit_code(), exit_code::ERROR);
+        assert_eq!(
+            report(&checked),
+            "{\"schema_version\":1,\"doctor\":[{\"host\":\"vps\",\"ok\":false,\"checks\":[{\"name\":\"connection\",\"ok\":true,\"detail\":\"deploy@vps port 22\"},{\"name\":\"permissions\",\"ok\":false,\"detail\":\"wrong mode\"}]}]}\n"
         );
     }
 

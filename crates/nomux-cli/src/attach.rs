@@ -13,10 +13,12 @@ use std::io;
 use std::task::Poll;
 
 use nomux_client::{
-    AttachEnd, AttachOptions, Client, ClientError, TerminalEvent, TerminalInput, TerminalOutput,
+    AttachEnd, AttachOptions, Client, ClientError, Host, TerminalEvent, TerminalInput,
+    TerminalOutput,
 };
 use tokio::io::{AsyncWriteExt, Stdout};
 use tokio::signal::unix::{Signal, SignalKind, signal};
+use tokio::sync::Notify;
 
 use self::detach_key::DetachKey;
 use self::local_terminal::RawMode;
@@ -33,39 +35,52 @@ pub(crate) fn require_terminal() -> Result<(), ClientError> {
     }
 }
 
-/// Attaches to the session `id` and returns how the attach ended.
-pub(crate) async fn run(id: &str) -> Result<AttachEnd, ClientError> {
+/// Attaches to the session `id` on `host` and returns how the attach
+/// ended. `host_name` is the name of a remote host, for the messages.
+pub(crate) async fn run(
+    host: &Host,
+    host_name: Option<&str>,
+    id: &str,
+) -> Result<AttachEnd, ClientError> {
     require_terminal()?;
     // The attach uses one connection for the terminal. The window size goes
     // on a second connection.
-    let mut control = Client::connect_local_or_start(KIND).await?;
+    let control = host.client(KIND).await?;
     let options = AttachOptions {
         size: local_terminal::window_size(),
         resume: None,
     };
-    let (mut output, mut input) = Client::connect_local(KIND)
-        .await?
-        .attach(id, options)
-        .await?;
+    let (mut output, mut input) = host.attach(KIND, id, options).await?;
     let signals = Signals::listen().map_err(|error| terminal_error(&error))?;
     let raw_mode = RawMode::enter().map_err(|error| terminal_error(&error))?;
+    let reconnected = Notify::new();
+    let mut resize = Resize { host, control, id };
 
     // The two directions run at the same time: a terminal that shows a
     // flood of output slowly does not keep a key waiting.
     let end = tokio::select! {
-        end = show_output(&mut output) => end,
-        end = send_input(&mut input, &mut control, id, signals) => end,
+        end = show_output(&mut output, &reconnected) => end,
+        end = send_input(&mut input, &mut resize, &reconnected, signals) => end,
     };
     drop(raw_mode);
-    end.map_err(|error| with_attach_hint(error, id))
+    end.map_err(|error| with_attach_hint(error, host_name, id))
 }
 
 /// Writes the screen and the output of the session to the terminal until
-/// the attach ends.
-async fn show_output(output: &mut TerminalOutput) -> Result<AttachEnd, ClientError> {
+/// the attach ends. While the attach has no connection, the title of the
+/// terminal says so: the screen of the session is not changed.
+async fn show_output(
+    output: &mut TerminalOutput,
+    reconnected: &Notify,
+) -> Result<AttachEnd, ClientError> {
     let mut terminal = tokio::io::stdout();
-    loop {
-        match output.next().await? {
+    let mut title_is_changed = false;
+    let end = loop {
+        let event = match output.next().await {
+            Ok(event) => event,
+            Err(error) => break Err(error),
+        };
+        match event {
             TerminalEvent::Snapshot { bytes, starts } => {
                 if starts {
                     write(&mut terminal, local_terminal::BEFORE_SNAPSHOT).await?;
@@ -73,13 +88,30 @@ async fn show_output(output: &mut TerminalOutput) -> Result<AttachEnd, ClientErr
                 write(&mut terminal, bytes).await?;
             }
             TerminalEvent::Output(bytes) => write(&mut terminal, bytes).await?,
-            TerminalEvent::End(end) => return Ok(end),
+            TerminalEvent::ConnectionLost => {
+                write(&mut terminal, local_terminal::SHOW_CONNECTION_LOST).await?;
+                title_is_changed = true;
+            }
+            TerminalEvent::Reconnected => {
+                write(&mut terminal, local_terminal::HIDE_CONNECTION_LOST).await?;
+                title_is_changed = false;
+                reconnected.notify_one();
+            }
+            TerminalEvent::End(end) => break Ok(end),
         }
         terminal
             .flush()
             .await
             .map_err(|error| terminal_error(&error))?;
+    };
+    if title_is_changed {
+        write(&mut terminal, local_terminal::HIDE_CONNECTION_LOST).await?;
+        terminal
+            .flush()
+            .await
+            .map_err(|error| terminal_error(&error))?;
     }
+    end
 }
 
 async fn write(terminal: &mut Stdout, bytes: &[u8]) -> Result<(), ClientError> {
@@ -93,8 +125,8 @@ async fn write(terminal: &mut Stdout, bytes: &[u8]) -> Result<(), ClientError> {
 /// when the user detaches or the terminal closes.
 async fn send_input(
     input: &mut TerminalInput,
-    control: &mut Client,
-    id: &str,
+    resize: &mut Resize<'_>,
+    reconnected: &Notify,
     mut signals: Signals,
 ) -> Result<AttachEnd, ClientError> {
     let mut keys = keyboard::read_keys();
@@ -115,7 +147,9 @@ async fn send_input(
                     return Ok(AttachEnd::Detached);
                 }
             }
-            _ = signals.window_change.recv() => resize(control, id).await?,
+            _ = signals.window_change.recv() => resize.send_window_size().await?,
+            // The window can have a new size since the connection ended.
+            () = reconnected.notified() => resize.connect_again().await?,
             () = received(&mut signals.end) => {
                 return Err(ClientError::Failed("a signal ended the attach".to_owned()));
             }
@@ -123,15 +157,39 @@ async fn send_input(
     }
 }
 
-/// Gives the session the new window size of the terminal.
-async fn resize(control: &mut Client, id: &str) -> Result<(), ClientError> {
-    let Some(size) = local_terminal::window_size() else {
-        return Ok(());
-    };
-    match control.resize_session(id, size).await {
-        // The session ended. The output side reports that.
-        Err(ClientError::NotFound(_)) => Ok(()),
-        result => result,
+/// The connection that gives the session the window size of the terminal.
+struct Resize<'a> {
+    host: &'a Host,
+    control: Client,
+    id: &'a str,
+}
+
+impl Resize<'_> {
+    /// Gives the session the window size of the terminal.
+    async fn send_window_size(&mut self) -> Result<(), ClientError> {
+        let Some(size) = local_terminal::window_size() else {
+            return Ok(());
+        };
+        match self.control.resize_session(self.id, size).await {
+            // The session ended, or the connection ended. The output side
+            // reports the first and connects again after the second.
+            Err(ClientError::NotFound(_) | ClientError::Connection(_)) => Ok(()),
+            result => result,
+        }
+    }
+
+    /// Opens a new connection after the attach connected again, and gives
+    /// the session the window size.
+    async fn connect_again(&mut self) -> Result<(), ClientError> {
+        match self.host.running_client(KIND).await {
+            Ok(Some(control)) => {
+                self.control = control;
+                self.send_window_size().await
+            }
+            // The output side reports a connection or a daemon that is gone.
+            Ok(None) | Err(ClientError::Connection(_)) => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 }
 
@@ -177,14 +235,17 @@ fn terminal_error(error: &io::Error) -> ClientError {
     ClientError::Failed(format!("the terminal cannot be used: {error}"))
 }
 
-/// A lost connection ends the attach and not the session. The message says
-/// how to continue.
-fn with_attach_hint(error: ClientError, id: &str) -> ClientError {
+/// A lost connection or a daemon that stopped ends the attach and not the
+/// session. The message says how to continue.
+fn with_attach_hint(error: ClientError, host_name: Option<&str>, id: &str) -> ClientError {
+    let host_option = host_name.map_or_else(String::new, |name| format!("--host {name} "));
+    let hint =
+        format!("The session continues: run `nomux {host_option}attach {id}` to attach again");
     match error {
-        ClientError::Connection(error) => ClientError::Connection(io::Error::new(
-            error.kind(),
-            format!("{error}. The session continues: run `nomux attach {id}` to attach again"),
-        )),
+        ClientError::Connection(error) => {
+            ClientError::Connection(io::Error::new(error.kind(), format!("{error}. {hint}")))
+        }
+        ClientError::DaemonNotRunning => ClientError::Failed(format!("the daemon stopped. {hint}")),
         error => error,
     }
 }

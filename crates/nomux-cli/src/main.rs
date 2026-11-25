@@ -10,6 +10,10 @@
 //!
 //! - `arguments`: the command line.
 //! - `commands`: one call of the client library for each command.
+//! - `selected_host`: the host of a command: the local host, or the remote
+//!   host of the `--host` option.
+//! - `host_commands`: the `host` commands, which change and check the
+//!   remote hosts of the global configuration file.
 //! - `attach`: the `attach` command, which uses the terminal of the user.
 //! - `report`: the result of a command.
 //! - `output`: the text and the JSON form of a result and of an error.
@@ -24,15 +28,18 @@
 //! # Status
 //!
 //! The CLI has the commands `new`, `ls`, `attach`, `detach`, `kill`,
-//! `daemon status`, `daemon stop` and `version`. The other commands are not
-//! written yet.
+//! `daemon status`, `daemon stop`, `host add`, `host ls`, `host rm`,
+//! `host doctor` and `version`, and the `--host` option. The other commands
+//! are not written yet.
 
 mod arguments;
 mod attach;
 mod commands;
 mod exit_code;
+mod host_commands;
 mod output;
 mod report;
+mod selected_host;
 
 use std::io;
 use std::process::ExitCode;
@@ -58,13 +65,14 @@ fn main() -> ExitCode {
         }
     };
     let format = Format::of(&arguments);
+    let host = arguments.host.clone();
     let Some(command) = arguments.requested_command() else {
         let error =
             Arguments::command().error(ErrorKind::MissingSubcommand, "a command is necessary");
         return exit_after(error.print(), exit_code::ERROR);
     };
 
-    match run(command) {
+    match run(command, host.as_deref(), format) {
         Ok(report) => exit_after(output::print_report(&report, format), report.exit_code()),
         Err(error) => {
             let code = exit_code::of_error(&error);
@@ -73,12 +81,16 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(command: arguments::Command) -> Result<report::Report, nomux_client::ClientError> {
+fn run(
+    command: arguments::Command,
+    host: Option<&str>,
+    format: Format,
+) -> Result<report::Report, nomux_client::ClientError> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(nomux_client::ClientError::Connection)?;
-    runtime.block_on(commands::run(command))
+    runtime.block_on(commands::run(command, host, format))
 }
 
 /// The exit status is `code`, or the error status if the output failed, for

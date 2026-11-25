@@ -1,6 +1,7 @@
 //! The result of a command that did not fail.
 
-use nomux_client::{AttachEnd, HostInfo, Session};
+use nomux_client::{AttachEnd, HostCheck, HostInfo, Installation, Session};
+use nomux_core::configuration::HostEntry;
 
 use crate::exit_code;
 
@@ -26,7 +27,29 @@ pub(crate) enum Report {
         /// `false`: no daemon ran, thus the command had nothing to stop.
         was_running: bool,
     },
+    HostAdded(AddedHost),
+    Hosts(Vec<HostEntry>),
+    HostRemoved {
+        name: String,
+    },
+    HostsChecked(Vec<HostDiagnosis>),
     Version,
+}
+
+/// A remote host that `host add` saved.
+#[derive(Debug)]
+pub(crate) struct AddedHost {
+    pub(crate) entry: HostEntry,
+    pub(crate) installation: Installation,
+    /// The daemon that answers on the host.
+    pub(crate) daemon: HostInfo,
+}
+
+/// The checks of one host of `host doctor`.
+#[derive(Debug)]
+pub(crate) struct HostDiagnosis {
+    pub(crate) name: String,
+    pub(crate) checks: Vec<HostCheck>,
 }
 
 impl Report {
@@ -34,6 +57,17 @@ impl Report {
         match self {
             Self::DaemonStatus(None) => exit_code::NOT_FOUND,
             Self::AttachEnded { end, .. } => exit_code::of_attach_end(*end),
+            Self::HostsChecked(hosts) => {
+                let all_passed = hosts
+                    .iter()
+                    .flat_map(|host| &host.checks)
+                    .all(|check| check.passed);
+                if all_passed {
+                    exit_code::SUCCESS
+                } else {
+                    exit_code::ERROR
+                }
+            }
             _ => exit_code::SUCCESS,
         }
     }
