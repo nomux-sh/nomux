@@ -5,9 +5,11 @@ mod grant;
 mod install_error;
 mod layout;
 mod package;
+mod pending_install;
+mod removed_extension;
 mod state_file;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -18,6 +20,8 @@ use tracing::warn;
 
 pub use install_error::{InstallError, StateError};
 use layout::{Layout, package_file};
+pub(crate) use pending_install::PendingInstall;
+pub(crate) use removed_extension::RemovedExtension;
 
 /// Whether the host starts an extension.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +54,8 @@ pub struct InstalledExtension {
 pub(crate) struct Registry {
     layout: Layout,
     extensions: BTreeMap<String, InstalledExtension>,
+    /// The identifiers of the packages that an installation copies now.
+    installing: BTreeSet<String>,
 }
 
 impl Registry {
@@ -69,18 +75,21 @@ impl Registry {
                 }
             }
         }
-        Ok(Self { layout, extensions })
+        Ok(Self {
+            layout,
+            extensions,
+            installing: BTreeSet::new(),
+        })
     }
 
-    /// Copies the package in `source` to the host directory and records the
-    /// permissions that the user approved. The extension is enabled.
-    pub(crate) fn install(
+    /// Accepts the package in `source` for an installation with the
+    /// permissions that the user approved. Copies nothing.
+    pub(crate) fn begin_install(
         &mut self,
         source: &Path,
         granted: Permissions,
-    ) -> Result<InstalledExtension, InstallError> {
-        let manifest = package::read_manifest(source)?;
-        package::check_runnable(source, &manifest)?;
+    ) -> Result<PendingInstall, InstallError> {
+        let manifest = inspect(source)?;
         let id = manifest.id.clone();
         if self.extensions.contains_key(&id) {
             return Err(InstallError::AlreadyInstalled { id });
@@ -88,25 +97,74 @@ impl Registry {
         if let Some(permission) = grant::first_not_requested(&manifest.permissions, &granted) {
             return Err(InstallError::NotRequested { permission });
         }
-
-        let incoming = self.layout.incoming_package(&id);
-        if incoming.exists() {
-            // An earlier installation stopped in the middle of the copy.
-            fs::remove_dir_all(&incoming)?;
+        if !self.installing.insert(id.clone()) {
+            return Err(InstallError::InProgress { id });
         }
-        fs::create_dir_all(self.layout.packages())?;
-        package::copy(source, &incoming)?;
-        // The state file comes first, thus each package has its state file.
-        state_file::write(&self.layout.state_file(&id), &Enablement::Enabled, &granted)?;
-        fs::rename(incoming, self.layout.package(&id))?;
-
-        let extension = InstalledExtension {
+        Ok(PendingInstall {
+            incoming: self.layout.incoming_package(&id),
+            source: source.to_path_buf(),
             manifest,
             granted,
+        })
+    }
+
+    /// Completes an installation after the copy of its package: records the
+    /// approved permissions and enables the extension. If the copy failed,
+    /// removes what it left.
+    pub(crate) fn finish_install(
+        &mut self,
+        pending: PendingInstall,
+        copied: Result<(), InstallError>,
+    ) -> Result<InstalledExtension, InstallError> {
+        let id = pending.manifest.id.clone();
+        self.installing.remove(&id);
+        let state_file = self.layout.state_file(&id);
+        let placed = copied.and_then(|()| {
+            // The state file comes first, thus each package has its state
+            // file.
+            state_file::write(&state_file, &Enablement::Enabled, &pending.granted)?;
+            fs::rename(&pending.incoming, self.layout.package(&id))?;
+            Ok(())
+        });
+        if let Err(error) = placed {
+            // The reason of the installation failure is the result. A file
+            // that stays here is replaced by the next installation.
+            let _ = fs::remove_file(&state_file);
+            let _ = fs::remove_dir_all(&pending.incoming);
+            return Err(error);
+        }
+
+        let extension = InstalledExtension {
+            manifest: pending.manifest,
+            granted: pending.granted,
             enablement: Enablement::Enabled,
         };
         self.extensions.insert(id, extension.clone());
         Ok(extension)
+    }
+
+    /// Takes an extension out of the registry: removes its state file and
+    /// gives its package and its data names that the registry does not
+    /// read. The result deletes these directories.
+    pub(crate) fn remove(&mut self, id: &str) -> Result<RemovedExtension, StateError> {
+        if !self.extensions.contains_key(id) {
+            return Err(StateError::NotInstalled);
+        }
+        let removed = RemovedExtension {
+            package: self.layout.removed_package(id),
+            data: self.layout.removed_data(id),
+        };
+        // Directories that an earlier removal did not delete.
+        removed.delete_files().map_err(StateError::Io)?;
+        removed
+            .take_package(&self.layout.package(id))
+            .map_err(StateError::Io)?;
+        // Without its package, the extension is not installed.
+        self.extensions.remove(id);
+        removed
+            .take_state_and_data(&self.layout.state_file(id), &self.layout.data(id))
+            .map_err(StateError::Io)?;
+        Ok(removed)
     }
 
     /// Changes whether the host starts an extension, in memory and in the
@@ -153,6 +211,14 @@ impl Registry {
     }
 }
 
+/// Reads the manifest of the package in `source` and examines if the host
+/// can run the package.
+pub(crate) fn inspect(source: &Path) -> Result<Manifest, InstallError> {
+    let manifest = package::read_manifest(source)?;
+    package::check_runnable(source, &manifest)?;
+    Ok(manifest)
+}
+
 /// The directories in `packages` that can be a package. The result is empty
 /// if no extension was installed yet.
 fn package_directories(packages: &Path) -> io::Result<Vec<PathBuf>> {
@@ -164,8 +230,8 @@ fn package_directories(packages: &Path) -> io::Result<Vec<PathBuf>> {
     let mut directories = Vec::new();
     for entry in entries {
         let entry = entry?;
-        let is_incoming = entry.file_name().to_string_lossy().starts_with('.');
-        if entry.file_type()?.is_dir() && !is_incoming {
+        let is_temporary = entry.file_name().to_string_lossy().starts_with('.');
+        if entry.file_type()?.is_dir() && !is_temporary {
             directories.push(entry.path());
         }
     }

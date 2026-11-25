@@ -7,6 +7,7 @@
 //! selects a failure with the method that it calls.
 
 mod messages;
+mod session_list;
 
 use std::env;
 use std::io::{self, Write};
@@ -21,6 +22,7 @@ use nomux_extension::wire::v1::{Envelope, Error, Response, response};
 use nomux_extension::{Call, CallError, ErrorCode, Extension};
 
 use messages::{ProcessInfo, Text};
+use session_list::SessionList;
 
 fn main() -> ExitCode {
     let id = program_name();
@@ -61,6 +63,7 @@ fn extension(id: &str) -> Extension {
         .method("ignore_cancel", ignore_cancel)
         .method("start_ticking", start_ticking)
         .method("ask_host", ask_host)
+        .method("session_ids", session_ids)
         .method("process", process_info)
         .method("crash", crash)
         .method("hang", hang)
@@ -146,6 +149,20 @@ fn start_ticking(call: &Call, input: Text) -> Result<Text, CallError> {
 )]
 fn ask_host(call: &Call, input: Text) -> Result<Text, CallError> {
     call.host().call(&input.text, &Text::default())
+}
+
+/// Calls the host service `sessions.list` of the nomux daemon and gives the
+/// identifiers of the sessions, with a space between them.
+fn session_ids(call: &Call, _: Text) -> Result<Text, CallError> {
+    let list: SessionList = call.host().call("sessions.list", &Text::default())?;
+    let ids: Vec<String> = list
+        .sessions
+        .into_iter()
+        .map(|session| session.id)
+        .collect();
+    Ok(Text {
+        text: ids.join(" "),
+    })
 }
 
 fn process_info(call: &Call, _: Text) -> Result<ProcessInfo, CallError> {

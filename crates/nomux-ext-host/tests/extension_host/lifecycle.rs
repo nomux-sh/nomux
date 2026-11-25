@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use nomux_ext_host::RunState;
+use nomux_ext_host::{CallError, RunState};
 
 use crate::fixture::{Fixture, HEALTHY, alive_tasks};
 
@@ -102,4 +102,19 @@ async fn the_process_gets_its_own_directory_and_only_the_environment_of_the_host
     let leaked: Vec<&String> = process.variables.iter().filter(not_from_the_host).collect();
     assert!(leaked.is_empty(), "{leaked:?}");
     fixture.host.shutdown().await;
+}
+
+#[tokio::test]
+async fn after_the_shutdown_of_the_host_no_call_starts_an_extension() {
+    let fixture = Fixture::new();
+    fixture.install(HEALTHY);
+    fixture.process_info(HEALTHY).await;
+
+    fixture.host.shutdown().await;
+
+    assert_eq!(fixture.run_state(HEALTHY), RunState::Stopped);
+    let refused = fixture.text(HEALTHY, "echo", "no").await;
+    assert_eq!(refused, Err(CallError::Stopped));
+    assert_eq!(fixture.run_state(HEALTHY), RunState::Stopped);
+    assert_eq!(alive_tasks(), 0);
 }

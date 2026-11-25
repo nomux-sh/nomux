@@ -1,5 +1,6 @@
 //! What all the extensions of one host share.
 
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use tokio::sync::broadcast;
@@ -15,6 +16,9 @@ pub(crate) struct HostContext {
     /// Gives the events of all the extensions to the subscribers.
     pub(crate) events: broadcast::Sender<ExtensionEvent>,
     pub(crate) services: Arc<dyn HostServices>,
+    /// `true` after the shutdown of the host. The host starts no process
+    /// then.
+    pub(crate) closed: AtomicBool,
 }
 
 impl HostContext {
@@ -30,6 +34,7 @@ impl HostContext {
             registry: Mutex::new(registry),
             events,
             services,
+            closed: AtomicBool::new(false),
         }
     }
 

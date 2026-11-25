@@ -3,7 +3,9 @@
 
 use std::fs;
 
-use nomux_ext_host::{CallError, Enablement, InstallError, Permissions, RunState};
+use nomux_ext_host::{
+    CallError, Enablement, ExtensionHost, InstallError, Permissions, RunState, StateError,
+};
 
 use crate::fixture::{Fixture, SESSIONS_READ, manifest, text_call};
 
@@ -177,4 +179,53 @@ async fn an_extension_that_is_not_installed_cannot_be_called() {
     let refused = fixture.text("test.unknown", "echo", "no").await;
 
     assert_eq!(refused, Err(CallError::NotInstalled));
+}
+
+#[tokio::test]
+async fn an_inspection_gives_the_request_of_the_manifest_and_installs_nothing() {
+    let fixture = Fixture::new();
+    let package = fixture.package("test.git");
+
+    let manifest = ExtensionHost::inspect(&package).unwrap();
+
+    assert_eq!(manifest.id, "test.git");
+    assert_eq!(manifest.permissions.scopes, [SESSIONS_READ]);
+    assert_eq!(fixture.host.extensions(), Vec::new());
+    assert!(!fixture.host_directory().exists());
+
+    // An inspection refuses what an installation refuses.
+    fs::remove_file(package.join("bin/test.git")).unwrap();
+    let no_program = ExtensionHost::inspect(&package);
+    assert!(
+        matches!(no_program, Err(InstallError::MissingProgram { .. })),
+        "{no_program:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_removed_extension_stops_and_leaves_no_file() {
+    let fixture = Fixture::new();
+    fixture.install_with("test.git", sessions_read());
+    let process = fixture.process_info("test.git").await;
+    let files = ["packages/test.git", "state/test.git.toml", "data/test.git"]
+        .map(|file| fixture.host_directory().join(file));
+    assert!(files.iter().all(|file| file.exists()));
+
+    fixture.host.remove("test.git").await.unwrap();
+
+    assert!(files.iter().all(|file| !file.exists()), "{files:?}");
+    assert_eq!(fixture.host.extensions(), Vec::new());
+    assert_eq!(fixture.reopen().extensions(), Vec::new());
+    let refused = fixture.text("test.git", "echo", "no").await;
+    assert_eq!(refused, Err(CallError::NotInstalled));
+    let again = fixture.host.remove("test.git").await;
+    assert!(matches!(again, Err(StateError::NotInstalled)), "{again:?}");
+
+    // The identifier is free: a new installation starts a new process with
+    // the permissions of that installation.
+    fixture.install("test.git");
+    let new_process = fixture.process_info("test.git").await;
+    assert_ne!(new_process.pid, process.pid);
+    assert_eq!(new_process.scopes, Vec::<String>::new());
+    fixture.host.shutdown().await;
 }

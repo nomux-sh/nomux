@@ -42,6 +42,12 @@ pub enum InstallError {
         /// The identifier of the extension.
         id: String,
     },
+    /// A different installation of an extension with this identifier runs
+    /// now.
+    InProgress {
+        /// The identifier of the extension.
+        id: String,
+    },
     /// The name of the package directory is not the identifier in its
     /// manifest.
     DirectoryName {
@@ -74,6 +80,10 @@ impl fmt::Display for InstallError {
             Self::AlreadyInstalled { id } => {
                 write!(formatter, "the extension `{id}` is already installed")
             }
+            Self::InProgress { id } => write!(
+                formatter,
+                "a different installation of the extension `{id}` runs now"
+            ),
             Self::DirectoryName { id } => write!(
                 formatter,
                 "the name of the package directory is not the identifier `{id}` of the manifest"
