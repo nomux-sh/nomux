@@ -246,8 +246,9 @@ fn keep_record(
     }
 }
 
-/// The size of the screen state for a window. `None` if the window has no
-/// cell, or more cells than the holder keeps in memory.
+/// The size of the screen state for a window. `None` if the window has more
+/// cells than the holder keeps in memory, or if the screen state cannot have
+/// the size: no row, or fewer than [`Size::MIN_COLUMNS`] columns.
 fn screen_size(size: WindowSize) -> Option<Size> {
     if size.cells() > WindowSize::MAX_CELLS {
         return None;
