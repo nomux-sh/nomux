@@ -32,7 +32,7 @@ The fuzz targets in [`fuzz`](../../fuzz/README.md) give arbitrary output to the 
 | Insert and delete | ICH, DCH, IL, DL, REP, and the insert mode (IRM) | G `insert_and_delete`, C |
 | Alternate screen | DEC mode 1049: an empty screen at each entry, and the screen and the cursor come back | G `alternate_screen`, C |
 | Line drawing | The DEC special graphics character set in G0 and in G1, with shift out and shift in | G `line_drawing`, C |
-| Wide characters | Two cells for a wide character and for an emoji, and the wrap of a wide character | G `wide_and_combining`, C |
+| Wide characters | Two cells for a wide character and for an emoji, and the wrap of a wide character. One cell of a wide character without the other cell is an empty cell | G `wide_and_combining`, R, C |
 | Combining marks | A combining character goes to the cell before the cursor | G `wide_and_combining`, C |
 | Tab stops | The default stops, HTS, TBC, CBT and CHT | G `tab_stops`, C |
 | Bracketed paste | DEC mode 2004 | G `modes` |
@@ -56,8 +56,9 @@ The library also handles the OSC sequences for the title, the palette colors, th
 | Kitty graphics | The library ignores the sequences. No picture is kept | ADR-0003 |
 | Sixel | The library ignores the sequences. No picture is kept | ADR-0003 |
 | Grapheme clusters | An emoji that a zero width joiner connects to a second emoji uses two cells for each emoji. The emoji variation selector does not make a character wide | G `wide_and_combining` |
-| Erase in display above the cursor | From the second row, ED 1 keeps the first row | G `erase`, [#29](https://github.com/nomux-sh/nomux/issues/29) |
-| A terminal of 1 column | A wide character in a terminal of 1 column stops the process | [#24](https://github.com/nomux-sh/nomux/issues/24) |
+| Erase in display above the cursor | From the second row, ED 1 keeps the first row. The cause is in the library. A correction in `nomux-term` needs a second parser for the CSI parameters in the path of each byte, thus the gap stays until a release of the library corrects it | G `erase`, [#29](https://github.com/nomux-sh/nomux/issues/29) |
+| A terminal of 1 column | `Size::new` refuses fewer than 2 columns: the library cannot keep a wide character in 1 column. The holder refuses such a window | [`tests/size.rs`](tests/size.rs) |
+| The wrap after a backward tab | After a character in the last column, a backward tab (CBT) keeps the wrap of the library: a next character in the same call of `Terminal::feed` goes to the next row. `nomux-term` ends the wrap at the end of each call | G `tab_stops`, R |
 | Synchronized updates | `nomux-term` turns off DEC mode 2026: each byte changes the screen immediately | ADR-0003 |
 
 The redraw sequence does not make these parts of the state, because the library has no read access to them. A client that attaches has the default value until the program sets the value again:
@@ -69,8 +70,6 @@ The redraw sequence does not make these parts of the state, because the library 
 | Saved cursor | DECRC moves the cursor to the first cell |
 | Character sets | G0 and G1 are ASCII. Line drawing that the program selected before the attach shows letters for the next characters |
 | Hyperlinks, changed palette colors, marks of wrapped lines | The text has no link, the palette has the colors of the client, and a resize of the client does not join wrapped lines |
-| One cell of a wide character without the other cell | The characters after it are one column to the left: [#25](https://github.com/nomux-sh/nomux/issues/25) |
-| The wrap state when the cursor is not in the last column | The cursor is one column to the right: [#27](https://github.com/nomux-sh/nomux/issues/27) |
 
 ## Tests
 
