@@ -114,15 +114,14 @@ jobs:
           persist-credentials: false
       - name: Install the toolchain from rust-toolchain.toml
         run: rustup toolchain install
+      - name: Install the C compiler for musl
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends musl-tools
       - name: Build, package and check each target
         run: |
-          version="$(scripts/workspace-version.sh)"
           for target in $TARGETS; do
             echo "::group::$target"
-            rustup target add "$target"
-            cargo build --release --locked --target "$target" -p nomux-cli -p nomuxd -p nomux-holder
-            archive="$(scripts/package-archive.sh "$version" "$target")"
-            scripts/check-archive.sh "$archive" "$version"
+            scripts/build-release.sh "$target"
             echo "::endgroup::"
           done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
