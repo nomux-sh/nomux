@@ -20,7 +20,7 @@ concurrency:
 jobs:
   # Pull requests: Linux only, for a fast result. The nightly run adds macOS.
   rust:
-    name: Rust
+    name: rust
     if: github.event_name == 'pull_request'
     uses: nomux-sh/.github/.github/workflows/rust-ci.yml@main
     with:
@@ -29,25 +29,16 @@ jobs:
       run-deny: true
       run-machete: true
 
-  dco:
-    name: DCO
-    if: github.event_name == 'pull_request'
-    permissions:
-      contents: read
-      pull-requests: read
-    uses: nomux-sh/.github/.github/workflows/dco.yml@main
-
-  commitlint:
-    name: Commit messages
-    if: github.event_name == 'pull_request'
-    permissions:
-      contents: read
-      pull-requests: read
-    uses: nomux-sh/.github/.github/workflows/commitlint.yml@main
+  repo-lint:
+    name: repo-lint
+    uses: nomux-sh/.github/.github/workflows/repo-lint.yml@main
+    with:
+      license: code
+      require-changelog: true
 
   # Nightly and manual runs: Linux and macOS.
   rust-all-hosts:
-    name: Rust (all hosts)
+    name: rust (all hosts)
     if: github.event_name != 'pull_request'
     uses: nomux-sh/.github/.github/workflows/rust-ci.yml@main
     with:
