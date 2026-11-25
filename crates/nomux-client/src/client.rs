@@ -10,10 +10,9 @@ use nomux_proto::wire::v1::{
     SessionCreateRequest, SessionDetachRequest, SessionInputRequest, SessionKillRequest,
     SessionListRequest, SessionResizeRequest, envelope, request, response,
 };
-use nomux_transport::EnvelopeStream;
+use nomux_transport::{EnvelopeStream, FrameReader, FrameWriter};
 use tokio::time::timeout;
 
-use crate::local_daemon;
 use crate::terminal::{AttachOptions, TerminalInput, TerminalOutput};
 use crate::{ClientError, ClientKind, HostInfo, NewSession, Session, WindowSize};
 
@@ -24,6 +23,8 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// A connection to a daemon on which the handshake is complete.
 ///
 /// Each method sends one request and waits for its response.
+/// [`Host::client`](crate::Host::client) makes a connection to the daemon of
+/// the local host or of a remote host.
 #[derive(Debug)]
 pub struct Client {
     stream: EnvelopeStream,
@@ -31,32 +32,6 @@ pub struct Client {
 }
 
 impl Client {
-    /// Connects to the daemon of this user on the local host.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ClientError::DaemonNotRunning`] if no daemon runs, and the
-    /// errors of [`Client::connect`].
-    pub async fn connect_local(kind: ClientKind) -> Result<Self, ClientError> {
-        Self::connect(&local_daemon::socket_path()?, kind).await
-    }
-
-    /// Connects to the daemon of this user on the local host. If no daemon
-    /// runs, starts one and waits until it answers.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ClientError::DaemonStart`] if the daemon cannot start,
-    /// [`ClientError::Timeout`] if it does not answer in time, and the
-    /// errors of [`Client::connect`].
-    pub async fn connect_local_or_start(kind: ClientKind) -> Result<Self, ClientError> {
-        let socket = local_daemon::socket_path()?;
-        match Self::connect(&socket, kind).await {
-            Err(ClientError::DaemonNotRunning) => local_daemon::start(&socket, kind).await,
-            result => result,
-        }
-    }
-
     /// Connects to the daemon that listens on the Unix socket `socket` and
     /// does the handshake.
     ///
@@ -80,6 +55,11 @@ impl Client {
                     )),
                     _ => ClientError::Connection(error),
                 })?;
+        Self::on(stream, kind).await
+    }
+
+    /// Does the handshake on a connection to a daemon.
+    pub(crate) async fn on(stream: EnvelopeStream, kind: ClientKind) -> Result<Self, ClientError> {
         let mut client = Self {
             stream,
             next_request_id: 1,
@@ -177,16 +157,39 @@ impl Client {
     /// To send a request during the attach, for example
     /// [`resize_session`](Self::resize_session), use a second connection.
     ///
+    /// This attach ends with an error when its connection ends.
+    /// [`Host::attach`](crate::Host::attach) gives an attach that connects
+    /// again.
+    ///
     /// # Errors
     ///
     /// Returns [`ClientError::NotFound`] if no session has the identifier,
     /// and [`ClientError::Failed`] if the window size is not valid or the
     /// daemon cannot read the terminal of the session.
     pub async fn attach(
-        mut self,
+        self,
         id: &str,
         options: AttachOptions,
     ) -> Result<(TerminalOutput, TerminalInput), ClientError> {
+        let attached = self.attach_frames(id, options).await?;
+        Ok((
+            TerminalOutput::new(
+                attached.output,
+                attached.handle,
+                attached.epoch,
+                options.resume,
+            ),
+            TerminalInput::new(attached.input, attached.handle),
+        ))
+    }
+
+    /// Sends the attach request and changes the connection to the terminal
+    /// channels.
+    pub(crate) async fn attach_frames(
+        mut self,
+        id: &str,
+        options: AttachOptions,
+    ) -> Result<AttachedFrames, ClientError> {
         let size = options.size.unwrap_or(WindowSize {
             rows: 0,
             columns: 0,
@@ -204,10 +207,12 @@ impl Client {
             return Err(unexpected_result());
         };
         let (output, input) = self.stream.into_frames();
-        Ok((
-            TerminalOutput::new(output, attached.handle, attached.epoch, options.resume),
-            TerminalInput::new(input, attached.handle),
-        ))
+        Ok(AttachedFrames {
+            output,
+            input,
+            handle: attached.handle,
+            epoch: attached.epoch,
+        })
     }
 
     /// Detaches each client that is attached to the session `id`. The
@@ -342,6 +347,17 @@ impl Client {
             };
         }
     }
+}
+
+/// The terminal channels of an attach that the daemon accepted.
+#[derive(Debug)]
+pub(crate) struct AttachedFrames {
+    pub(crate) output: FrameReader,
+    pub(crate) input: FrameWriter,
+    /// The session handle of the frames.
+    pub(crate) handle: u32,
+    /// The epoch of the session.
+    pub(crate) epoch: u32,
 }
 
 fn unexpected_result() -> ClientError {

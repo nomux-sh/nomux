@@ -20,6 +20,10 @@ pub(crate) struct Arguments {
     #[arg(long, short, global = true)]
     pub(crate) quiet: bool,
 
+    /// Use the daemon of a remote host of `nomux host ls` [default: the local host]
+    #[arg(long, global = true, value_name = "NAME")]
+    pub(crate) host: Option<String>,
+
     /// Print the version
     #[arg(long, short = 'V')]
     version: bool,
@@ -98,8 +102,40 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: DaemonCommand,
     },
+    /// Add, list, remove and check the remote hosts
+    Host {
+        #[command(subcommand)]
+        command: HostCommand,
+    },
     /// Print the version
     Version,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum HostCommand {
+    /// Connect to a host through SSH, install nomux there and save the host
+    Add {
+        /// The SSH destination: [user@]host, ssh://[user@]host[:port] or a
+        /// Host name of ~/.ssh/config
+        #[arg(value_name = "SSH-TARGET")]
+        target: String,
+
+        /// The name of the host for --host [default: the host part of the destination]
+        #[arg(long, value_name = "NAME")]
+        name: Option<String>,
+    },
+    /// List the hosts of the configuration file
+    Ls,
+    /// Remove a host from the configuration file. Nothing changes on the host
+    Rm {
+        /// The name of the host
+        name: String,
+    },
+    /// Check the connection, the platform, the binaries, the permissions and the daemon of a host
+    Doctor {
+        /// The name of the host [default: each host of the configuration file]
+        name: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Subcommand)]

@@ -27,6 +27,15 @@ const AFTER_ATTACH: &[u8] = b"\x1b[?1049l\x1b[!p\x1b7\x1b[r\x1b8\x1b(B\x0f\x1b[<
     \x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?2004l\
     \x1b[?1l\x1b>\x1b[?7h\x1b[?25h\x1b[0 q\x1b[0m\r\n";
 
+/// Saves the title of the window (XTWINOPS 22) and sets a title that says
+/// that the attach has no connection. The screen is not changed: the
+/// output of the session continues on it after the connection is back.
+pub(super) const SHOW_CONNECTION_LOST: &[u8] =
+    b"\x1b[22;0t\x1b]0;nomux: connection lost, connecting again\x07";
+
+/// Gives the window its saved title back (XTWINOPS 23).
+pub(super) const HIDE_CONNECTION_LOST: &[u8] = b"\x1b[23;0t";
+
 /// `true` if the standard input is a terminal.
 pub(super) fn is_available() -> bool {
     isatty(io::stdin())

@@ -6,11 +6,17 @@
 //! client and the mobile clients use it to connect to a daemon, to do the
 //! handshake and to send requests.
 //!
+//! - [`Host`]: the local host, or a remote host through SSH. It opens the
+//!   connections to the daemon of the host and starts the daemon. For a
+//!   remote host it also installs the nomux binaries: [`BinarySource`],
+//!   [`Installation`] and [`BootstrapStep`].
 //! - [`Client`]: one connection to a daemon, with one method for each
 //!   request.
-//! - [`Client::attach`]: the terminal of a session. [`TerminalOutput`] gives
+//! - [`Host::attach`]: the terminal of a session. [`TerminalOutput`] gives
 //!   the screen and the output as [`TerminalEvent`] values, and
-//!   [`TerminalInput`] sends the input.
+//!   [`TerminalInput`] sends the input. The attach connects again when its
+//!   connection ends.
+//! - [`check_host`]: the checks of a remote host, as [`HostCheck`] values.
 //! - [`ClientError`]: why a connection or a request failed.
 //! - [`ClientKind`], [`Session`], [`SessionState`], [`NewSession`],
 //!   [`WindowSize`] and [`HostInfo`]: the data of the requests and the
@@ -25,22 +31,30 @@
 //!
 //! # Status
 //!
-//! The crate has the control requests for sessions and for the daemon on the
-//! local host, and the attach to a session. Events and remote hosts are not
-//! written yet.
+//! The crate has the control requests for sessions and for the daemon, the
+//! attach to a session, and the two kinds of host: the local host and a
+//! remote host through SSH. Events are not written yet.
 
+mod bootstrap;
 mod client;
 mod client_kind;
+mod doctor;
 mod error;
+mod host;
 mod host_info;
-mod local_daemon;
+mod local_host;
+mod reconnect;
 mod session;
+mod ssh_host;
 mod terminal;
 mod window_size;
 
+pub use bootstrap::{BinarySource, BootstrapStep, Installation};
 pub use client::Client;
 pub use client_kind::ClientKind;
+pub use doctor::{HostCheck, check_host};
 pub use error::ClientError;
+pub use host::Host;
 pub use host_info::HostInfo;
 pub use session::{NewSession, Session, SessionState};
 pub use terminal::{

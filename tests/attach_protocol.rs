@@ -61,7 +61,7 @@ async fn receive_until(attached: &mut Attached, text: &[u8]) -> Received {
                 received.output.extend_from_slice(bytes);
                 all.extend_from_slice(bytes);
             }
-            TerminalEvent::End(end) => panic!("the attach ended: {end:?}"),
+            event => panic!("an attach of one connection gave {event:?}"),
         }
     }
     received
