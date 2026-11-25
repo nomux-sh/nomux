@@ -14,6 +14,8 @@
 //!   host of the `--host` option.
 //! - `host_commands`: the `host` commands, which change and check the
 //!   remote hosts of the global configuration file.
+//! - `extension_commands`: the `ext` commands, which install, list, remove
+//!   and call the extensions of a host and check a manifest.
 //! - `attach`: the `attach` command, which uses the terminal of the user.
 //! - `report`: the result of a command.
 //! - `output`: the text and the JSON form of a result and of an error.
@@ -29,13 +31,15 @@
 //!
 //! The CLI has the commands `new`, `ls`, `attach`, `detach`, `kill`,
 //! `daemon status`, `daemon stop`, `host add`, `host ls`, `host rm`,
-//! `host doctor` and `version`, and the `--host` option. The other commands
-//! are not written yet.
+//! `host doctor`, `ext ls`, `ext install`, `ext rm`, `ext enable`,
+//! `ext disable`, `ext call`, `ext validate` and `version`, and the `--host`
+//! option. The other commands are not written yet.
 
 mod arguments;
 mod attach;
 mod commands;
 mod exit_code;
+mod extension_commands;
 mod host_commands;
 mod output;
 mod report;

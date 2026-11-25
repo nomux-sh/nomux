@@ -9,7 +9,7 @@ use nomux_client::{ClientError, ClientKind, Host, NewSession};
 use crate::arguments::{Command, DaemonCommand};
 use crate::output::Format;
 use crate::report::Report;
-use crate::{attach, host_commands, selected_host};
+use crate::{attach, extension_commands, host_commands, selected_host};
 
 pub(crate) const KIND: ClientKind = ClientKind::Cli;
 
@@ -29,6 +29,9 @@ pub(crate) async fn run(
             ));
         }
         Command::Host { command } => return host_commands::run(command, format).await,
+        Command::Ext { command } => {
+            return extension_commands::run(command, host_name, format).await;
+        }
         Command::New { attach: true, .. } | Command::Attach { .. } => {
             // A session that no terminal can show does not start, and a
             // host is not contacted for it.
@@ -71,7 +74,9 @@ pub(crate) async fn run(
             Ok(Report::SessionKilled { id })
         }
         Command::Daemon { command } => daemon(&host, command).await,
-        Command::Host { .. } | Command::Version => unreachable!("handled before the connection"),
+        Command::Host { .. } | Command::Ext { .. } | Command::Version => {
+            unreachable!("handled before the connection")
+        }
     }
 }
 

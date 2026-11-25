@@ -3,6 +3,7 @@
 use nomux_client::{AttachEnd, ClientError, HostInfo, Session};
 use serde::Serialize;
 
+use super::extension_json::ExtensionBody;
 use super::human::state_name;
 use crate::exit_code;
 use crate::report::{AddedHost, HostDiagnosis, Report};
@@ -35,6 +36,9 @@ enum Body<'a> {
     Doctor(Vec<DiagnosisDocument<'a>>),
     Version(&'a str),
     Error(ErrorDocument<'a>),
+    /// The field of the document is the field of the body of the extension.
+    #[serde(untagged)]
+    Extension(ExtensionBody<'a>),
 }
 
 #[derive(Serialize)]
@@ -211,6 +215,7 @@ pub(super) fn report(report: &Report) -> String {
         Report::HostsChecked(hosts) => {
             Body::Doctor(hosts.iter().map(DiagnosisDocument::from).collect())
         }
+        Report::Extension(report) => Body::Extension(report.into()),
         Report::Version => Body::Version(env!("CARGO_PKG_VERSION")),
     };
     line(body)
