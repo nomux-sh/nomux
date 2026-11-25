@@ -1,0 +1,17 @@
+[package]
+name = "probe-nomux-term"
+description = "Benchmark probe for nomux-term: the selected VT library behind the interface of nomux."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+nomux-term = { path = "../../../../crates/nomux-term" }
+vt-probe.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,17 @@
+[package]
+name = "probe-vt100-psmux"
+description = "Benchmark probe for the vt100 fork of psmux."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+vt-probe.workspace = true
+vt100-psmux = "=0.16.13"
+
+[lints]
+workspace = true
