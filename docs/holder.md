@@ -17,6 +17,7 @@ starter (daemon) --exec--> nomux-holder --fork, exec--> command of the session
                                +--> ring buffer (shared memory) --> daemon reads
                                +--> screen state (VT parser, private memory)
                                +--> program reports (OSC parsers, private memory)
+                               +--> journal and session metadata (files) --> daemon reads
                                +--> control socket <--------------> daemon connects
                                +--> discovery files
 ```
@@ -31,6 +32,7 @@ nomux-holder --session <identifier> [options] -- <command> [argument...]
 |---|---|---|
 | `--session <identifier>` | necessary | The session identifier: 1 to 64 characters from `A-Z`, `a-z`, `0-9`, `-` and `_` |
 | `--runtime-directory <path>` | `~/.nomux/run` | The directory for the discovery files |
+| `--state-directory <path>` | See "Session state directory" | The directory for the journal and the session metadata |
 | `--working-directory <path>` | the current directory | The working directory of the command |
 | `--rows <number>`, `--columns <number>` | 24, 80 | The size of the terminal window: 1 row or more, 2 columns or more, and 1048576 cells at most |
 | `--ring-capacity <bytes>` | 262144 | The size of the ring buffer: a power of two, 4096 or more |
@@ -45,11 +47,12 @@ At the start, the holder does these steps in this sequence:
 3. It makes the shared memory of the ring buffer.
 4. It makes the discovery directory and writes `pid`.
 5. It makes the control socket `sock`.
-6. It opens the PTY and starts the command. The command is the leader of a new session, and the PTY is its controlling terminal.
-7. It writes `ready`.
+6. It makes the session state directory, writes the session metadata and starts the first segment of the journal.
+7. It opens the PTY and starts the command. The command is the leader of a new session, and the PTY is its controlling terminal.
+8. It writes `ready`.
 
 Then the holder waits in one `poll` call for these descriptors: the `SIGCHLD` pipe, the listening socket, the PTY and each connection.
-`poll` has no timeout while the command runs. An idle holder makes no system call and uses no CPU time.
+While the command runs, `poll` has a timeout only when output bytes wait in memory for the journal: 1 second at most after the holder read them. An idle holder makes no system call and uses no CPU time.
 
 The holder uses `rustix` for the system calls. It uses `signal-hook` for the `SIGCHLD` handler, because the end of a child process has no file descriptor that is the same on Linux and macOS.
 
@@ -86,6 +89,7 @@ A reader gets the length of the region from `fstat` and the start of the data fr
 ### Positions and the wrap rule
 
 A position is the number of bytes that the holder wrote since it started. A position only increases. The byte at position `p` is at data index `p mod capacity`.
+The journal uses the same positions. "Epoch and sequence number" shows what a position means for a client.
 
 - The **committed** position is the end of the bytes that a reader can read.
 - The **claimed** position is the end of the bytes that the writer can change.
@@ -299,12 +303,225 @@ The holder does not read the screen to find the text of the input line. Thus the
 - The holder does not read OSC 99. It does not limit the rate of the notifications: the daemon decides what a notification causes.
 - The forgery guard does not apply. A notification names no program.
 
+## Session state directory
+
+The holder keeps on disk what must stay when the holder ends and when the host starts again: the output of the session and the description of its command.
+Each session has one directory in the state directory of the user. The name of the directory is the session identifier.
+
+```
+<state directory>/         mode 0700
+  sessions/                mode 0700
+    <session identifier>/  mode 0700
+      session              the session metadata, mode 0600
+      journal/             mode 0700
+        <epoch>-<start position>.journal   one segment, mode 0600
+```
+
+| Host | State directory |
+|---|---|
+| Linux | `~/.local/state/nomux` |
+| macOS | `~/Library/Application Support/nomux` |
+
+The state directory is not the runtime directory. A runtime directory can be on a file system that is empty after a restart of the host, and its files have a meaning only while their holder runs.
+The path comes from `HOME` only, as the path of the runtime directory does. `nomux_holder_protocol::session_state` has the paths and the format of the metadata, and `nomux_holder_protocol::journal` has the format of the journal and its reader. The daemon reads the directory with these two modules, also when no holder runs.
+
+If the holder cannot make the directory or the first segment, it does not start. After the start, an error of the disk does not stop the session: see "When a write fails".
+
+### Session metadata
+
+The file `session` is plain text, and a person can read and change it. Each line is a key, and a value after one space.
+
+```
+nomux-session 1
+epoch 1
+started 1795651200
+rows 24
+columns 80
+restore on-focus
+profile
+directory /home/user/project
+command /bin/sh
+argument -c
+argument echo hello
+status running
+```
+
+| Key | Value |
+|---|---|
+| `nomux-session` | The format version: 1. It is the first line |
+| `epoch` | The epoch of the holder that wrote the file |
+| `started` | When that holder started: seconds after the Unix epoch |
+| `rows`, `columns` | The size of the window now |
+| `restore` | The restore policy. This version writes `on-focus` |
+| `profile` | The name of the environment profile. This version writes no name |
+| `directory` | The working directory of the command |
+| `command` | The program of the command |
+| `argument` | One argument of the command. There is one line for each argument, in their sequence |
+| `status` | `running`, `exited <exit code>` or `signaled <signal number>` |
+| `ended` | When the command ended: seconds after the Unix epoch. Only after the end |
+
+- `directory`, `command` and `argument` can have each byte. In the file, `\\` is a backslash, `\n` is a line feed, `\r` is a carriage return and `\xHH` is the byte with the hexadecimal value `HH`.
+- A reader ignores a key that it does not know. A later version adds keys, and the format version stays 1. `restore`, `profile`, `status` and each `argument` line are optional for a reader.
+- **The file has no environment variable.** The environment of a command can have secrets, and they must not reach the disk. A later version stores the name of an environment profile in `profile`. The arguments of the command are in the file: they are visible to other users in the process list, thus the starter puts no secret there.
+- The holder writes the file at its start, after each `Resize`, and at the end of the command. It writes a new file and renames it, thus a reader always gets a complete file.
+
+### Cleanup rule
+
+**The holder never removes the session state directory.** The directory stays when the command ends, when the holder ends and when the holder is killed. The daemon removes it when it forgets the session.
+
+Thus the daemon can tell two cases from the files and the discovery scan:
+
+| `status` in `session` | Holder | Meaning |
+|---|---|---|
+| `exited` or `signaled` | Not important | The command ended. The journal is its full output |
+| `running` | Live | The session runs |
+| `running` | None | The holder was stopped while the command ran: for example, the host started again. The restore starts a new holder for the session |
+
+A holder that fails after step 6 of its start (for example, the command does not exist) leaves a directory with one empty segment.
+
+## Journal
+
+The journal is the output of the session on disk. The ring buffer has the last 256 KiB of the output. The journal has the bytes before them, and it has checkpoints of the screen, thus a reader can make the screen of a position in the middle of the output.
+
+The holder gives each chunk to the journal in the step that writes the chunk to the ring buffer and to the screen state. Thus the three always have the same bytes.
+
+### Epoch and sequence number
+
+- The **sequence number** of an output byte is its position: the number of bytes that the command wrote before it. The ring buffer and the journal count the same bytes.
+- An **epoch** is one continuous numbering. One holder process gives one epoch, because a holder counts from 0 and its position never goes back.
+- A session gets a new epoch exactly when a new holder starts for it. That is the only case in which the numbering cannot continue: the restore after a restart of the host, or a new holder after the first one was killed. The position 0 of the new epoch is the first byte that the new command wrote.
+- The first epoch of a session is 1. The epoch of a new holder is 1 more than the largest epoch in the `session` file and in the names of the segment files. The holder reads the two, because a person can remove each.
+- The epoch is in the hello (since version 1.3) and in the `session` file. The daemon gives it to the clients as the `epoch` field of a terminal frame, and it gives the position as the `seq` field.
+
+If the daemon removes the session state directory and then starts a holder with the same session identifier, the epoch is 1 again. The daemon removes the directory only when it forgets the session.
+
+### Segments and records
+
+The journal is a sequence of segment files. A file name is the epoch as 8 hexadecimal digits, `-`, the position of the first byte of the segment as 16 hexadecimal digits, and `.journal`. Thus the names in the order of text are in the order of the output, and a reader finds the segment of a position from the names.
+
+All integers are little-endian. A segment starts with a header of 32 bytes:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 8 | Magic: `NMXJRNL\0` |
+| 8 | 4 | Format version: 1 |
+| 12 | 4 | Header length: where the first record starts. 32 in this version |
+| 16 | 4 | Epoch |
+| 20 | 4 | Reserved, zero |
+| 24 | 8 | Start position |
+
+Records follow the header to the end of the file. Each record is a header of 32 bytes and a payload:
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 1 | Kind: 1 output, 2 checkpoint |
+| 1 | 1 | Codec of the payload: 0 stored (the bytes as they are), 1 one LZ4 block |
+| 2 | 2 | Rows of the window. Zero in an output record |
+| 4 | 2 | Columns of the window. Zero in an output record |
+| 6 | 2 | Reserved, zero |
+| 8 | 8 | Position |
+| 16 | 4 | Stored length: the bytes of the payload in the file |
+| 20 | 4 | Raw length: the bytes of the payload after decompression |
+| 24 | 4 | CRC-32 (the polynomial of zlib) of the payload as it is in the file |
+| 28 | 4 | CRC-32 of the bytes 0 to 27 of this header |
+
+| Record | Position | Payload | Largest raw length |
+|---|---|---|---|
+| Output | The position of the first byte of the payload | Output bytes of the session | 131072 |
+| Checkpoint | The position of the next output byte in the file | The redraw sequence of the screen | 8 MiB (`redraw::MAX_LENGTH`) |
+
+- The output records of a segment follow each other without a gap. The first one starts at the start position of the segment.
+- The holder writes a payload as an LZ4 block only if the block is shorter than the payload. Thus the stored length is never larger than the raw length.
+- Each payload is one block that needs no other block. A reader can start at each record.
+- A format version is in each file. A reader refuses a file with a version that it does not know. A change of the format increases the version. The codec field permits a second codec in a later version.
+
+### Checkpoints
+
+A checkpoint is the pair that the `Redraw` request gives, on disk: a position and the redraw sequence of the screen at that position, with the size of the window. The rule of "Redraw sequence and its position" applies: the sequence has the effect of each byte before the position, and of no byte from the position on, and the position is never in a sequence that is not complete.
+
+Thus "the screen at position `p`" is always:
+
+1. Find the last checkpoint whose position is not after `p` (`JournalReader::checkpoint_before`).
+2. Give its redraw sequence to a new terminal that has the size of the checkpoint.
+3. Give that terminal the output bytes from the position of the checkpoint to `p` (`JournalReader::read`).
+
+A checkpoint is in the file between the output before its position and the output after it. The holder gets this order in this way: a record of output ends at the start of the escape sequence or the UTF-8 character that the output ends in (`Terminal::incomplete_tail`), and the bytes of that sequence wait in memory for the next record. Thus the end of the output in the files is a position that the screen corresponds to, and the holder can write a checkpoint there.
+
+The holder writes a checkpoint:
+
+| When | Position |
+|---|---|
+| At the start | 0. It has the size of the window at the start |
+| After 1 MiB of output since the last checkpoint | The end of the record that completes the 1 MiB |
+| After a `Resize` | The position at which the size changed. It is written before the next output byte, thus many changes of the size without output give one checkpoint |
+
+- **The interval is a number of bytes, not a time.** A time needs a timer, and a timer wakes an idle holder. The holder examines the interval only when it writes a record.
+- **Why 1 MiB.** A reader that starts at a checkpoint decompresses and parses 1 MiB at most. This took 3 ms to 12 ms for colored text, and 100 ms for the slowest megabyte of a colored `git log -p` (see "Measurements"). The redraw sequence of a window of 80 x 24 cells is 0.1 KiB to 4 KiB: less than 0.5 % of the output between two checkpoints. To make it takes 0.05 ms.
+- **A very large screen.** The output between two checkpoints is also 16 times the stored size of the last checkpoint or more. Thus the checkpoints are 6 % of the journal at most. A screen whose redraw sequence is longer than 8 MiB gets no checkpoint.
+- **The index** is the file names and the record headers. A reader finds the segment of a position from the names, reads the record headers of that segment in their sequence (it does not read the payloads of the output records) and takes the last checkpoint that is not after the position. If the segment has none, it reads the segment before it. There is no index file that can disagree with the segments.
+- A reader that reads through a full epoch gives each change of the window to its terminal: when a checkpoint has a different size than the checkpoint before it, the window changed at its position.
+
+Two cases are not exact:
+
+- A sequence that is not complete and longer than 64 KiB cannot wait in memory. The holder writes its bytes, and writes no checkpoint until the end of the output in the files is again a position that the screen corresponds to. A `Resize` during such a sequence gets its checkpoint later than the change. Programs write such sequences for images.
+- After the oldest segments were removed, the first segment can start with output and have its first checkpoint later. The screen of a position before that checkpoint cannot be made: `checkpoint_before` gives none.
+
+### When the holder writes, and what can be lost
+
+The holder writes with one `write` call for each record, in its one loop. It has no thread for the disk.
+
+| Event | What the holder does |
+|---|---|
+| 64 KiB of output wait in memory | It writes them as one output record |
+| An output byte waited for 1 second | It writes the bytes that wait as one output record. This is the only timeout of `poll` while the command runs, and it exists only while bytes wait |
+| The command ended | It writes each byte that waits, also a sequence that is not complete, and calls `fdatasync` one time |
+
+The holder never calls `fsync` or `fdatasync` while the command runs. A call for each chunk stops the read of the PTY for the time of a disk write.
+A `write` call copies the record to the page cache of the kernel and returns. If the file system of the state directory is slow or does not answer (for example, a network file system), the call stops the loop for that time: the holder then reads the PTY later, and the command waits when the buffer of the PTY is full.
+
+| Failure | What is lost |
+|---|---|
+| The holder is killed (`SIGKILL`, a crash) | The bytes that waited in memory: the output of the last second, 64 KiB at most, and the bytes of a sequence that was not complete. The files are a prefix of the output |
+| The host loses power, or the kernel stops | Also the bytes that the kernel did not write to the disk yet. On Linux the kernel writes a changed page after 30 seconds with the default settings |
+| The disk damages a file | The records of that segment from the first damaged record on. The other segments stay |
+
+A power cut can leave a segment that ends in the middle of a record or with bytes that the holder did not write. The reader finds this from the lengths and the checksums and uses the records before it. Thus the journal needs no write order and no repair step.
+
+### Size limit
+
+| Limit | Value |
+|---|---|
+| Journal of one session, all epochs | 32 MiB of files |
+| One segment | A segment that has 2 MiB or more gets no more record: the next record starts a new segment |
+| One output record | 64 KiB of output, and the bytes of two reads more when a sequence is not complete |
+
+- After each record, the holder removes the oldest segments until the journal is not larger than the limit. It never removes the segment that it writes.
+- The segments of an earlier epoch of the session are the oldest. A new holder counts them at its start, thus the limit applies to the session and not to one holder.
+- The limits are constants in this version (`JournalLimits::DEFAULT`). A later version gets the size limit from the configuration of the daemon, as an option of the holder.
+- With the measured sizes, 32 MiB hold 50 MiB to 90 MiB of output: more than 600000 lines of 80 characters.
+- A window that changes its size again and again without complete output makes one checkpoint for each change that has output after it. These checkpoints can make the open segment longer than 2 MiB, and the open segment is not removed.
+
+### When a write fails
+
+The session is more important than its journal. If a write to a segment fails, or if the holder cannot make the next segment (for example, the disk is full), the holder writes one line to its standard error and stops the journal: it writes no more record for the rest of its life. The ring buffer, the screen state and the requests continue. `JournalRead` gives the bytes that are in the files.
+
+### Reading
+
+`nomux_holder_protocol::journal::JournalReader` reads a journal directory. It needs no holder, thus the daemon uses it for a session that does not run. It also works while the holder writes: the reader gets the records that are complete.
+
+**A reader trusts no byte of a file.** The files can be cut, damaged or made by a different program, and they must not stop the holder or the daemon.
+
+- A segment whose header does not have the magic, a known format version, or the epoch and the start position of its file name is not a segment.
+- A record whose header checksum is not correct, whose kind or codec is not known, whose lengths are not possible for its kind, or whose position is not the position that follows the records before it, ends the segment. So does a payload whose checksum is not correct or whose LZ4 block does not have the raw length of the header.
+- The reader allocates the two lengths of a header only after it examined them against the limits of the format. The decoder writes only into the raw length.
+- The reader uses the records of a segment up to the first one that is not valid, and it continues with the next segment. `read` then gives a range that starts after the position of the request: the caller sees that bytes are missing.
+
 ## Control protocol
 
 The control socket is a Unix stream socket. The protocol has its own version, which is independent of the product version and of the protocol between the clients and the daemon.
-The current version is 1.2. "Protocol versions" shows what each version added.
+The current version is 1.3. "Protocol versions" shows what each version added.
 
-The encoding is written by hand: fixed little-endian fields with a length prefix. The holder decodes 9 small messages, thus a schema compiler and its runtime give no benefit, and the binary stays small.
+The encoding is written by hand: fixed little-endian fields with a length prefix. The holder decodes 10 small messages, thus a schema compiler and its runtime give no benefit, and the binary stays small.
 
 ### Frame
 
@@ -324,7 +541,7 @@ If the length is smaller than 8 or the payload is longer than 65536 bytes, the r
 
 | Kind | Message | Payload |
 |---|---|---|
-| `0x0001` | `Hello` | Protocol major version (2), minor version (2), process ID of the command (4), rows (2), columns (2), length of the session identifier (1), session identifier |
+| `0x0001` | `Hello` | Protocol major version (2), minor version (2), process ID of the command (4), rows (2), columns (2), length of the session identifier (1), session identifier, epoch (4, since version 1.3) |
 | `0x0002` | `Done` | Empty |
 | `0x0003` | `Error` | Error code (2) |
 | `0x0004` | `Status` | State (1): 0 running, 1 exited, 2 killed by a signal. 3 bytes of zero. Exit code or signal number (4) |
@@ -332,10 +549,13 @@ If the length is smaller than 8 or the payload is longer than 65536 bytes, the r
 | `0x0006` | `Redraw` | Position of the ring buffer (8), length of the redraw sequence (4). Since version 1.1 |
 | `0x0007` | `ProgramReports` | Revision of the program reports (8), length of the encoded program reports (4). Since version 1.2 |
 | `0x0008` | `ProgramReportsChanged` | Revision of the program reports (8). Since version 1.2 |
+| `0x0009` | `Journal` | Position of the first byte (8), number of bytes (4). Since version 1.3 |
 
 The holder sends `Hello` when a connection opens, before the daemon sends a message. Thus the daemon knows the protocol version before its first request. The read-only descriptor of the ring buffer comes with the hello as `SCM_RIGHTS` ancillary data.
 
-Three messages come with a descriptor: `Hello`, `Redraw` and `ProgramReports`. A descriptor arrives with the first byte of its message, thus the daemon reads the socket with `recvmsg` each time. While the daemon waits for the reply to a `Redraw` or a `ProgramReports` request, it sends no second request of these two kinds on that connection. Thus a descriptor that arrives after the hello always belongs to the next reply of these two kinds.
+Four messages come with a descriptor: `Hello`, `Redraw`, `ProgramReports` and a `Journal` that has bytes. A descriptor arrives with the first byte of its message, thus the daemon reads the socket with `recvmsg` each time. While the daemon waits for the reply to a `Redraw`, a `ProgramReports` or a `JournalRead` request, it sends no second request of these three kinds on that connection. Thus a descriptor that arrives after the hello always belongs to the next reply of these three kinds.
+
+A daemon reads the epoch of a holder of version 1.2 or older as 1: such a holder has no journal, and no session has a second holder with it.
 
 | Error code | Name | Meaning |
 |---|---|---|
@@ -362,6 +582,7 @@ The holder answers each request with one message that has the same request ident
 | `0x0107` | `Redraw` | Empty. Since version 1.1 | | `Redraw` with a descriptor |
 | `0x0108` | `ProgramReports` | Empty. Since version 1.2 | | `ProgramReports` with a descriptor |
 | `0x0109` | `WaitProgramReports` | The revision that the daemon already has (8). Since version 1.2 | | `ProgramReportsChanged`, possibly later |
+| `0x010A` | `JournalRead` | The position of the first byte (8), the largest number of bytes (4, not 0). Since version 1.3 | | `Journal`, with a descriptor if it has bytes |
 
 `Signal` sends the signal to the process of the command. After the holder has the exit status, it sends no signal, because the process ID can belong to a different process.
 
@@ -443,6 +664,35 @@ To follow the program reports, the daemon does these steps:
 
 A notification that has a revision larger than the revision of the last read is new. If more than 16 notifications arrive between two reads, the daemon gets the last 16.
 
+### Journal read
+
+`JournalRead` gives the daemon output bytes of the current epoch from a position on. The daemon uses it for a client that attaches again with a sequence number that the ring buffer has no more, and to read the scrollback in parts. The request needs no lease.
+
+The bytes go to the daemon as a redraw sequence does: in new shared memory without a header, with the read-only descriptor in the `Journal` reply. The reply has the position of the first byte and the number of bytes. `nomux_holder_protocol::journal::read_range` copies the bytes out of the memory.
+
+- The holder gives the bytes from the segment files, and the bytes that still wait in memory. Thus a read goes to the write position: the daemon needs no second source for the last second of output.
+- A reply has 262144 bytes at most (`journal::MAX_RANGE_LENGTH`), and it can have fewer bytes than the request permits: it ends at the end of a segment. The daemon sends the next request from the position after the last byte.
+- The holder reads the files for each request. It keeps no file open and no bytes of the journal in memory between two requests.
+
+| Case | Answer |
+|---|---|
+| The journal has the byte at the position of the request | `Journal` with that position, 1 byte or more, and the descriptor |
+| The position is older than the oldest byte of the journal: the size limit removed the segment | `Journal` with the oldest position that exists, the bytes from there, and the descriptor. The position of the reply is larger than the position of the request |
+| A segment in the middle is damaged | The same: the reply starts at the next position that the journal has |
+| The journal has no byte at the position or after it | `Journal` with 0 bytes and no descriptor. The position is the end of the journal |
+| The largest number of bytes is 0 | `Error` with `InvalidPayload` |
+| The holder cannot read a file or make the shared memory | `Error` with `Failed` |
+
+After the journal stopped (see "When a write fails"), the end of the journal is smaller than the write position. A daemon that gets 0 bytes for a position before the write position uses the ring buffer or a new redraw.
+
+To give a client the bytes from the sequence number `n` of the current epoch, the daemon does these steps:
+
+1. If the ring buffer still has the position `n`, it reads the ring buffer.
+2. If not, it sends `JournalRead` with `n`. If the position of the reply is `n`, it sends the bytes and repeats this step from the end of the reply, until the ring buffer has the next position.
+3. If the position of the reply is larger than `n`, the bytes are gone. The daemon then sends a redraw, as for a client without a sequence number.
+
+To read a checkpoint, and to read an earlier epoch, the daemon uses `JournalReader` on the files. The checkpoints of a session that runs are complete in the files: the holder writes a checkpoint with one `write` call.
+
 ### Compatibility rules
 
 A holder that runs is never replaced. A daemon must talk to each holder of the same major version, also to one that is much older.
@@ -479,8 +729,9 @@ An old daemon never sees a new reply kind or a new error code, because only a ne
 | 1.0 | The first version: all messages without a "Since" note | |
 | 1.1 | Request `Redraw`, reply `Redraw`, error code `RedrawTooLarge` | It cannot get the screen. It shows a client only the bytes that the ring buffer has |
 | 1.2 | Requests `ProgramReports` and `WaitProgramReports`, replies `ProgramReports` and `ProgramReportsChanged` | It has no program status, no input line state and no notification from that holder. A holder of version 1.1 does not answer the OSC 7501 query, thus the tools in its session send no program status report |
+| 1.3 | Field `epoch` at the end of the hello, request `JournalRead`, reply `Journal` | The epoch is 1. The holder has no journal: a client that needs bytes that the ring buffer has no more gets a redraw, and the session has no scrollback and no state on disk |
 
-No release has a holder of version 1.0 or 1.1, thus each holder that runs has version 1.2 or later.
+Release 0.1.0 has a holder of version 1.2. No release has a holder of version 1.0 or 1.1, thus each holder that runs has version 1.2 or later.
 
 The types `Request`, `Reply` and `ErrorCode` of `nomux-holder-protocol` are `#[non_exhaustive]`. Thus an addition does not stop the build of code that reads them.
 
@@ -489,7 +740,7 @@ The types `Request`, `Reply` and `ErrorCode` of `nomux-holder-protocol` are `#[n
 - The socket has mode 0600 in a directory with mode 0700. The holder also reads the user ID of the peer (`SO_PEERCRED` on Linux, `getpeereid` on macOS) and closes a connection from a different user.
 - The holder accepts 4 connections at one time. It closes a fifth connection immediately.
 - The holder continues when no connection is open, and it accepts a new connection after a disconnect.
-- Each connection can read: `Status`, `WaitOutput`, `Redraw`, `ProgramReports` and `WaitProgramReports` need no lease.
+- Each connection can read: `Status`, `WaitOutput`, `Redraw`, `ProgramReports`, `WaitProgramReports` and `JournalRead` need no lease.
 - One connection at most has the lease. Only this connection can send `Input`, `Resize` and `Signal`. Other connections get `LeaseRequired`.
 - `AcquireLease` always moves the lease to the connection that asks. The connection that had the lease gets `LeaseRequired` for its next write request.
 - A disconnect releases the lease.
@@ -537,11 +788,11 @@ A holder makes its directory and then writes `pid`. A scan between these two ste
 
 1. **Start.** The holder does the steps of "Process model". If a step fails, the holder removes its directory and exits with status 1. A usage error gives status 2.
 2. **Run.** The holder moves output from the PTY to the ring buffer, and answers requests. If all processes close the PTY but the command continues, the holder stops reading the PTY and waits for the end of the command.
-3. **End of the command.** `SIGCHLD` wakes the holder. It collects the exit status, reads the output that is in the PTY (256 chunks at most), closes the PTY and answers each `WaitOutput` request. The close of the PTY sends `SIGHUP` to the processes that remain in the session.
+3. **End of the command.** `SIGCHLD` wakes the holder. It collects the exit status, reads the output that is in the PTY (256 chunks at most), closes the PTY and answers each `WaitOutput` request. The close of the PTY sends `SIGHUP` to the processes that remain in the session. The holder writes the output that waits to the journal, calls `fdatasync` for the open segment, and writes the exit status to the session metadata.
 4. **Exit status.** The holder keeps answering requests. `Status` gives the exit status. `Input`, `Resize` and `Signal` give `ChildExited`.
-5. **Exit.** When a connection got the exit status, or when the exit timeout passes, the holder removes its discovery directory and exits with status 0.
+5. **Exit.** When a connection got the exit status, or when the exit timeout passes, the holder removes its discovery directory and exits with status 0. The session state directory stays: see "Cleanup rule".
 
-If the holder is killed, the directory stays. The scan reports it as stale.
+If the holder is killed, the discovery directory stays. The scan reports it as stale.
 
 ## Unsafe code
 
@@ -560,25 +811,63 @@ Measured on Linux x86-64 with the release profile. The targets are in [bench/REA
 
 | Measurement | Result | Target |
 |---|---|---|
-| Size of `nomux-holder` (glibc, dynamic) | 560 KB | < 1 MB |
-| Size of `nomux-holder` (musl, static) | 652 KB | < 1 MB |
+| Size of `nomux-holder` (glibc, dynamic) | 624 KB | < 1 MB |
+| Size of `nomux-holder` (musl, static) | 722 KB | < 1 MB |
+| Resident memory, idle holder with `/bin/sh` (musl, static) | 0.8 MB | < 3 MB |
+| Resident memory, ring buffer full, after 8 MB of output (musl, static) | 1.2 MB | < 3 MB |
+| Resident memory, ring buffer full and program reports full (musl, static) | 1.5 MB | < 3 MB |
 | Resident memory, idle holder with `/bin/sh` (glibc) | 2.6 MB | < 3 MB |
-| Resident memory, ring buffer full (glibc) | 2.9 MB | < 3 MB |
-| Resident memory, idle holder with `/bin/sh` (musl, static) | 0.7 MB | < 3 MB |
-| Resident memory, ring buffer full (musl, static) | 1.0 MB | < 3 MB |
-| Resident memory, ring buffer full and program reports full (musl, static) | 1.3 MB | < 3 MB |
-| Resident memory, ring buffer full and program reports full (glibc) | 3.2 MB | < 3 MB: not met |
+| Resident memory, ring buffer full, after 8 MB of output (glibc) | 3.1 MB | < 3 MB: not met |
+| Resident memory, ring buffer full and program reports full (glibc) | 3.3 MB | < 3 MB: not met |
 | CPU time and context switches in 10 s, idle | 0 and 0 | 0 |
-| Output of `cat` of a 128 MiB file through the holder, plain text | 71 MiB/s | |
-| Output of `cat` of a 128 MiB file through the holder, colored words | 84 MiB/s | |
-| Output of `cat` of a 32 MiB file through the holder, a program status report in each line | 54 MiB/s | |
+| Output of `cat` of a 128 MiB file through the holder, plain text | 82 MiB/s | |
+| Output of `cat` of a 128 MiB file through the holder, colored words | 69 MiB/s | |
+| Output of `cat` of a 32 MiB file through the holder, a program status report in each line | 30 MiB/s | |
+| Journal on disk for 1 MiB of output, plain words | 618 KiB | |
+| Journal on disk for 1 MiB of output, colored words | 464 KiB | |
+| Journal on disk for 1 MiB of output, `git log -p` with colors | 366 KiB | |
+| Screen of a position from the checkpoint before it, colored words | 3 ms to 12 ms | |
 
 "Program reports full" is the largest state that a program can make: 64 program status records and 16 notifications, each with texts of the largest length. It adds approximately 0.3 MB. A session with the reports of a real tool has some records with short texts, and its memory is the memory of the rows without "program reports full". The release archives have the static musl binary.
 
-The screen state adds 134 KB to the binary and approximately 0.2 MB to the resident memory of a window of 80 x 24 cells. The program reports add 22 KB to the glibc binary and 16 KB to the musl binary.
+The idle measurement starts 4 seconds after the last output: the holder writes the bytes that wait for the journal 1 second after it read them, and makes no system call after that.
+
+The screen state adds 134 KB to the binary and approximately 0.2 MB to the resident memory of a window of 80 x 24 cells. The program reports add 22 KB to the glibc binary and 16 KB to the musl binary. The journal, its reader and the session metadata add 64 KB to the glibc binary and 70 KB to the musl binary, and 0.1 MB to 0.2 MB to the resident memory: one block of output and one record.
 During a flood of output, the VT parser uses one third to one half of the CPU time of the holder, and the kernel uses the other part.
 
-The three throughput values are the best of 11 runs on a host that did other work at the same time. The median is 10 % to 15 % lower. With the same method and at the same time, the holder without the program reports gives 68 MiB/s, 82 MiB/s and 65 MiB/s. Thus the program reports do not change the throughput of output without reports: the difference is smaller than the difference between two sets of runs. Output with a report in each line is 17 % slower, because the holder decodes each report, examines the foreground program one time for each chunk, and replaces the record.
+The throughput values are the best of 11 runs on a host that did other work at the same time. One run is the time from the start of the holder to its exit, with `--exit-timeout 0`. The files are lines of 4 to 14 random words of a dictionary: the plain text, and the same with an SGR sequence before and after each word. The journal files were on a `tmpfs` file system, thus the values have the cost of the compression and of the `write` calls, and not the cost of a disk.
+
+### Cost of the journal
+
+With the same method and at the same time, the holder before the journal gives these values:
+
+| Measurement | Before the journal | With the journal |
+|---|---|---|
+| Size of `nomux-holder` (musl, static) | 652 KB | 722 KB |
+| Resident memory, idle (musl, static) | 0.8 MB | 0.8 MB |
+| Resident memory, ring buffer full (musl, static) | 1.0 MB | 1.2 MB |
+| Output of `cat`, plain text | 96 MiB/s | 82 MiB/s |
+| Output of `cat`, colored words | 99 MiB/s | 69 MiB/s |
+| Output of `cat`, a program status report in each line | 38 MiB/s | 30 MiB/s |
+
+The journal makes a flood 15 % to 30 % slower. The holder compresses and writes in its one loop. The target for a flood is 10 MB/s (see [bench/README.md](../bench/README.md)), and the one loop is 7 times faster than that. Thus the holder has no thread for the disk: a thread adds memory and a queue with a limit, and the measurement shows no need for it.
+
+### Selection of the codec
+
+The plan of the project named zstd for the scrollback. The measurements selected LZ4 (`lz4_flex` 0.14.2, MIT license, safe code only).
+
+| Codec | Size of `nomux-holder` (musl, static) | Resident memory, idle | Resident memory after 8 MB of output | Output of `cat`, plain text | Output of `cat`, colored words | Disk for 16 MiB of plain words | Disk for 16 MiB of colored words |
+|---|---|---|---|---|---|---|---|
+| None: the holder before the journal | 652 KB | 0.8 MB | 1.0 MB | 101 MiB/s | 101 MiB/s | | |
+| zstd, the C library (`zstd-safe` 8.4.0, level 1) | 1.31 MB: not met | not measured | not measured | not measured | not measured | | |
+| zstd in Rust (`ruzstd` 0.9.1, level "fastest") | 889 KB | 1.4 MB | 3.06 MB: not met | 37 MiB/s | 40 MiB/s | 8.0 MB | 6.5 MB |
+| LZ4 (`lz4_flex` 0.14.2) | 722 KB | 0.8 MB | 1.3 MB | 88 MiB/s | 73 MiB/s | 10.1 MB | 7.6 MB |
+
+- The C library adds 655 KB to a static musl binary, and its build needs a C compiler for each musl target. The value is from a program that only compresses and decompresses.
+- The Rust encoder of zstd has one level. Its tables stay in memory after a flood, and it compresses 75 MiB/s to 89 MiB/s: this is slower than the holder reads.
+- LZ4 uses 18 % to 26 % more disk than that zstd encoder, and it is the only one of the three that keeps the holder below its three targets. The size limit of a session is a number of bytes on disk, thus the cost is a shorter history and not a larger disk use.
+
+The values of this table are from one set of 7 runs for each codec, thus they are not exactly the values of the first table.
 
 A ring buffer of 1 MiB gives more than 3 MB of resident memory when it is full. This is the reason for the default of 256 KiB.
 
@@ -587,10 +876,10 @@ A ring buffer of 1 MiB gives more than 3 MB of resident memory when it is full. 
 These parts are not in the holder yet:
 
 - **Parts of the terminal state that the redraw sequence does not make.** The scroll region, the tab stops, the saved cursor, the character sets, the hyperlinks and the changed palette colors. The VT library gives no read access to most of them.
-- **Journal and checkpoint.** There is no epoch and no sequence number. A daemon that connects gets the current screen and the bytes that the ring buffer still has.
+- **Journal.** The size limit is a constant: the holder has no option for it, and the daemon has no configuration. After a write failed, the journal stops for the rest of the life of the holder: it does not try again when the disk has space. The holder has no request for a checkpoint: the daemon reads the checkpoints from the files. The journal has no checkpoint for the screen at the end of the command.
+- **Restore after a restart of the host.** The holder writes what the restore needs: the session metadata and the journal. The daemon does not read them yet, it does not remove a session state directory, and it gives the holder no option for the state directory. The `restore` key has one value, and the `profile` key is always empty.
 - **Program reports.** The holder does not see RIS, thus a full reset does not remove the program status records. The forgery guard reads only the name of the leader of the foreground process group: it ignores the reports of a tool that runs in an interpreter, behind a pipe or on a remote host. The holder does not read OSC 99, and it does not read the text of the input line from the screen.
 - **Fuzz target.** The parsers of `nomux_term::osc` have no fuzz target yet.
-- **Scrollback on disk.**
 - **Warm pool.** There is no message that gives a session to a holder that already runs.
 - **Lease notification.** The connection that loses the lease learns it from the answer to its next write request, not from a message.
 - **Send across threads.** `RingReader` is not `Send`. The daemon decides how it shares a reader between tasks.
