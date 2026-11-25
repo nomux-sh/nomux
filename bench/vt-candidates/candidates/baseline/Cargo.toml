@@ -1,0 +1,16 @@
+[package]
+name = "probe-baseline"
+description = "Benchmark probe without a VT library: the reference for size and memory."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+vt-probe.workspace = true
+
+[lints]
+workspace = true

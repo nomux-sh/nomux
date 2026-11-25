@@ -1,0 +1,16 @@
+[package]
+name = "vt-bench"
+description = "Builds the VT library probes, runs the measurements and prints the report."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+vt-probe.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,17 @@
+[package]
+name = "probe-vte"
+description = "Benchmark probe for the vte parser, which keeps no screen state."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+vt-probe.workspace = true
+vte = { version = "=0.15.0", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true

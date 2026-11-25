@@ -1,0 +1,54 @@
+# The benchmark that compares the VT library candidates.
+#
+# This is a separate workspace. The checks of the core workspace do not build
+# it, thus the candidates (and the Zig build of `libghostty-vt`) add no time
+# to a pull request and no crate to the release binaries.
+[workspace]
+resolver = "3"
+members = ["probe", "candidates/*", "runner"]
+# `cargo run` starts the runner. The runner builds the probes one by one.
+default-members = ["runner"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.100"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/nomux-sh/nomux"
+authors = ["The nomux Authors"]
+publish = false
+
+[workspace.dependencies]
+vt-probe = { path = "probe" }
+
+# The lint policy of the core workspace. Cargo cannot share a lint table
+# between two workspaces.
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unsafe_code = "deny"
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "warn"
+
+# The release profile of the core workspace: the probes are built as the
+# holder is built.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# The same profile, optimized for size. It shows how small a candidate can be.
+[profile.small]
+inherits = "release"
+opt-level = "z"
