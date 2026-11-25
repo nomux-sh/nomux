@@ -1,7 +1,7 @@
 # Extension host
 
 This document describes the extension host: how the daemon keeps the installed extensions, how it runs the daemon part of an extension as a separate process, and which limits it applies.
-The code is in `crates/nomux-ext-host`. The daemon does not use the crate yet.
+The code of the host is in `crates/nomux-ext-host`. The daemon embeds one host: "The host in the daemon" says where its directory is, how a client installs and calls an extension, and which host services the daemon supplies. The code of that part is in `crates/nomuxd/src/extensions` and `crates/nomuxd/src/handlers/ext.rs`.
 
 [architecture.md](architecture.md) shows where the extensions are in the core. The [extension protocol](https://github.com/nomux-sh/extension-api/blob/main/spec/extension-protocol.md) specifies the messages, and [ADR-0005](https://github.com/nomux-sh/docs/blob/main/adr/0005-extension-model.md) records the decision to run the daemon part as a separate process.
 
@@ -45,16 +45,29 @@ The directory of the host has three parts:
   data/<id>/         the working directory of the process
 ```
 
-`ExtensionHost::install` installs a package from a directory:
+An installation has two steps, thus the user sees the permissions of an extension before the host has the extension.
+
+`ExtensionHost::inspect` is the first step. It reads a package in a directory and changes nothing:
 
 1. It validates `extension.toml` with the manifest validator of `nomux-extension`.
 2. It refuses a package whose `api` requirement does not match the extension API version of the host.
 3. It refuses a package that does not have the program of its `[daemon]` table.
-4. It refuses approved permissions that the manifest does not ask for.
-5. It copies the package. A package can have only regular files and directories: the host refuses a symbolic link, because a link can point out of the package.
-6. It writes the state file and enables the extension.
 
+The result is the manifest, which has the permissions that the extension asks for.
+
+`ExtensionHost::install` is the second step. It gets the directory and the permissions that the user approved:
+
+1. It does the checks of the first step again.
+2. It refuses approved permissions that the manifest does not ask for.
+3. It copies the package. A package can have only regular files and directories: the host refuses a symbolic link, because a link can point out of the package.
+4. It writes the state file and enables the extension.
+
+An installation starts no process. The extension gets the approved permissions and no others, also when its manifest asks for more.
 The state file is not in the package, thus a package cannot bring its own approval.
+
+The copy of a package can take time. During the copy the host does not hold the lock of its registry: the other functions of the host do not wait. A second installation of the same identifier during that time is refused.
+
+`ExtensionHost::remove` stops the process of an extension and removes its package, its state file and its working directory. First the host moves the two directories to names that it does not read (`packages/.removed-<id>`, `data/.removed-<id>`), then it deletes them. Thus a call or a new installation of the identifier never sees a part of the old files. A host that ended during the deletion leaves these directories, and the next removal of the identifier deletes them.
 
 ### State file
 
@@ -160,7 +173,7 @@ A process is idle when no call runs in the two directions. An event that a subsc
 After `idle` without activity, the host sends `ShutdownRequest`. The process must answer and end with the status 0 in `shutdown`. If it does not, the host ends it, and this is a failure.
 The subsequent call starts a new process.
 
-`ExtensionHost::shutdown` stops each process in the same way. The daemon calls it before it stops.
+`ExtensionHost::shutdown` stops each process in the same way. The daemon calls it before it stops. After it, the host starts no process: a call fails with `Stopped`. Thus a request that arrives during the stop of the daemon does not leave a process behind.
 
 ## Isolation
 
@@ -225,14 +238,84 @@ The extension protocol sets the size of a frame. The other limits are values of 
 
 With the defaults, the pauses after failures are 1 s, 2 s, 4 s and 8 s, and the fifth failure disables the extension.
 
+## The host in the daemon
+
+`nomuxd` makes one `ExtensionHost` at its start, after it has the sessions of an earlier daemon. This costs one read of the directory of the host. The daemon starts no extension then, and it has no task and no timer for extensions while no extension is in use: "Cost of an extension that is not in use" has the reason. [daemon.md](daemon.md) has the measurement of the idle daemon.
+
+### Directory
+
+| Host | Directory of the extension host |
+|---|---|
+| Linux | `~/.local/share/nomux/extensions` |
+| macOS | `~/Library/Application Support/nomux/extensions` |
+
+The path comes from `HOME` only, as the path of the runtime directory does. The daemon makes the directory with mode 0700 and sets that mode at each start: the state files have the approvals of the user, and other users must not read or change them.
+The directory is not the runtime directory and not the state directory of the sessions: an installed extension stays after a restart of the host, and a removal of the session state does not remove it.
+
+### Ext service
+
+The clients use the extensions through the `Ext` service of the control protocol. [`spec/control.md`](https://github.com/nomux-sh/proto/blob/main/spec/control.md) of the `proto` repository specifies it.
+
+| Request | What the daemon does |
+|---|---|
+| `Ext.List` | `ExtensionHost::extensions`: each extension with its state, the reason for the state and the approved permissions |
+| `Ext.Inspect` | `ExtensionHost::inspect` for a directory of the host: the identity of the package and the permissions that its manifest asks for |
+| `Ext.Install` | `ExtensionHost::install` with the permissions of the request |
+| `Ext.Remove` | `ExtensionHost::remove` |
+| `Ext.SetEnabled` | `ExtensionHost::enable`, or `ExtensionHost::disable` with the reason `the user disabled the extension` |
+| `Ext.Call` | `ExtensionHost::call`. The first call of an extension starts its process |
+
+**No extension runs before the user approved its permissions.** The daemon starts a process only for `Ext.Call`, and only for an extension that `Ext.Install` installed. `Ext.Install` records the permissions of its request and no others. A client shows the answer of `Ext.Inspect` to the user and sends `Ext.Install` only with the approval of the user. The CLI gets the approval from its arguments: [cli.md](cli.md) describes `nomux ext install`.
+
+An extension has one state for a client:
+
+| State | Condition |
+|---|---|
+| `DISABLED` | The extension is disabled in its state file. The reason is the `disabled_reason` of the file |
+| `STOPPED`, `STARTING`, `RUNNING` | The extension is enabled, and its process has this `RunState` |
+| `FAILED` | The extension is enabled, and its last process failed. The reason is the failure |
+
+The answer to `Ext.Call` separates two kinds of failure. If the extension answered the call with an error, the client gets that error with the error code of the extension protocol. If the extension gave no answer, the client gets an error of the control protocol: the code 2 for an extension that is not installed, the code 3 for a call that the extension did not answer in `call`, and the code 1 for each other reason, for example an extension that is disabled or a process that failed.
+An envelope of the control protocol has 1 MiB at most, and a frame of the extension protocol has 4 MiB at most. The daemon answers a result that does not go into an envelope with the code 1.
+
+### Host services
+
+The daemon implements `HostServices` in `crates/nomuxd/src/extensions/host_services.rs`. An extension calls a service with a `CallRequest`, and the host answers only if the user approved the scope of the service: "Calls from the extension" has the rule.
+
+| Method | Scope | Payload of the call | Payload of the result |
+|---|---|---|---|
+| `sessions.list` | `sessions:read` | Not read | A `SessionListResponse` message of the control protocol: the sessions of the host with their identifier, their state and the process ID of their command |
+
+This is the only host service. The daemon gets a new service together with the official extension that needs it, and each service gets a scope of its own in this table.
+
+### Isolation from the sessions
+
+The host runs in the one thread of the daemon. The work of the host for a process is small: it reads and writes frames and waits for timers.
+
+- A call of an extension is a request of one client connection. The daemon answers the requests of one connection in their sequence, thus a call that waits delays only the next request of the same connection. A session request or an attach on a different connection does not wait.
+- An extension that hangs, fails or writes too much gets the treatment of "Isolation". The daemon and the sessions continue.
+- `Ext.Inspect` and `Ext.Install` read and copy files, and `Ext.Remove` deletes files. This work runs on a different thread (`tokio::task::spawn_blocking`). The thread exists only during the work.
+
+The end-to-end test `a_client_attaches_to_a_session_while_a_call_of_an_extension_that_hangs_waits` attaches to a session and types a command while a call of an extension that answers nothing waits.
+
+### Idle time
+
+The variable `NOMUX_EXTENSION_IDLE_SECONDS` of the daemon sets the `idle` limit: the time without activity after which the host stops a process. The value is a number of seconds from 1 to 86400, and the default is 60. With a value that is not valid, the daemon does not start.
+The other limits have no setting.
+
+### Stop of the daemon
+
+When the daemon stops, it calls `ExtensionHost::shutdown` after it stopped accepting connections and before it waits for the requests that began. Each process gets `ShutdownRequest` and has the `shutdown` time (3 s) to end. A process that does not end in that time is ended by the host. A call that waits for an extension gets the code 1 then.
+If the daemon ends without its stop sequence (`kill -9`), each process of an extension gets the end of its standard input. An extension that uses the extension SDK ends then.
+
 ## Not done yet
 
 - **File access restriction.** The process has the file access of the daemon. The restriction of the process to the approved `fs` directories with Landlock on Linux is the next work. The sandbox on macOS is not decided.
 - **Enforcement of `process` and `network`.** The host gives these permissions to the extension in `Hello` and does not enforce them.
-- **Daemon wiring.** `nomuxd` does not make an `ExtensionHost`, the control protocol has no `Ext` service, and the CLI has no `nomux ext` commands.
-- **Host services.** The daemon supplies no implementation of `HostServices`.
+- **Host services.** The daemon supplies only `sessions.list`.
 - **Installation from the registry, and signature checks.** The host installs only from a local directory.
-- **Update and removal** of an installed extension.
+- **Update** of an installed extension: remove it and install the new version.
+- **Events for the clients.** The control protocol has no event of an extension, thus no client subscribes to `ExtensionHost::subscribe` yet.
 - **`lazy = false`.** The host starts each extension at its first call.
 - **`${worktree}`.** The host does not replace the variable. The caller of `install` gives the approved directories as absolute paths.
 - **Processes that an extension starts.** When the host ends a process, the processes that the extension started continue to run.

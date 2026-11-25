@@ -8,7 +8,7 @@ This repository is a part of [nomux](https://github.com/nomux-sh), a native and 
 
 In development. Versions earlier than 1.0.0 are pre-releases: interfaces can change between minor versions.
 
-The repository now has the Cargo workspace, the developer tools, CI and the first version of the holder ([docs/holder.md](docs/holder.md)), of the daemon ([docs/daemon.md](docs/daemon.md)) and of the CLI ([docs/cli.md](docs/cli.md)). The CLI creates, lists and ends sessions, attaches a terminal to a session and detaches it, and a session continues when the daemon stops. The same commands work on a remote host through SSH ([docs/remote.md](docs/remote.md)). The journal and the scrollback are the next work: refer to the [roadmap](https://github.com/nomux-sh/docs/blob/main/src/content/docs/project/roadmap.md).
+The repository now has the Cargo workspace, the developer tools, CI and the first version of the holder ([docs/holder.md](docs/holder.md)), of the daemon ([docs/daemon.md](docs/daemon.md)) and of the CLI ([docs/cli.md](docs/cli.md)). The CLI creates, lists and ends sessions, attaches a terminal to a session and detaches it, and a session continues when the daemon stops. The same commands work on a remote host through SSH ([docs/remote.md](docs/remote.md)). The daemon runs extensions that the user installs from a directory ([docs/extensions.md](docs/extensions.md)). The journal and the scrollback are the next work: refer to the [roadmap](https://github.com/nomux-sh/docs/blob/main/src/content/docs/project/roadmap.md).
 
 ## Quick start
 
@@ -77,6 +77,33 @@ The remote host needs an SSH server and a key of the user in `authorized_keys`. 
 The session continues on the host when the local computer disconnects, and `nomux --host vps attach <id>` shows the same screen again. An attach that loses its network connection connects again and continues without lost output.
 
 nomux uses `~/.ssh/config`, ssh-agent and the key files of the user. It asks for no password and stores none. `nomux host doctor vps` checks a host. [docs/remote.md](docs/remote.md) has the details, also for a build that has no release.
+
+### Extensions
+
+An extension is a package in a directory: a manifest (`extension.toml`) and the program of its daemon part. The [`extension-api`](https://github.com/nomux-sh/extension-api) repository has the SDK and an example.
+
+1. Install the extension. Without an approval, the command prints the permissions that the extension asks for and installs nothing:
+
+   ```console
+   $ nomux ext install ./nomux-git
+   nomux: the extension nomux.git 1.0.0 asks for these permissions:
+     process=git
+     scope=sessions:read
+   Nothing was installed. To install the extension, approve its permissions: add --grant-all, or --grant <permission> for each permission that you approve. For a directory that starts with ${worktree}, give a directory: --grant fs=<directory>
+   $ nomux ext install ./nomux-git --grant-all
+   extension nomux.git 1.0.0 installed with the permissions: process=git scope=sessions:read
+   ```
+
+2. Call a method. The first call starts the process of the extension, and the daemon stops the process after 60 seconds without a call. The payload and the result are bytes in the encoding of the method:
+
+   ```console
+   $ nomux ext call nomux.git status --payload @request.bin > response.bin
+   $ nomux ext ls
+   ID         NAME  VERSION  STATE    PERMISSIONS                      REASON
+   nomux.git  Git   1.0.0    running  process=git,scope=sessions:read
+   ```
+
+An extension runs as a separate process. If it fails, the caller gets an error, and the daemon and the sessions continue. `nomux ext rm nomux.git` removes it, and `nomux ext validate <directory>` checks a manifest without a daemon. [docs/cli.md](docs/cli.md) has the `ext` commands, and [docs/extensions.md](docs/extensions.md) describes the extension host and its limits.
 
 ## Install
 

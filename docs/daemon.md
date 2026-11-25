@@ -1,19 +1,21 @@
 # Daemon
 
-This document describes the daemon (`nomuxd`): its process model, its socket, its lifecycle, how it finds and holds the holders, and how it attaches clients to the terminal of a session.
+This document describes the daemon (`nomuxd`): its process model, its socket, its lifecycle, how it finds and holds the holders, how it attaches clients to the terminal of a session, and where it runs the extensions.
 The code is in `crates/nomuxd`. The transport is in `crates/nomux-transport`, and the client side is in `crates/nomux-client`.
 
-[architecture.md](architecture.md) shows where the daemon is in the core. [holder.md](holder.md) describes the holder and its contract with the daemon. [cli.md](cli.md) describes the commands that use the daemon. [remote.md](remote.md) describes how a client on a different computer reaches the daemon through SSH.
+[architecture.md](architecture.md) shows where the daemon is in the core. [holder.md](holder.md) describes the holder and its contract with the daemon. [cli.md](cli.md) describes the commands that use the daemon. [remote.md](remote.md) describes how a client on a different computer reaches the daemon through SSH. [extensions.md](extensions.md) describes the extension host of the daemon.
 
 ## Process model
 
 One daemon runs for each user and each runtime directory. The runtime directory is `~/.nomux/run`.
 The daemon is one process with one thread. It uses a `tokio` runtime of the `current_thread` type, because it waits for I/O almost all the time.
+The installation and the removal of an extension read, copy and delete files. For this work the runtime starts a second thread, which ends 10 seconds after the work.
 
 ```
 nomux (CLI) --- Unix socket: envelopes ---> nomuxd --- Unix socket: holder protocol ---> nomux-holder
             <-- Unix socket: frames ------>   |   <--- ring buffer (shared memory) ----  nomux-holder
                                               +--- starts ---> nomux-holder              ...
+                                              +--- starts, pipes: frames ---> process of an extension in use
 ```
 
 The daemon owns no PTY. Each session lives in its holder. Thus the end of the daemon ends no session.
@@ -38,14 +40,16 @@ The start sequence is:
 2. Take the instance lock (see "One daemon for each runtime directory").
 3. Remove the socket file of an earlier daemon and make the socket.
 4. Scan the runtime directory for holders. Remove the stale directories and connect to the live holders.
-5. Accept connections.
+5. Read the installed extensions from the directory of the extension host. Start no extension.
+6. Accept connections.
 
-A client that connects during step 4 waits in the queue of the socket.
+A client that connects during step 4 or step 5 waits in the queue of the socket.
 
 ### Log
 
 The daemon writes `tracing` events to its standard error. The default level is `warn`: a daemon without a problem writes nothing.
 The `NOMUX_LOG` variable sets the level: `error`, `warn`, `info`, `debug` or `trace`.
+The daemon never copies the standard error of an extension to its log. A failure of an extension is one line with the level `warn`.
 
 ### Stop
 
@@ -53,9 +57,10 @@ The daemon stops when it gets `SIGTERM` or `SIGINT`, when a client sends `Host.S
 The stop sequence is:
 
 1. Stop accepting connections.
-2. Wait until each request that began has its response.
-3. Remove the socket file and release the instance lock.
-4. Close the connections and end with status 0.
+2. Stop the process of each extension that runs. A process has 3 seconds to end after the request, then the daemon ends it. A call of an extension that waits fails.
+3. Wait until each request that began has its response.
+4. Remove the socket file and release the instance lock.
+5. Close the connections and end with status 0.
 
 A client that sees the end of its connection after `Host.Stop` can start a new daemon immediately.
 The holders continue. The next daemon finds them.
@@ -89,6 +94,14 @@ The daemon implements these requests:
 | `Session.Detach` | Detaches each client that is attached to a session and gives their number |
 | `Session.Input` | Writes bytes to the terminal of a session and answers when the holder has them |
 | `Session.Resize` | Changes the window size of a session |
+| `Ext.List` | Gives the installed extensions with their state and their approved permissions |
+| `Ext.Inspect` | Validates an extension package in a directory and gives the permissions that its manifest asks for. Installs nothing |
+| `Ext.Install` | Installs an extension package from a directory with the permissions that the user approved |
+| `Ext.Remove` | Stops an extension and removes its package, its state and its data |
+| `Ext.SetEnabled` | Enables or disables an extension |
+| `Ext.Call` | Calls a method of an extension. The first call starts the process of the extension |
+
+[extensions.md](extensions.md) describes the requests of the `Ext` service, the directory of the extensions and the host services that an extension can call.
 
 No capability flag is active. The daemon sends an empty `host_id`, because it has no host identity yet.
 
@@ -284,7 +297,8 @@ Measured on Linux x86-64 with the release profile. The targets are in [bench/REA
 
 | Measurement | Result | Target |
 |---|---|---|
-| Size of `nomuxd` (glibc, dynamic) | 878 KiB (899504 bytes) | < 10 MB |
+| Size of `nomuxd` (glibc, dynamic), before the extension host | 878 KiB (899504 bytes) | < 10 MB |
+| Size of `nomuxd` (glibc, dynamic), with the extension host | 1541 KiB (1578192 bytes) | < 10 MB |
 | Size of `nomuxd` (musl, static) | 974 KiB (996952 bytes) | < 10 MB |
 | Size of `nomux` (glibc, dynamic), before the SSH client | 943 KiB (966104 bytes) | no target |
 | Size of `nomux` (musl, static), before the SSH client | 1045 KiB (1069952 bytes) | no target |
@@ -292,6 +306,13 @@ Measured on Linux x86-64 with the release profile. The targets are in [bench/REA
 | Resident memory, idle daemon with 2 sessions (glibc) | 3.1 MB | < 10 MB |
 | Resident memory, idle daemon with 1 session and 1 attached client (glibc) | 3.1 MB | < 10 MB |
 | Resident memory, idle daemon with 1 session (musl, static) | 1.1 MB | < 10 MB |
+| Resident memory with the extension host, idle daemon without a session and without an extension (glibc) | 3.7 MB to 3.9 MB | < 10 MB |
+| The same daemon without the extension host, in the same measurement | 3.3 MB to 3.4 MB | < 10 MB |
+| Resident memory with the extension host, idle daemon with 2 sessions (glibc) | 4.0 MB | < 10 MB |
+| Resident memory, idle daemon with 1 installed extension that is not in use (glibc) | 4.1 MB | < 10 MB |
+| Resident memory of the same daemon after the extension ran and stopped after its idle time | 4.2 MB | < 10 MB |
+| CPU time and context switches in 30 s, idle daemon with 1 installed extension that is not in use | 0 and 0 | 0 |
+| Threads of the idle daemon with 1 installed extension that is not in use | 1 | no target |
 | CPU time and context switches in 30 s, idle daemon with 2 sessions | 0 and 0 | 0 |
 | CPU time and context switches in 30 s, idle daemon with 1 attached client | 0 and 0 | 0 |
 | Key to echo on the screen of `nomux attach`, local session: median, 99th percentile | 0.2 ms to 0.5 ms, 0.5 ms to 5.4 ms | < 10 ms |
@@ -301,6 +322,8 @@ Measured on Linux x86-64 with the release profile. The targets are in [bench/REA
 
 "Key to echo" is the time from the write of one key to the terminal of `nomux attach` until the terminal has the echo of that key. The session runs `cat`, and the terminal of the session echoes the key. The path has the CLI, the daemon, the holder and the terminal of the session, two times. The program `tests/measurements/attach.rs` types 2000 keys with 2 ms between them: [tests/README.md](../tests/README.md) says how to run it. Each range is the result of 3 runs. The largest value of a run is between 3 ms and 58 ms: a small number of keys wait for the scheduler of a computer that does other work.
 
+The rows "with the extension host" are from one measurement of the two builds on the same computer: the daemon before the extension host has 0.4 MB less there, most of it for the larger binary. The earlier rows are from an earlier measurement and an earlier build.
+
 The commands, with `$pid` as the process ID of the daemon from `nomux daemon status --json`:
 
 ```sh
@@ -308,6 +331,7 @@ ls -l target/release/nomuxd
 grep VmRSS /proc/$pid/status
 awk '{print $14 + $15}' /proc/$pid/stat     # CPU time in clock ticks: the same value before and after 30 s
 grep ctxt /proc/$pid/status                 # the same values before and after 30 s
+grep Threads /proc/$pid/status
 ```
 
 ## Open points for the next versions
