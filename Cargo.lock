@@ -365,12 +365,15 @@ version = "0.0.0"
 name = "nomux-end-to-end"
 version = "0.0.0"
 dependencies = [
+ "nomux-client",
  "nomux-holder-protocol",
  "nomux-proto",
+ "nomux-term",
  "prost",
  "rustix",
  "serde_json",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

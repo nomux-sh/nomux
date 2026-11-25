@@ -15,6 +15,18 @@ path = "support/lib.rs"
 test = false
 doctest = false
 
+[[example]]
+name = "attach_measurements"
+path = "measurements/attach.rs"
+
+[[test]]
+name = "attach"
+path = "attach.rs"
+
+[[test]]
+name = "attach_protocol"
+path = "attach_protocol.rs"
+
 [[test]]
 name = "session_lifecycle"
 path = "session_lifecycle.rs"
@@ -29,13 +41,16 @@ path = "version_mismatch.rs"
 
 [dependencies]
 nomux-holder-protocol.workspace = true
-rustix = { workspace = true, features = ["process"] }
+nomux-term.workspace = true
+rustix = { workspace = true, features = ["fs", "process", "pty", "termios"] }
 serde_json.workspace = true
 tempfile.workspace = true
 
 [dev-dependencies]
+nomux-client.workspace = true
 nomux-proto.workspace = true
 prost.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
 
 [lints]
 workspace = true
