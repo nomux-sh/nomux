@@ -53,9 +53,8 @@ fn a_daemon_controls_a_shell_through_the_holder() {
     client.type_line("echo marker-$((6*7))");
     client.read_until("marker-42");
 
-    // The size changes while the shell waits in `read`, not while it starts
-    // a prompt: the line editor of a shell then reads the window size and
-    // writes it back, and a resize between the two calls is lost.
+    // The shell waits in `read` at the resize: when a shell starts a prompt,
+    // its line editor writes the window size that it read back.
     client.type_line("echo waits-$((2*4)); read line; stty size");
     client.read_until("waits-8");
     assert_eq!(client.request(Request::Resize(larger)), Reply::Done);
