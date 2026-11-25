@@ -41,7 +41,7 @@ One holder owns the PTY of one session. The holder is a separate, small binary.
 
 Responsibilities:
 
-The first four responsibilities and the discovery files are implemented. [holder.md](holder.md) has the details and the parts that are open.
+These responsibilities are implemented: the PTY and the command, the read of the PTY, the VT parser and the ring buffer, the discovery files and the single-writer lease. The holder gives the daemon the current screen as a redraw sequence. The OSC parser, the journal, the checkpoint and the scrollback are not implemented. [holder.md](holder.md) has the details and the parts that are open.
 
 - Open the PTY and start the command of the session.
 - Always read the PTY, also when no client is connected.
@@ -106,9 +106,9 @@ Rules:
 | Crate | Type | Responsibility | State |
 |---|---|---|---|
 | `nomux-core` | library | Shared types, errors, configuration, glossary types | in use: the version output of the binaries, the lookup of a binary of the same installation |
-| `nomux-term` | library | Thin abstraction over the VT library (`alacritty_terminal`), which lets the project replace the library | in use: the screen state, the redraw sequence and the OSC sequences |
-| `nomux-holder-protocol` | library | Contract between a holder and the daemon: control messages, ring buffer layout, discovery files | in use by the holder |
-| `nomux-holder` | binary | The holder. No async runtime | owns the PTY, the ring buffer, the control socket and the discovery files |
+| `nomux-term` | library | Thin abstraction over the VT library (`alacritty_terminal`), which lets the project replace the library | in use by the holder: the screen state, the redraw sequence and its position, and the OSC sequences |
+| `nomux-holder-protocol` | library | Contract between a holder and the daemon: control messages, ring buffer layout, redraw memory, discovery files | in use by the holder |
+| `nomux-holder` | binary | The holder. No async runtime | owns the PTY, the ring buffer, the screen state, the control socket and the discovery files |
 | `nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows | in use: the Unix socket of the local host and the framing of the control channel |
 | `nomux-status` | library | Status resolver, rules, aggregation. Pure code without I/O | structure only |
 | `nomux-ext-host` | library | Extension host of the daemon | structure only |
@@ -127,7 +127,7 @@ Planned direction of the dependencies:
 - `nomux-client` uses `nomux-core`, `nomux-term` and `nomux-transport`.
 - `nomux-cli` uses `nomux-client` and `nomux-core`. It uses no type of `nomux-proto`.
 
-Now the holder depends on `nomux-core` and `nomux-holder-protocol`. The daemon depends on `nomux-core`, `nomux-holder-protocol` and `nomux-transport`. The client library depends on `nomux-core` and `nomux-transport`, and the CLI depends on the client library and `nomux-core`. `nomux-term` depends on the VT library, and no crate uses `nomux-term` yet. `nomux-status` and `nomux-ext-host` have no dependencies and no users.
+Now the holder depends on `nomux-core`, `nomux-holder-protocol` and `nomux-term`. The daemon depends on `nomux-core`, `nomux-holder-protocol` and `nomux-transport`. The client library depends on `nomux-core` and `nomux-transport`, and the CLI depends on the client library and `nomux-core`. `nomux-term` depends on the VT library. `nomux-status` and `nomux-ext-host` have no dependencies and no users.
 A crate gets a dependency when its code uses it.
 
 Two definitions exist in two crates, because the client side must not depend on the holder contract: the runtime directory `~/.nomux/run` is in `nomux-holder-protocol` (for the holders) and in `nomux-transport` (for the socket of the daemon). The daemon uses the first one for the two purposes, and an end-to-end test fails if the client looks for the socket in a different directory.
