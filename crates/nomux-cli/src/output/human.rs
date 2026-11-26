@@ -77,6 +77,19 @@ pub(super) fn report(report: &Report, style: Style, width: Option<usize>) -> Str
                 described(session)
             )
         }
+        Report::SessionsKilled { sessions, .. } if sessions.is_empty() => {
+            "no session runs\n".to_owned()
+        }
+        Report::SessionsKilled {
+            sessions, dry_run, ..
+        } => {
+            let verb = if *dry_run { "would end" } else { "ended" };
+            sessions.iter().fold(String::new(), |mut text, session| {
+                let _ = writeln!(text, "session {} {verb}", described(session));
+                text
+            })
+        }
+        Report::Sent { .. } | Report::Followed => String::new(),
         Report::SessionRenamed { session, .. } => format!(
             "session {} is now named {}\n",
             session.id,
@@ -137,6 +150,9 @@ pub(super) fn quiet_report(report: &Report) -> String {
         | Report::AttachEnded { .. }
         | Report::ClientsDetached { .. }
         | Report::SessionRenamed { .. }
+        | Report::SessionsKilled { .. }
+        | Report::Sent { .. }
+        | Report::Followed
         | Report::DaemonStatus { .. }
         | Report::DaemonStopped { .. }
         | Report::HostAdded(_)

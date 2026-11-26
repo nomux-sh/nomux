@@ -40,21 +40,29 @@ pub(crate) fn require_terminal() -> Result<(), ClientError> {
     }
 }
 
-/// Attaches to `session` on `host` with the prefix keys `prefixes` and
-/// returns how the attach ended. `host_name` is the name of a remote host,
-/// for the messages. The attach uses one connection for the terminal, and
-/// `control` for the window size.
+/// How a client attaches.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct AttachMode {
+    pub(crate) prefixes: PrefixKeys,
+    /// The client sends no key and no window size. The prefix keys work.
+    pub(crate) read_only: bool,
+}
+
+/// Attaches to `session` on `host` and returns how the attach ended.
+/// `host_name` is the name of a remote host, for the messages. The attach
+/// uses one connection for the terminal, and `control` for the window size.
 pub(crate) async fn run(
     host: &Host,
     host_name: Option<&str>,
     control: Client,
     session: &Session,
-    prefixes: PrefixKeys,
+    mode: AttachMode,
 ) -> Result<AttachEnd, ClientError> {
     let id = session.id.as_str();
     require_terminal()?;
+    // A read-only client keeps the window size of the session.
     let options = AttachOptions {
-        size: local_terminal::window_size(),
+        size: local_terminal::window_size().filter(|_| !mode.read_only),
         resume: None,
     };
     let (mut output, mut input) = host.attach(KIND, id, options).await?;
@@ -67,7 +75,7 @@ pub(crate) async fn run(
     // flood of output slowly does not keep a key waiting.
     let end = tokio::select! {
         end = show_output(&mut output, &reconnected) => end,
-        end = send_input(&mut input, &mut resize, &reconnected, signals, prefixes) => end,
+        end = send_input(&mut input, &mut resize, &reconnected, signals, mode) => end,
     };
     drop(raw_mode);
     end.map_err(|error| with_attach_hint(error, host_name, session.label()))
@@ -141,11 +149,12 @@ async fn send_input(
     resize: &mut Resize<'_>,
     reconnected: &Notify,
     mut signals: Signals,
-    prefixes: PrefixKeys,
+    mode: AttachMode,
 ) -> Result<AttachEnd, ClientError> {
     let mut keys = keyboard::read_keys();
-    let keys_title = local_terminal::show_keys(&prefixes);
-    let mut decoder = KeyDecoder::new(prefixes);
+    let keys_title = local_terminal::show_keys(&mode.prefixes);
+    let read_only = mode.read_only;
+    let mut decoder = KeyDecoder::new(mode.prefixes);
     let mut title_shows_keys = false;
     let mut forward = Vec::new();
     loop {
@@ -159,7 +168,7 @@ async fn send_input(
                     write_now(local_terminal::RESTORE_TITLE).await?;
                 }
                 let command = decoder.decode(&typed, &mut forward);
-                if !forward.is_empty() {
+                if !forward.is_empty() && !read_only {
                     input.send(&forward).await?;
                 }
                 match command {
@@ -175,11 +184,15 @@ async fn send_input(
             // of nomux: it goes to the session after a short time.
             () = tokio::time::sleep(PARTIAL_SEQUENCE_TIME), if decoder.has_partial() => {
                 decoder.flush(&mut forward);
-                input.send(&forward).await?;
+                if !read_only {
+                    input.send(&forward).await?;
+                }
             }
-            _ = signals.window_change.recv() => resize.send_window_size().await?,
+            _ = signals.window_change.recv(), if !read_only => {
+                resize.send_window_size().await?;
+            }
             // The window can have a new size since the connection ended.
-            () = reconnected.notified() => resize.connect_again().await?,
+            () = reconnected.notified(), if !read_only => resize.connect_again().await?,
             () = received(&mut signals.end) => {
                 return Err(ClientError::Failed("a signal ended the attach".to_owned()));
             }

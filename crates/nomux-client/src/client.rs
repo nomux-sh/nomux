@@ -213,6 +213,18 @@ impl Client {
         crate::resolve_session(sessions, target)
     }
 
+    /// The session that a user means when the user names none:
+    /// [`most_recent_session`](crate::most_recent_session) has the rule.
+    /// `None` if the host has no session that is not ended.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection fails.
+    pub async fn most_recent_session(&mut self) -> Result<Option<Session>, ClientError> {
+        let sessions = self.list_sessions(false).await?;
+        Ok(crate::most_recent_session(sessions))
+    }
+
     /// Lists the sessions of the host, in the sequence of their identifiers:
     /// the sessions whose command runs, the dormant sessions and the
     /// damaged sessions. With `include_ended`, also the sessions whose

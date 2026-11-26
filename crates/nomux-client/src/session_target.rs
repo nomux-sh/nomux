@@ -51,6 +51,17 @@ pub fn resolve_session(sessions: Vec<Session>, target: &str) -> Result<Session, 
     }
 }
 
+/// The session that a user means when the user names none: of the sessions
+/// that are not ended, the one that a client attached to last, else the one
+/// that started last. `None` if each session ended.
+#[must_use]
+pub fn most_recent_session(sessions: Vec<Session>) -> Option<Session> {
+    sessions
+        .into_iter()
+        .filter(|session| session.state != SessionState::Ended)
+        .max_by_key(|session| (session.last_attached_at, session.started_at))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,6 +107,35 @@ mod tests {
                 .join(",")),
             Err(error) => panic!("{error}"),
         }
+    }
+
+    #[test]
+    fn the_most_recent_session_is_the_last_attached_then_the_last_started() {
+        let at = |id: &str, attached: Option<u64>, started: u64, state| Session {
+            last_attached_at: attached,
+            started_at: Some(started),
+            ..session(id, None, state)
+        };
+        let most_recent = |sessions| most_recent_session(sessions).map(|session| session.id);
+        assert_eq!(
+            most_recent(vec![
+                at("old", Some(5), 1, SessionState::Running),
+                at("new", None, 9, SessionState::Running),
+                at("ended", Some(7), 1, SessionState::Ended),
+            ]),
+            Some("old".to_owned())
+        );
+        assert_eq!(
+            most_recent(vec![
+                at("a", None, 1, SessionState::Dormant),
+                at("b", None, 3, SessionState::Running),
+            ]),
+            Some("b".to_owned())
+        );
+        assert_eq!(
+            most_recent(vec![at("x", Some(1), 1, SessionState::Ended)]),
+            None
+        );
     }
 
     #[test]

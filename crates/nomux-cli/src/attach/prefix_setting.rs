@@ -12,7 +12,7 @@ use nomux_core::configuration::{ConfigurationFile, PrefixKeys, default_configura
 const VARIABLE: &str = "NOMUX_PREFIX";
 
 /// The option of the commands that attach.
-#[derive(Debug, Args)]
+#[derive(Debug, Default, Args)]
 pub(crate) struct PrefixOption {
     /// A prefix key of this attach, for example C-a, C-b or C-\. Give the option two times for
     /// two keys. none: no key detaches [default: the variable `NOMUX_PREFIX`, then `prefix` in

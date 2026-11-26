@@ -6,10 +6,12 @@ use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser, Subcommand};
 use nomux_client::RestorePolicy;
 
-use crate::attach::PrefixOption;
 use crate::extension_commands::ExtCommand;
 use crate::hook_commands::HooksCommand;
-use crate::session_commands::{NewArguments, RenameArguments, Target};
+use crate::session_commands::{
+    AttachArguments, CaptureArguments, KillArguments, NewArguments, RenameArguments, SendArguments,
+    Target,
+};
 use crate::status_commands::{AgentCommand, EventTypeArgument, StatusCommand};
 use crate::workspace_commands::{GroupCommand, ProjectCommand};
 
@@ -107,8 +109,10 @@ command if the session ends during the attach, and 0 after a detach.";
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// Start a new session and print its identifier
+    #[command(alias = "new-session")]
     New(NewArguments),
     /// List the sessions
+    #[command(alias = "list-sessions")]
     Ls {
         /// Also list the sessions whose command ended
         #[arg(long, short)]
@@ -120,28 +124,15 @@ pub(crate) enum Command {
     },
     /// Show a session in this terminal. To detach, press Ctrl-a and then d.
     /// A dormant session starts again
-    #[command(after_help = ATTACH_KEYS)]
-    Attach {
-        #[command(flatten)]
-        target: Target,
-
-        #[command(flatten)]
-        prefix: PrefixOption,
-    },
+    #[command(after_help = ATTACH_KEYS, visible_alias = "a", alias = "attach-session")]
+    Attach(AttachArguments),
     /// Start the command of a dormant session again
     Start {
         #[command(flatten)]
         target: Target,
     },
     /// Print the last output lines of a session
-    Capture {
-        #[command(flatten)]
-        target: Target,
-
-        /// The number of lines
-        #[arg(long, value_name = "N", default_value_t = 100)]
-        lines: usize,
-    },
+    Capture(CaptureArguments),
     /// Set when a dormant session starts again
     RestorePolicy {
         /// The session: its identifier, its name, or the start of one of them
@@ -157,12 +148,13 @@ pub(crate) enum Command {
         target: Target,
     },
     /// End a session. A dormant session is removed with its output
-    Kill {
-        #[command(flatten)]
-        target: Target,
-    },
+    #[command(alias = "kill-session")]
+    Kill(KillArguments),
     /// Give a session a different name
+    #[command(alias = "rename-session")]
     Rename(RenameArguments),
+    /// Type text or keys into a session, as if the user typed them
+    Send(SendArguments),
     /// Show the status of each session: what works, what is done, what needs you
     #[command(args_conflicts_with_subcommands = true)]
     Status {
@@ -182,7 +174,7 @@ pub(crate) enum Command {
     /// Print the events of the host when they come, until a signal stops the command
     Events {
         /// Wait for the events. This is the only mode now
-        #[arg(long, required = true)]
+        #[arg(long, short, required = true)]
         follow: bool,
 
         /// Print only the events of this type. Give the option more than one time for more

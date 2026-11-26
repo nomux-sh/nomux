@@ -111,3 +111,153 @@ impl RenameArguments {
         }
     }
 }
+
+/// The session of a command that has a default session: the most recent
+/// one. The same forms as [`Target`].
+#[derive(Debug, Args)]
+pub(crate) struct OptionalTarget {
+    /// The session: its identifier, its name, or the start of one of them [default: the session
+    /// that a client attached to last, else the session that started last]
+    #[arg(value_name = "TARGET")]
+    target: Option<String>,
+
+    /// The same as TARGET
+    #[arg(
+        short = 't',
+        long = "target",
+        value_name = "TARGET",
+        hide = true,
+        conflicts_with = "target"
+    )]
+    target_option: Option<String>,
+}
+
+impl OptionalTarget {
+    /// The text that the user gave, if any.
+    pub(crate) fn text(&self) -> Option<&str> {
+        self.target.as_deref().or(self.target_option.as_deref())
+    }
+}
+
+/// The options of `attach`.
+#[derive(Debug, Args)]
+pub(crate) struct AttachArguments {
+    #[command(flatten)]
+    pub(crate) target: OptionalTarget,
+
+    /// Detach the other clients of the session first
+    #[arg(long = "detach-others", short = 'd')]
+    pub(crate) detach_others: bool,
+
+    /// Show the session and send no key and no window size to it. The prefix keys work
+    #[arg(long, short)]
+    pub(crate) read_only: bool,
+
+    #[command(flatten)]
+    pub(crate) prefix: PrefixOption,
+
+    /// Start a session if the host has none: bare `nomux` on a terminal.
+    #[arg(skip)]
+    pub(crate) start_if_none: bool,
+}
+
+impl AttachArguments {
+    /// The attach of bare `nomux`: to the most recent session, or to a new
+    /// session.
+    pub(crate) fn of_bare_command() -> Self {
+        Self {
+            target: OptionalTarget {
+                target: None,
+                target_option: None,
+            },
+            detach_others: false,
+            read_only: false,
+            prefix: PrefixOption::default(),
+            start_if_none: true,
+        }
+    }
+}
+
+/// The options of `capture`.
+#[derive(Debug, Args)]
+pub(crate) struct CaptureArguments {
+    #[command(flatten)]
+    pub(crate) target: Target,
+
+    /// The number of lines
+    #[arg(long, value_name = "N", default_value_t = 100)]
+    pub(crate) lines: usize,
+
+    /// After the lines, print each byte that the command writes, until the session ends or a
+    /// signal stops the command. Not with --json
+    #[arg(long, short)]
+    pub(crate) follow: bool,
+}
+
+/// The options of `kill`.
+#[derive(Debug, Args)]
+pub(crate) struct KillArguments {
+    #[command(flatten)]
+    pub(crate) target: OptionalTarget,
+
+    /// End each session whose command runs. On a terminal, the command asks first
+    #[arg(long, conflicts_with_all = ["target", "target_option"])]
+    pub(crate) all: bool,
+
+    #[command(flatten)]
+    pub(crate) all_options: KillAllOptions,
+}
+
+/// The options of `kill --all`.
+#[derive(Debug, Args)]
+pub(crate) struct KillAllOptions {
+    /// With --all, also remove the dormant and the damaged sessions with their output
+    #[arg(long, requires = "all")]
+    pub(crate) include_dormant: bool,
+
+    /// With --all, print the sessions and end none
+    #[arg(long, requires = "all")]
+    pub(crate) dry_run: bool,
+
+    /// With --all, do not ask. Without a terminal, --all needs it
+    #[arg(long, requires = "all")]
+    pub(crate) yes: bool,
+}
+
+/// The arguments of `send`.
+#[derive(Debug, Args)]
+pub(crate) struct SendArguments {
+    /// The session, and then the text: its words with one space between them. With -t, only
+    /// the text
+    #[arg(
+        value_name = "TARGET TEXT",
+        num_args = 1..,
+        required = true,
+        allow_hyphen_values = true
+    )]
+    words: Vec<String>,
+
+    /// The session
+    #[arg(short = 't', long = "target", value_name = "TARGET", hide = true)]
+    target_option: Option<String>,
+
+    /// Do not press Enter after the text
+    #[arg(long)]
+    pub(crate) no_enter: bool,
+
+    /// The words are key names, for example C-c, Enter, Up or F5. No Enter follows
+    #[arg(long, short)]
+    pub(crate) keys: bool,
+}
+
+impl SendArguments {
+    /// The session and the words to send. `None` if no word is left for
+    /// the text.
+    pub(crate) fn target_and_words(&self) -> Option<(&str, &[String])> {
+        match (self.target_option.as_deref(), self.words.as_slice()) {
+            (Some(target), words) if !words.is_empty() => Some((target, words)),
+            (None, [target, words @ ..]) if !words.is_empty() => Some((target, words)),
+            _ => None,
+        }
+    }
+}

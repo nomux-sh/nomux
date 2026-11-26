@@ -1,7 +1,7 @@
 //! The scrollback of a session: the output that its command wrote, read in
 //! parts from the newest bytes to the oldest.
 
-use crate::{Client, ClientError};
+use crate::{Client, ClientError, OutputPosition};
 
 /// The first epoch of a session.
 const FIRST_EPOCH: u32 = 1;
@@ -44,6 +44,23 @@ impl Client {
     ///
     /// Returns [`ClientError::NotFound`] if no session has the identifier.
     pub async fn capture_lines(&mut self, id: &str, lines: usize) -> Result<Vec<u8>, ClientError> {
+        Ok(self.capture_tail(id, lines).await?.0)
+    }
+
+    /// The last `lines` lines of the session `id`, as
+    /// [`capture_lines`](Self::capture_lines) gives them, and the position
+    /// after them: an attach that resumes at this position gives each byte
+    /// that the command writes after the lines.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::NotFound`] if no session has the identifier.
+    pub async fn capture_tail(
+        &mut self,
+        id: &str,
+        lines: usize,
+    ) -> Result<(Vec<u8>, OutputPosition), ClientError> {
+        let mut end: Option<OutputPosition> = None;
         // The parts, from the newest one to the oldest one.
         let mut parts: Vec<Vec<u8>> = Vec::new();
         let mut line_feeds = 0;
@@ -51,6 +68,10 @@ impl Client {
         // One line feed more than `lines` is before the first line.
         while line_feeds <= lines {
             let part = self.capture(id, range).await?;
+            end.get_or_insert(OutputPosition {
+                epoch: part.epoch,
+                seq: part.seq + part.bytes.len() as u64,
+            });
             line_feeds += part.bytes.split(|byte| *byte == b'\n').count() - 1;
             let epoch_is_complete = part.bytes.is_empty() || part.seq == 0;
             if !part.bytes.is_empty() {
@@ -71,7 +92,9 @@ impl Client {
             };
         }
         let output: Vec<u8> = parts.into_iter().rev().flatten().collect();
-        Ok(last_lines(&output, lines).to_vec())
+        // The loop reads one part at least.
+        let end = end.unwrap_or(OutputPosition { epoch: 0, seq: 0 });
+        Ok((last_lines(&output, lines).to_vec(), end))
     }
 }
 
