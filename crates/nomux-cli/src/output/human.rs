@@ -7,6 +7,7 @@ use std::io::{self, IsTerminal};
 use nomux_client::{AttachEnd, ExitStatus, HostInfo, Session, SessionState};
 use nomux_core::configuration::HostEntry;
 
+use super::table::{Cell, Table};
 use super::{extension_human, hooks_human, memory_human, status_human};
 use crate::report::{AddedHost, HostDiagnosis, Report, ServiceFileAction, ServiceFileReport};
 
@@ -36,16 +37,18 @@ impl Style {
     }
 }
 
-pub(super) fn report(report: &Report, style: Style) -> String {
+/// The text of `report`. A table fits `width` columns: the width of the
+/// terminal, or `None` for no limit.
+pub(super) fn report(report: &Report, style: Style, width: Option<usize>) -> String {
     match report {
         Report::SessionCreated(session) => format!("{}\n", session.id),
         Report::Sessions(sessions) if sessions.is_empty() => "no sessions\n".to_owned(),
-        Report::Sessions(sessions) => session_table(sessions, style),
+        Report::Sessions(sessions) => session_table(sessions, style, width),
         Report::SessionsMeasured { sessions, .. } if sessions.is_empty() => {
             "no sessions\n".to_owned()
         }
         Report::SessionsMeasured { sessions, memory } => {
-            memory_human::session_table(sessions, memory)
+            memory_human::session_table(sessions, memory, width)
         }
         Report::SessionStarted(session) => format!("session {} runs\n", session.id),
         Report::OutputCaptured { output, .. } => String::from_utf8_lossy(output).into_owned(),
@@ -67,13 +70,13 @@ pub(super) fn report(report: &Report, style: Style) -> String {
         Report::DaemonStopped { was_running: true } => "nomuxd stopped\n".to_owned(),
         Report::HostAdded(added) => host_added(added),
         Report::Hosts(hosts) if hosts.is_empty() => "no hosts\n".to_owned(),
-        Report::Hosts(hosts) => host_table(hosts),
+        Report::Hosts(hosts) => host_table(hosts, width),
         Report::HostRemoved { name } => format!("host {name} removed\n"),
         Report::HostsChecked(hosts) if hosts.is_empty() => "no hosts\n".to_owned(),
         Report::HostsChecked(hosts) => hosts.iter().map(host_diagnosis).collect(),
-        Report::Extension(report) => extension_human::report(report),
-        Report::Hooks(report) => hooks_human::report(report),
-        Report::Status(report) => status_human::report(report, style),
+        Report::Extension(report) => extension_human::report(report, width),
+        Report::Hooks(report) => hooks_human::report(report, width),
+        Report::Status(report) => status_human::report(report, style, width),
         Report::ServiceFile(service) => service_file(service),
         Report::Version => format!("{}\n", nomux_core::version_line!()),
     }
@@ -150,15 +153,12 @@ fn host_added(added: &AddedHost) -> String {
     )
 }
 
-fn host_table(hosts: &[HostEntry]) -> String {
-    const NAME: &str = "NAME";
-    let name_width = column_width(NAME, hosts.iter().map(|host| host.name.as_str()));
-    let mut table = format!("{NAME:<name_width$}  SSH\n");
+fn host_table(hosts: &[HostEntry], width: Option<usize>) -> String {
+    let mut table = Table::new(&["NAME", "SSH"]).shorten(&[1]);
     for host in hosts {
-        // A write to a `String` does not fail.
-        let _ = writeln!(table, "{:<name_width$}  {}", host.name, host.ssh);
+        table.push(vec![Cell::new(&host.name), Cell::new(&host.ssh)]);
     }
-    table
+    table.render(width)
 }
 
 /// The name of the host, then one line for each check: `ok` or `FAIL`, the
@@ -243,39 +243,25 @@ fn note(session: &Session) -> String {
     parts.join("; ")
 }
 
-fn session_table(sessions: &[Session], style: Style) -> String {
-    const ID: &str = "ID";
-    const STATE: &str = "STATE";
-    const PID: &str = "PID";
-    const COMMAND: &str = "COMMAND";
-    const NOTE: &str = "NOTE";
-
+fn session_table(sessions: &[Session], style: Style, width: Option<usize>) -> String {
+    const COMMAND: usize = 3;
+    const NOTE: usize = 4;
     let rows: Vec<SessionRow<'_>> = sessions.iter().map(SessionRow::of).collect();
-    let id_width = column_width(ID, rows.iter().map(|row| row.id));
-    let state_width = column_width(STATE, rows.iter().map(|row| state_name(row.state)));
-    let pid_width = column_width(PID, rows.iter().map(|row| row.pid.as_str()));
-    let command_width = column_width(COMMAND, rows.iter().map(|row| row.command.as_str()));
     // The table has the last column only if a session has a note.
     let has_notes = rows.iter().any(|row| !row.note.is_empty());
-
-    // Without a note, a line ends after the command.
-    let note_header = if has_notes { NOTE } else { "" };
-    let header = format!(
-        "{ID:<id_width$}  {STATE:<state_width$}  {PID:<pid_width$}  {COMMAND:<command_width$}  \
-         {note_header}"
-    );
-    let mut table = format!("{}\n", header.trim_end());
+    let note_header = if has_notes { "NOTE" } else { "" };
+    let mut table =
+        Table::new(&["ID", "STATE", "PID", "COMMAND", note_header]).shorten(&[COMMAND, NOTE]);
     for row in rows {
-        let state_text = format!("{:<state_width$}", state_name(row.state));
-        let state_text = coloured(&state_text, row.state, style);
-        let line = format!(
-            "{:<id_width$}  {state_text}  {:<pid_width$}  {:<command_width$}  {}",
-            row.id, row.pid, row.command, row.note
-        );
-        table.push_str(line.trim_end());
-        table.push('\n');
+        table.push(vec![
+            Cell::new(row.id),
+            Cell::coloured(state_name(row.state), colour(row.state, style)),
+            Cell::new(row.pid),
+            Cell::new(row.command),
+            Cell::new(row.note),
+        ]);
     }
-    table
+    table.render(width)
 }
 
 pub(super) fn column_width<'a>(header: &str, values: impl Iterator<Item = &'a str>) -> usize {
@@ -295,18 +281,15 @@ pub(super) fn state_name(state: SessionState) -> &'static str {
     }
 }
 
-/// The colour comes after the padding, thus the columns stay aligned.
-fn coloured(padded: &str, state: SessionState, style: Style) -> String {
-    let colour = match (style, state) {
-        (Style::Plain, _) | (Style::Colour, SessionState::Ended | SessionState::Unknown) => {
-            return padded.to_owned();
-        }
-        (Style::Colour, SessionState::Running) => GREEN,
-        (Style::Colour, SessionState::Unreachable) => YELLOW,
-        (Style::Colour, SessionState::Dormant) => BLUE,
-        (Style::Colour, SessionState::Damaged) => RED,
-    };
-    format!("{colour}{padded}{RESET}")
+/// The colour of the state of a session.
+fn colour(state: SessionState, style: Style) -> Option<&'static str> {
+    match (style, state) {
+        (Style::Plain, _) | (Style::Colour, SessionState::Ended | SessionState::Unknown) => None,
+        (Style::Colour, SessionState::Running) => Some(GREEN),
+        (Style::Colour, SessionState::Unreachable) => Some(YELLOW),
+        (Style::Colour, SessionState::Dormant) => Some(BLUE),
+        (Style::Colour, SessionState::Damaged) => Some(RED),
+    }
 }
 
 #[cfg(test)]
@@ -342,7 +325,7 @@ mod tests {
 
     #[test]
     fn the_columns_are_aligned_to_the_longest_value() {
-        let table = session_table(&sessions(), Style::Plain);
+        let table = session_table(&sessions(), Style::Plain, None);
 
         assert_eq!(
             table,
@@ -376,7 +359,7 @@ mod tests {
         ];
 
         assert_eq!(
-            session_table(&sessions, Style::Plain),
+            session_table(&sessions, Style::Plain, None),
             "ID  STATE    PID  COMMAND  NOTE\n\
              ab  ended    -    make     exit status 2\n\
              cd  dormant  -    sh\n\
@@ -412,12 +395,15 @@ mod tests {
 
     #[test]
     fn colour_does_not_change_the_alignment() {
-        let coloured = session_table(&sessions(), Style::Colour);
+        let coloured = session_table(&sessions(), Style::Colour, None);
 
         assert!(coloured.contains(GREEN));
         let without_colour = [GREEN, YELLOW, RESET]
             .iter()
             .fold(coloured, |text, code| text.replace(code, ""));
-        assert_eq!(without_colour, session_table(&sessions(), Style::Plain));
+        assert_eq!(
+            without_colour,
+            session_table(&sessions(), Style::Plain, None)
+        );
     }
 }

@@ -12,6 +12,7 @@ mod memory_json;
 mod memory_size;
 mod status_human;
 mod status_json;
+mod table;
 
 use std::io::{self, Write};
 
@@ -56,7 +57,11 @@ pub(crate) fn print_report(report: &Report, format: Format) -> io::Result<()> {
         (Format::Human | Format::Quiet, Report::OutputCaptured { output, .. }) => {
             return io::stdout().lock().write_all(output);
         }
-        (Format::Human, _) => human::report(report, human::Style::of_standard_output()),
+        (Format::Human, _) => human::report(
+            report,
+            human::Style::of_standard_output(),
+            table::terminal_width(),
+        ),
         (Format::Quiet, _) => human::quiet_report(report),
         (Format::Json, _) => json::report(report),
     };

@@ -8,7 +8,8 @@ use nomux_client::{
     NeedsYouKind, ReportedState, Session, SourceExplanation, StatusSource,
 };
 
-use super::human::{BLUE, GREEN, RED, RESET, Style, YELLOW, column_width};
+use super::human::{BLUE, GREEN, RED, Style, YELLOW, column_width};
+use super::table::{Cell, Table};
 use crate::status_commands::StatusReport;
 
 /// The mark of an empty cell of a table.
@@ -16,14 +17,14 @@ const NONE: &str = "-";
 /// The indentation of one level of Child work.
 const INDENT: &str = "  ";
 
-pub(super) fn report(report: &StatusReport, style: Style) -> String {
+pub(super) fn report(report: &StatusReport, style: Style, width: Option<usize>) -> String {
     match report {
         StatusReport::Tree { sessions, .. } if sessions.is_empty() => "no sessions\n".to_owned(),
         StatusReport::Tree {
             tree,
             sessions,
             with_children,
-        } => status_table(&rows(tree, sessions, *with_children), style),
+        } => status_table(&rows(tree, sessions, *with_children), style, width),
         StatusReport::Explained(explanation) => explained(explanation),
         StatusReport::Set { id, state } => format!("session {id}: {}\n", reported(*state)),
         StatusReport::EventsFollowed => String::new(),
@@ -109,56 +110,32 @@ fn child_rows<'a>(children: &'a [ChildWork], depth: usize, rows: &mut Vec<Row<'a
     }
 }
 
-fn status_table(rows: &[Row<'_>], style: Style) -> String {
-    const SESSION: &str = "SESSION";
-    const COMMAND: &str = "COMMAND";
-    const STATE: &str = "STATE";
-    const FOR: &str = "FOR";
-    const MESSAGE: &str = "MESSAGE";
-
+fn status_table(rows: &[Row<'_>], style: Style, width: Option<usize>) -> String {
+    const COMMAND: usize = 1;
+    const MESSAGE: usize = 4;
     let now = now_ms();
-    let cells: Vec<[String; 4]> = rows
-        .iter()
-        .map(|row| match row.status {
-            Some(status) => [
-                mark(status.state).to_owned(),
+    // The mark of the state is before the name, in the column of the name.
+    let mut table = Table::new(&["  SESSION", "COMMAND", "STATE", "FOR", "MESSAGE"])
+        .shorten(&[COMMAND, MESSAGE]);
+    for row in rows {
+        let (mark, state, time, message) = match row.status {
+            Some(status) => (
+                mark(status.state),
                 state_text(status),
                 duration(now.saturating_sub(status.since_ms)),
                 message_of(status).unwrap_or_default().to_owned(),
-            ],
-            None => [
-                " ".to_owned(),
-                NONE.to_owned(),
-                NONE.to_owned(),
-                String::new(),
-            ],
-        })
-        .collect();
-    let name_width = column_width(SESSION, rows.iter().map(|row| row.name.as_str()));
-    let command_width = column_width(COMMAND, rows.iter().map(|row| row.command.as_str()));
-    let state_width = column_width(STATE, cells.iter().map(|cell| cell[1].as_str()));
-    let for_width = column_width(FOR, cells.iter().map(|cell| cell[2].as_str()));
-
-    let header = format!(
-        "  {SESSION:<name_width$}  {COMMAND:<command_width$}  {STATE:<state_width$}  \
-         {FOR:<for_width$}  {MESSAGE}"
-    );
-    let mut table = format!("{}\n", header.trim_end());
-    for (row, [mark, state, time, message]) in rows.iter().zip(&cells) {
-        let state_cell = coloured(
-            &format!("{state:<state_width$}"),
-            row.status.map(|status| status.state),
-            style,
-        );
-        let line = format!(
-            "{mark} {:<name_width$}  {:<command_width$}  {state_cell}  {time:<for_width$}  \
-             {message}",
-            row.name, row.command
-        );
-        table.push_str(line.trim_end());
-        table.push('\n');
+            ),
+            None => (" ", NONE.to_owned(), NONE.to_owned(), String::new()),
+        };
+        table.push(vec![
+            Cell::new(format!("{mark} {}", row.name)),
+            Cell::new(&row.command),
+            Cell::coloured(state, colour(row.status.map(|status| status.state), style)),
+            Cell::new(time),
+            Cell::new(message),
+        ]);
     }
-    table
+    table.render(width)
 }
 
 fn explained(explanation: &AgentExplanation) -> String {
@@ -323,15 +300,15 @@ fn mark(state: AgentState) -> &'static str {
     }
 }
 
-fn coloured(padded: &str, state: Option<AgentState>, style: Style) -> String {
-    let colour = match (style, state) {
-        (Style::Colour, Some(AgentState::NeedsYou(_))) => YELLOW,
-        (Style::Colour, Some(AgentState::Error)) => RED,
-        (Style::Colour, Some(AgentState::Done)) => GREEN,
-        (Style::Colour, Some(AgentState::Working)) => BLUE,
-        _ => return padded.to_owned(),
-    };
-    format!("{colour}{padded}{RESET}")
+/// The colour of a state. A state without a colour is idle or not known.
+fn colour(state: Option<AgentState>, style: Style) -> Option<&'static str> {
+    match (style, state) {
+        (Style::Colour, Some(AgentState::NeedsYou(_))) => Some(YELLOW),
+        (Style::Colour, Some(AgentState::Error)) => Some(RED),
+        (Style::Colour, Some(AgentState::Done)) => Some(GREEN),
+        (Style::Colour, Some(AgentState::Working)) => Some(BLUE),
+        _ => None,
+    }
 }
 
 /// A time as a person reads it: the largest unit only.
@@ -355,6 +332,8 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use nomux_client::{AgentRun, SessionState, Sourced};
+
+    use super::super::human::RESET;
 
     use super::*;
 
@@ -424,7 +403,7 @@ mod tests {
             attention: None,
         };
         let sessions = [session("a1", "claude"), session("b22", "make test")];
-        status_table(&rows(&tree, &sessions, with_children), style)
+        status_table(&rows(&tree, &sessions, with_children), style, None)
     }
 
     #[test]
