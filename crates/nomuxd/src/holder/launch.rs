@@ -1,5 +1,5 @@
-//! Starts a `nomux-holder` process for a session: a new session, or a
-//! dormant session that starts again.
+//! Starts a `nomux-holder` process for a session: a new session, a dormant
+//! session that starts again, or a pooled holder that waits for a session.
 
 use std::error::Error;
 use std::ffi::OsString;
@@ -7,15 +7,15 @@ use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::os::unix::fs::OpenOptionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
 
 use nomux_core::companion_binary;
 use nomux_holder_protocol::SessionId;
-use nomux_holder_protocol::discovery::{READY_FILE, holder_directory};
+use nomux_holder_protocol::discovery::{READY_FILE, holder_directory, pooled_holder_directory};
 use nomux_holder_protocol::wire::WindowSize;
-use tokio::process::{Child, Command};
+use tokio::process::{Child, ChildStdin, Command};
 use tokio::time::sleep;
 use tracing::debug;
 
@@ -23,7 +23,7 @@ const HOLDER_BINARY: &str = "nomux-holder";
 /// The longest time from the start of the holder to its `ready` file.
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
 /// A holder is ready a few milliseconds after its start.
-const READY_CHECK_INTERVAL: Duration = Duration::from_millis(5);
+const READY_CHECK_INTERVAL: Duration = Duration::from_millis(1);
 const OWNER_READ_WRITE: u32 = 0o600;
 
 /// Why a holder did not start.
@@ -69,20 +69,39 @@ pub(crate) struct HolderStart<'a> {
     /// The size of the terminal window. `None` is the default size of the
     /// holder.
     pub(crate) size: Option<WindowSize>,
+    /// The holder waits in the pool: it has no session until the daemon
+    /// assigns `session_id` to it.
+    pub(crate) pooled: bool,
+}
+
+impl HolderStart<'_> {
+    /// The discovery directory of the holder.
+    pub(crate) fn directory(&self, runtime_directory: &Path) -> PathBuf {
+        if self.pooled {
+            pooled_holder_directory(runtime_directory, self.session_id)
+        } else {
+            holder_directory(runtime_directory, self.session_id)
+        }
+    }
 }
 
 /// Starts a holder for `start` and waits until it is ready. The holder
 /// keeps its discovery files in `runtime_directory` and the state of the
 /// session in `state_directory`.
 ///
-/// The holder is not tied to the daemon. It makes its own session with
-/// `setsid`, it has no pipe to the daemon, and the daemon sets no signal for
-/// the end of the parent. Thus the holder continues when the daemon ends.
+/// The holder of a session is not tied to the daemon. It makes its own
+/// session with `setsid`, it has no pipe to the daemon, and the daemon sets
+/// no signal for the end of the parent. Thus the holder continues when the
+/// daemon ends.
+///
+/// A pooled holder is tied to the daemon: its standard input is a pipe, and
+/// the function returns the write end. When the daemon drops it, also at
+/// the end of the daemon, a holder that is still pooled ends.
 pub(crate) async fn launch(
     runtime_directory: &Path,
     state_directory: &Path,
     start: HolderStart<'_>,
-) -> Result<(), LaunchError> {
+) -> Result<Option<ChildStdin>, LaunchError> {
     let session_id = start.session_id;
     let mut standard_error =
         unnamed_file(runtime_directory, session_id).map_err(LaunchError::Spawn)?;
@@ -97,6 +116,9 @@ pub(crate) async fn launch(
         .arg(state_directory)
         .arg("--working-directory")
         .arg(start.working_directory);
+    if start.pooled {
+        holder.arg("--pooled");
+    }
     if let Some(size) = start.size {
         holder
             .arg("--rows")
@@ -107,17 +129,22 @@ pub(crate) async fn launch(
     let mut holder = holder
         .arg("--")
         .args(start.command)
-        .stdin(Stdio::null())
+        .stdin(if start.pooled {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::null())
         .stderr(holder_error)
         .spawn()
         .map_err(LaunchError::Spawn)?;
+    let pool_pipe = holder.stdin.take();
 
-    let directory = holder_directory(runtime_directory, session_id);
+    let directory = start.directory(runtime_directory);
     tokio::select! {
         () = ready(&directory) => {
             tokio::spawn(collect_exit_status(holder, session_id.clone()));
-            Ok(())
+            Ok(pool_pipe)
         }
         status = holder.wait() => Err(LaunchError::Exited {
             status: status.map_err(LaunchError::Spawn)?,

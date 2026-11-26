@@ -62,6 +62,7 @@ mod extensions;
 mod handlers;
 mod handshake;
 mod holder;
+mod holder_pool;
 mod hooks;
 mod in_flight_requests;
 mod instance_lock;

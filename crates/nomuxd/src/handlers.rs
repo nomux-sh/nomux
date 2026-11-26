@@ -53,6 +53,10 @@ pub(crate) async fn handle(
     features: ClientFeatures,
     context: &Context,
 ) -> Outcome {
+    // A request to stop needs no pool.
+    if !matches!(body, request::Body::HostStop(_)) {
+        context.sessions.start_pool_for_first_request();
+    }
     let result = match body {
         request::Body::Hello(_) => Err(Error {
             code: ErrorCode::Failed.into(),

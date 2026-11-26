@@ -54,6 +54,10 @@ name = "memory_measurements"
 path = "measurements/memory.rs"
 
 [[example]]
+name = "new_session_measurements"
+path = "measurements/new_session.rs"
+
+[[example]]
 name = "remote_measurements"
 path = "measurements/remote.rs"
 
@@ -80,6 +84,10 @@ path = "daemon_service.rs"
 [[test]]
 name = "extensions"
 path = "extensions.rs"
+
+[[test]]
+name = "holder_pool"
+path = "holder_pool.rs"
 
 [[test]]
 name = "journal"
