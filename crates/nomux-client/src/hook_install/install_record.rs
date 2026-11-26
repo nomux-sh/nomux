@@ -32,6 +32,12 @@ pub(super) struct InstallRecord {
     pub(super) original: Original,
     /// The entries that the install added.
     pub(super) entries: Vec<HookEntry>,
+    /// The JSON pointers of the objects and the arrays that the install
+    /// made. An uninstall of a changed file removes such a value when it has
+    /// nothing else. `None` in a record of an earlier version of nomux: the
+    /// uninstall removes each object and array that has nothing else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) made: Option<Vec<String>>,
 }
 
 /// The settings file before the install.
