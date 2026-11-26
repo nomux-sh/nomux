@@ -17,6 +17,7 @@ pub(super) const GREEN: &str = "\x1b[32m";
 pub(super) const YELLOW: &str = "\x1b[33m";
 pub(super) const BLUE: &str = "\x1b[34m";
 pub(super) const RESET: &str = "\x1b[0m";
+const NOT_RUNNING: &str = "nomuxd does not run\n";
 
 /// If the text has colour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,10 +68,19 @@ pub(super) fn report(report: &Report, style: Style, width: Option<usize>) -> Str
         Report::ClientsDetached { id, clients } => {
             format!("detached {clients} clients from session {id}\n")
         }
-        Report::DaemonStatus(Some(info)) => daemon_status(info),
-        Report::DaemonStatus(None) | Report::DaemonStopped { was_running: false } => {
-            "nomuxd does not run\n".to_owned()
+        Report::DaemonStatus {
+            info,
+            configuration,
+        } => {
+            let mut text = info
+                .as_ref()
+                .map_or_else(|| NOT_RUNNING.to_owned(), daemon_status);
+            if let Some(path) = configuration {
+                let _ = writeln!(text, "configuration file: {}", path.display());
+            }
+            text
         }
+        Report::DaemonStopped { was_running: false } => NOT_RUNNING.to_owned(),
         Report::DaemonStopped { was_running: true } => "nomuxd stopped\n".to_owned(),
         Report::HostAdded(added) => host_added(added),
         Report::Hosts(hosts) if hosts.is_empty() => "no hosts\n".to_owned(),
@@ -112,7 +122,7 @@ pub(super) fn quiet_report(report: &Report) -> String {
         | Report::SessionKilled { .. }
         | Report::AttachEnded { .. }
         | Report::ClientsDetached { .. }
-        | Report::DaemonStatus(_)
+        | Report::DaemonStatus { .. }
         | Report::DaemonStopped { .. }
         | Report::HostAdded(_)
         | Report::HostRemoved { .. }

@@ -3,6 +3,7 @@
 //! session continues. `restore.rs` has the sessions without a holder.
 
 use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
 
 use nomux_end_to_end::{Sandbox, binary, kill_process, kill_process_group, process_runs, wait_for};
@@ -129,6 +130,42 @@ fn daemon_stop_keeps_the_sessions_and_is_idempotent() {
     );
 
     assert_eq!(listed(&sandbox), [session_document(&id, pid)]);
+}
+
+#[test]
+fn daemon_status_shows_the_configuration_file_that_the_daemon_reads() {
+    let sandbox = Sandbox::new();
+    let platform_directory = if cfg!(target_os = "macos") {
+        "Library/Application Support"
+    } else {
+        ".config"
+    };
+    let expected = sandbox
+        .home()
+        .join(platform_directory)
+        .join("nomux")
+        .join("config.toml");
+
+    let stopped = sandbox.nomux(&["daemon", "status", "--json"]).json();
+    let path = PathBuf::from(stopped["daemon"]["configuration"].as_str().expect("a path"));
+    assert_eq!(path, expected);
+
+    // The daemon reads the file at that path: an ended session leaves
+    // after the retention time of the file, not after the default 24 h.
+    fs::create_dir_all(path.parent().expect("a directory")).expect("the directory can be made");
+    fs::write(&path, "[sessions]\nended_retention = \"1s\"\n").expect("the file can be written");
+    let (id, _) = new_session(&sandbox);
+    let _ = sandbox.nomux_ok(&["kill", &id]);
+    wait_for("the ended session leaves after 1 s", || {
+        let all = sandbox.nomux_ok(&["ls", "--all", "--json"]).json();
+        all["sessions"].as_array()?.is_empty().then_some(())
+    });
+
+    let text = sandbox.nomux_ok(&["daemon", "status"]).stdout;
+    assert!(
+        text.contains(&format!("configuration file: {}\n", expected.display())),
+        "{text}"
+    );
 }
 
 #[test]

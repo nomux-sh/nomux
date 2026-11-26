@@ -290,18 +290,12 @@ An old version stays in `~/.nomux/bin` until it is removed. Remove a version onl
 
 ## Configuration file
 
-`nomux host add` saves a host in the global configuration file:
+`nomux host add` saves a host in the global configuration file. [daemon.md](daemon.md#configuration) gives its path on each platform:
 
 ```toml
 [hosts.vps]
 ssh = "deploy@vps.example.com"
 ```
-
-| Host | Path |
-|---|---|
-| Each host, if `XDG_CONFIG_HOME` is an absolute path | `$XDG_CONFIG_HOME/nomux/config.toml` |
-| Linux | `~/.config/nomux/config.toml` |
-| macOS | `~/Library/Application Support/nomux/config.toml` |
 
 - `hosts.<name>.ssh` is the SSH destination: `[user@]host`, `ssh://[user@]host[:port]`, or a `Host` name of `~/.ssh/config`.
 - A name has only the characters `a` to `z`, `A` to `Z`, `0` to `9`, `.`, `_` and `-`, and it starts with a letter or a digit.

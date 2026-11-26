@@ -284,6 +284,8 @@ struct DaemonDocument<'a> {
     pid: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sessions: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    configuration: Option<&'a Path>,
 }
 
 impl<'a> From<Option<&'a HostInfo>> for DaemonDocument<'a> {
@@ -293,6 +295,7 @@ impl<'a> From<Option<&'a HostInfo>> for DaemonDocument<'a> {
             version: info.map(|info| info.daemon_version.as_str()),
             pid: info.map(|info| info.daemon_pid),
             sessions: info.map(|info| info.session_count),
+            configuration: None,
         }
     }
 }
@@ -340,7 +343,13 @@ pub(super) fn report(report: &Report) -> String {
             id,
             clients: *clients,
         }),
-        Report::DaemonStatus(info) => Body::Daemon(info.as_ref().into()),
+        Report::DaemonStatus {
+            info,
+            configuration,
+        } => Body::Daemon(DaemonDocument {
+            configuration: configuration.as_deref(),
+            ..info.as_ref().into()
+        }),
         Report::DaemonStopped { was_running } => Body::Stopped(*was_running),
         Report::HostAdded(added) => Body::Host(added.into()),
         Report::Hosts(hosts) => Body::Hosts(
@@ -551,11 +560,17 @@ mod tests {
             session_count: 2,
         };
         assert_eq!(
-            report(&Report::DaemonStatus(Some(info))),
-            "{\"schema_version\":1,\"daemon\":{\"running\":true,\"version\":\"1.2.3\",\"pid\":7,\"sessions\":2}}\n"
+            report(&Report::DaemonStatus {
+                info: Some(info),
+                configuration: Some("/home/user/.config/nomux/config.toml".into()),
+            }),
+            "{\"schema_version\":1,\"daemon\":{\"running\":true,\"version\":\"1.2.3\",\"pid\":7,\"sessions\":2,\"configuration\":\"/home/user/.config/nomux/config.toml\"}}\n"
         );
         assert_eq!(
-            report(&Report::DaemonStatus(None)),
+            report(&Report::DaemonStatus {
+                info: None,
+                configuration: None,
+            }),
             "{\"schema_version\":1,\"daemon\":{\"running\":false}}\n"
         );
         assert_eq!(
