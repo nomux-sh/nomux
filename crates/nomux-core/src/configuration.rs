@@ -2,14 +2,16 @@
 //!
 //! This module reads only the parts of the file that the core uses now: the
 //! hosts in `[hosts.<name>]`, `default_policy` in `[restore]`,
-//! `ended_retention` in `[sessions]`, and `size`, `idle_time` and
-//! `shell_start_files` in `[pool]`. It writes only the hosts, and it keeps
+//! `ended_retention` in `[sessions]`, `size`, `idle_time` and
+//! `shell_start_files` in `[pool]`, and `prefix` in `[attach]`, which only
+//! the CLI reads. It writes only the hosts, and it keeps
 //! each other part of the file, also the comments, when it writes the file.
 
 mod duration_text;
 mod error;
 mod host_entry;
 mod location;
+mod prefix_keys;
 mod restore_policy;
 
 use std::fs::{self, DirBuilder, OpenOptions};
@@ -23,6 +25,7 @@ use toml_edit::{DocumentMut, Item, Table, value};
 pub use self::error::ConfigurationError;
 pub use self::host_entry::{HostEntry, is_valid_host_name};
 pub use self::location::default_configuration_path;
+pub use self::prefix_keys::{PrefixKey, PrefixKeys};
 pub use self::restore_policy::{RestorePolicy, UnknownRestorePolicy};
 
 const HOSTS: &str = "hosts";
@@ -34,6 +37,8 @@ const ENDED_RETENTION: &str = "ended_retention";
 const POOL: &str = "pool";
 const POOL_SIZE: &str = "size";
 const POOL_IDLE_TIME: &str = "idle_time";
+const ATTACH: &str = "attach";
+const PREFIX: &str = "prefix";
 const POOL_SHELL_START_FILES: &str = "shell_start_files";
 const OWNER_ONLY_DIRECTORY: u32 = 0o700;
 const OWNER_READ_WRITE: u32 = 0o600;
@@ -189,6 +194,32 @@ impl ConfigurationFile {
         self.value(POOL, POOL_SHELL_START_FILES, |item| {
             item.as_bool()
                 .ok_or_else(|| "must be true or false".to_owned())
+        })
+    }
+
+    /// The prefix keys of an attach on this computer: `prefix` in
+    /// `[attach]`, a list of keys such as `["C-a", "C-\\"]`, or `"none"`.
+    /// Returns `None` if the file does not have the key. [`Self::load`] does
+    /// not check the key: only an attach reads it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a key is not valid, if the list has more than
+    /// two keys or a key two times.
+    pub fn attach_prefix(&self) -> Result<Option<PrefixKeys>, ConfigurationError> {
+        self.value(ATTACH, PREFIX, |item| {
+            match (item.as_str(), item.as_array()) {
+                (Some(text), _) => text.parse(),
+                (None, Some(keys)) => keys
+                    .iter()
+                    .map(|key| {
+                        key.as_str()
+                            .ok_or_else(|| "must be a list of strings".to_owned())
+                    })
+                    .collect::<Result<Vec<&str>, String>>()
+                    .and_then(PrefixKeys::from_texts),
+                (None, None) => Err("must be a list of keys or \"none\"".to_owned()),
+            }
         })
     }
 

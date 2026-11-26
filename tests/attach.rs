@@ -167,6 +167,36 @@ fn a_client_that_leaves_changes_nothing_for_the_other_client() {
 }
 
 #[test]
+fn the_prefix_keys_detach_in_each_key_form_and_the_setting_chooses_them() {
+    let mut sandbox = Sandbox::new();
+    let id = new_session(&sandbox, &["sh"]);
+
+    // Ctrl-a, the default prefix, and then d.
+    let mut client = attach_to_shell(&sandbox, &id);
+    client.type_keys(b"\x01d");
+    assert_eq!(client.wait_for_exit(), 0, "{}", client.text_output());
+    // Ctrl-a in the form of the kitty keyboard protocol, which a program of
+    // the session can turn on, and then d in the same form.
+    let mut client = attach_to_shell(&sandbox, &id);
+    client.type_keys(b"\x1b[97;5u\x1b[100u");
+    assert_eq!(client.wait_for_exit(), 0, "{}", client.text_output());
+
+    // With the prefix Ctrl-b, Ctrl-a and d reach the program.
+    sandbox.set_variable("NOMUX_PREFIX", "C-b");
+    let mut client = attach_to_shell(&sandbox, &id);
+    client.type_keys(b"cat -v\r");
+    client.type_keys(b"\x01d\r");
+    client.wait_for_text("^Ad");
+    client.type_keys(b"\x04\x02d");
+    assert_eq!(client.wait_for_exit(), 0, "{}", client.text_output());
+    // The option comes before the variable.
+    let mut client = sandbox.nomux_in_terminal(&["attach", &id, "--prefix", "C-]"]);
+    client.wait_for_text("$");
+    client.type_keys(b"\x1dd");
+    assert_eq!(client.wait_for_exit(), 0, "{}", client.text_output());
+}
+
+#[test]
 fn the_end_of_the_session_ends_the_attach_with_the_exit_status() {
     let sandbox = Sandbox::new();
 

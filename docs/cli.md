@@ -25,7 +25,7 @@ nomux [--json | --quiet] [--host <name>] <command>
 |---|---|
 | `new [--cwd <dir>] [--attach] [-- <command> [argument...]]` | Starts a new session and prints its identifier. With `--attach`, attaches to it |
 | `ls [--all] [--memory]` | Lists the sessions. With `--all`, also the sessions whose command ended. With `--memory`, also the memory that the processes of each session use |
-| `attach <id>` | Shows a session in the terminal of the user until the user detaches or the session ends. A dormant session starts again |
+| `attach <id> [--prefix <key>]...` | Shows a session in the terminal of the user until the user detaches or the session ends. A dormant session starts again |
 | `start <id>` | Starts the command of a dormant session again |
 | `capture <id> [--lines <n>]` | Prints the last output lines of a session |
 | `restore-policy <id> <policy>` | Sets when a dormant session starts again: `auto`, `on-focus` or `manual` |
@@ -188,15 +188,25 @@ The command of an ended session does not start again: `start` and `attach` have 
 The command needs a terminal on its standard input. More than one terminal can be attached to one session at the same time: each one shows the same output, and each one can type.
 The session has one window size: the size of the terminal that attached or changed its size last. A terminal with a different size shows the output as the programs made it for that size.
 
-**Keys.** `Ctrl-\` is the prefix key of `nomux`. A terminal that is not in raw mode sends `SIGQUIT` for this key, thus almost no program gives it a function.
+**Keys.** A prefix key comes before each key of `nomux`. The default prefix keys are `Ctrl-a`, the key of screen, and `Ctrl-\`, the key of nomux 0.4. The two are active at the same time.
 
 | Keys | Function |
 |---|---|
-| `Ctrl-\` and then `d` | Detach. The session continues |
-| `Ctrl-\` two times | Send one `Ctrl-\` to the session |
-| `Ctrl-\` and then a different key | Send the two keys to the session |
+| A prefix and then `d` or `Ctrl-d` | Detach. The session continues. `Ctrl-d` is for a user who still holds `Ctrl` |
+| A prefix two times | Send one prefix key to the session |
+| `Ctrl-a` and then `a` | Send one `Ctrl-a` to the session, as in screen. For a different prefix of `Ctrl` and a letter, that letter |
+| A prefix and then `?` | Show the keys in the title of the terminal window until the next key. The screen of the session does not change |
+| A prefix and then a different key | Send the two keys to the session |
 
-`nomux attach --help` shows these keys. The keys cannot be changed in this version.
+- A prefix delays a key until the next key, and it takes the keys of the table. Thus a lone `Ctrl-a` (start of the line in a shell) has its effect after the next key. `Ctrl-a` and then a different key, for example `Ctrl-a Ctrl-k`, works as without a prefix.
+- **The setting.** The first of these that is set gives the prefix keys: the option `--prefix <key>` of `attach` and `new --attach` (two times for two keys), the variable `NOMUX_PREFIX` (keys with a comma between them: `C-b`, `C-a,C-\`), `prefix` in the `[attach]` table of the configuration file of the computer that runs the CLI (`prefix = ["C-b"]`), and the default. A remote host does not change the setting: the CLI reads the keys.
+- A key is `C-<x>`: `x` is a letter, `\`, `]`, `^`, `_`, `@` or `Space`. `C-c`, `C-d`, `C-z`, `C-s`, `C-q`, `C-h`, `C-i`, `C-j`, `C-m` and `C-[` cannot be a prefix: programs need them. A list has two different keys at most. A setting that is not valid gives the exit code 1, and `new --attach` then starts no session.
+- `none` (`--prefix none`, `NOMUX_PREFIX=none`, `prefix = "none"` or `prefix = []`) turns the prefix off: each key goes to the session. Detach with `nomux detach <id>` from a different terminal, or close the terminal.
+- **Nested sessions.** In a session in a session, the outer client takes the prefix first. `Ctrl-a a d` detaches the inner client. Or start the inner client with a different prefix: `nomux attach --prefix C-b <id>`.
+- **Key forms.** A program of the session can make the terminal send keys in the form of the kitty keyboard protocol (`CSI 97 ; 5 u` for `Ctrl-a`) or of `modifyOtherKeys` (`CSI 27 ; 5 ; 97 ~`). The CLI finds the prefix and the keys after it in the three forms, also when a read of the terminal divides a sequence. A release event of a key that the CLI took does not go to the session. Each other byte goes to the session as it came.
+- The text of a bracketed paste has no keys of `nomux`: a pasted `Ctrl-a d` goes to the session.
+
+`nomux attach --help` shows these keys.
 
 **End.** An attach ends in one of these manners. The terminal gets its earlier mode back in each of them, also when the CLI gets a signal or fails.
 
@@ -1014,13 +1024,13 @@ A wrong command line is not a JSON document: the argument parser writes its usag
 ## Tests
 
 - `crates/nomux-cli/src/output/json.rs` and `crates/nomux-cli/src/output/extension_json.rs` have the full text of each document. A changed field fails these tests.
-- `crates/nomux-cli/src/arguments.rs` has the rule for the arguments after `--` and `--cmd`, and the usage error for the two forms in one command line. `crates/nomux-cli/src/output/memory_human.rs` has the full text of the table of `ls --memory`, `crates/nomux-cli/src/output/status_human.rs` has the table of `status`, and `tests/session_memory.rs` has its JSON document with real processes. `crates/nomux-cli/src/attach` has the detach keys and the mode of the terminal, also after a panic.
+- `crates/nomux-cli/src/arguments.rs` has the rule for the arguments after `--` and `--cmd`, and the usage error for the two forms in one command line. `crates/nomux-cli/src/output/memory_human.rs` has the full text of the table of `ls --memory`, `crates/nomux-cli/src/output/status_human.rs` has the table of `status`, and `tests/session_memory.rs` has its JSON document with real processes. `crates/nomux-cli/src/attach` has the key decoder with the legacy bytes, the kitty form, `modifyOtherKeys`, a sequence in two reads and a paste, and the mode of the terminal, also after a panic. `crates/nomux-core/src/configuration/prefix_keys.rs` has the rules of a prefix key.
 - `tests/` has the end-to-end tests that run the real `nomux`, `nomuxd` and `nomux-holder` and examine the exit codes. `tests/attach.rs` runs `nomux attach` in a pseudoterminal and examines the screen. `tests/remote_host.rs` runs the `host` commands and the commands with `--host` against an SSH server that the test starts. `tests/extensions.rs` runs the `ext` commands with a test extension that uses the extension SDK. `tests/restore.rs` stops each process as a restart of the host does and runs `ls`, `attach`, `start` and `restore-policy` on the dormant sessions. `tests/journal.rs` has `capture`, and `tests/daemon_service.rs` has the service file. `tests/status.rs` has `status`, `status set`, `agent explain` and `events --follow` with a program that reports its status. `tests/adapters.rs` has `hook`, the `hooks` commands and the event of an extension with the test adapter extension. `tests/workspace.rs` has the `project` and `group` commands, the tree after a restart of the daemon, two clients that keep the same tree with the events, and `status --tree` with Groups.
 - `crates/nomux-cli/src/service_files` has the content of the systemd unit and of the launchd agent, also for a path that needs quotes.
 
 ## Open points for the next versions
 
-- A setting for the detach keys, and `detach` without an identifier in a session.
+- `detach` without an identifier in a session.
 - The scrollback in an attach: an attach shows the screen of the session and not the lines that left it. `capture` prints them with their escape sequences: it does not make the text of a screen from them.
 - A command that removes an ended session before its retention time is over, and a command that starts the command of an ended session again.
 - A restore policy for a new session as an option of `new`.

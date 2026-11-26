@@ -2,15 +2,17 @@
 //! session until the user detaches or the session ends.
 //!
 //! The client library moves the bytes. This module is the terminal side:
-//! raw mode, the keys, the detach sequence, the window size and the signals.
+//! raw mode, the keys, the keys of nomux, the window size and the signals.
 
-mod detach_key;
+mod key_decoder;
 mod keyboard;
 mod local_terminal;
+mod prefix_setting;
 
 use std::future::poll_fn;
 use std::io;
 use std::task::Poll;
+use std::time::Duration;
 
 use nomux_client::{
     AttachEnd, AttachOptions, Client, ClientError, Host, TerminalEvent, TerminalInput,
@@ -20,8 +22,11 @@ use tokio::io::{AsyncWriteExt, Stdout};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tokio::sync::Notify;
 
-use self::detach_key::DetachKey;
+use nomux_core::configuration::PrefixKeys;
+
+use self::key_decoder::{Command, KeyDecoder};
 use self::local_terminal::RawMode;
+pub(crate) use self::prefix_setting::PrefixOption;
 use crate::commands::KIND;
 
 /// Fails if the command cannot use the terminal of the user.
@@ -35,12 +40,14 @@ pub(crate) fn require_terminal() -> Result<(), ClientError> {
     }
 }
 
-/// Attaches to the session `id` on `host` and returns how the attach
-/// ended. `host_name` is the name of a remote host, for the messages.
+/// Attaches to the session `id` on `host` with the prefix keys `prefixes`
+/// and returns how the attach ended. `host_name` is the name of a remote
+/// host, for the messages.
 pub(crate) async fn run(
     host: &Host,
     host_name: Option<&str>,
     id: &str,
+    prefixes: PrefixKeys,
 ) -> Result<AttachEnd, ClientError> {
     require_terminal()?;
     // The attach uses one connection for the terminal. The window size goes
@@ -60,7 +67,7 @@ pub(crate) async fn run(
     // flood of output slowly does not keep a key waiting.
     let end = tokio::select! {
         end = show_output(&mut output, &reconnected) => end,
-        end = send_input(&mut input, &mut resize, &reconnected, signals) => end,
+        end = send_input(&mut input, &mut resize, &reconnected, signals, prefixes) => end,
     };
     drop(raw_mode);
     end.map_err(|error| with_attach_hint(error, host_name, id))
@@ -134,24 +141,41 @@ async fn send_input(
     resize: &mut Resize<'_>,
     reconnected: &Notify,
     mut signals: Signals,
+    prefixes: PrefixKeys,
 ) -> Result<AttachEnd, ClientError> {
     let mut keys = keyboard::read_keys();
-    let mut detach_key = DetachKey::default();
+    let keys_title = local_terminal::show_keys(&prefixes);
+    let mut decoder = KeyDecoder::new(prefixes);
+    let mut title_shows_keys = false;
     let mut forward = Vec::new();
     loop {
+        forward.clear();
         tokio::select! {
             typed = keys.recv() => {
                 let Some(typed) = typed else {
                     return Ok(AttachEnd::Detached);
                 };
-                forward.clear();
-                let detach = detach_key.filter(&typed, &mut forward);
+                if std::mem::take(&mut title_shows_keys) {
+                    write_now(local_terminal::RESTORE_TITLE).await?;
+                }
+                let command = decoder.decode(&typed, &mut forward);
                 if !forward.is_empty() {
                     input.send(&forward).await?;
                 }
-                if detach {
-                    return Ok(AttachEnd::Detached);
+                match command {
+                    Some(Command::Detach) => return Ok(AttachEnd::Detached),
+                    Some(Command::ShowKeys) => {
+                        write_now(&keys_title).await?;
+                        title_shows_keys = true;
+                    }
+                    None => {}
                 }
+            }
+            // The start of an escape sequence without its end is not a key
+            // of nomux: it goes to the session after a short time.
+            () = tokio::time::sleep(PARTIAL_SEQUENCE_TIME), if decoder.has_partial() => {
+                decoder.flush(&mut forward);
+                input.send(&forward).await?;
             }
             _ = signals.window_change.recv() => resize.send_window_size().await?,
             // The window can have a new size since the connection ended.
@@ -161,6 +185,19 @@ async fn send_input(
             }
         }
     }
+}
+
+/// The longest wait for the end of an escape sequence that a read divided.
+const PARTIAL_SEQUENCE_TIME: Duration = Duration::from_millis(20);
+
+/// Writes `bytes` to the terminal at once.
+async fn write_now(bytes: &[u8]) -> Result<(), ClientError> {
+    let mut terminal = tokio::io::stdout();
+    write(&mut terminal, bytes).await?;
+    terminal
+        .flush()
+        .await
+        .map_err(|error| terminal_error(&error))
 }
 
 /// The connection that gives the session the window size of the terminal.
