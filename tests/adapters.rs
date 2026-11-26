@@ -411,7 +411,7 @@ fn hooks_install_writes_only_with_apply_and_uninstall_restores_each_byte() {
     // other byte stays.
     assert_eq!(
         String::from_utf8(fs::read(&file).unwrap()).unwrap(),
-        "{ \"theme\":\"dark\",\n\t\"hooks\": {\"prompt\": [ {\"command\": \"other\"},{\"command\":\"nomux hook testtool prompt\"} ],\"tool\":[{\"command\":\"nomux hook testtool tool\"}],\"task\":[{\"command\":\"nomux hook testtool task\"}]} }"
+        "{ \"theme\":\"dark\",\n\t\"hooks\": {\"prompt\": [ {\"command\": \"other\"},{\"command\":\"nomux hook testtool prompt\"} ],\"tool\":[{\"command\":\"nomux hook testtool tool\"}],\"task\":[{\"command\":\"nomux hook testtool task\"}],\"stop\":[{\"command\":\"nomux hook testtool stop\"}]} }"
     );
     assert_eq!(hooks_state(&sandbox), "installed");
     let again = sandbox.nomux_ok(&["hooks", "install", "testtool", "--apply"]);
