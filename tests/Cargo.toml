@@ -34,9 +34,20 @@ name = "nomux-test-status-program"
 path = "support/status_program.rs"
 test = false
 
+# A test installs this program as the adapter extension of the made-up
+# tool `testtool`.
+[[bin]]
+name = "nomux-test-adapter"
+path = "support/test_adapter.rs"
+test = false
+
 [[example]]
 name = "attach_measurements"
 path = "measurements/attach.rs"
+
+[[example]]
+name = "hook_measurements"
+path = "measurements/hooks.rs"
 
 [[example]]
 name = "memory_measurements"
@@ -53,6 +64,10 @@ path = "measurements/restore.rs"
 [[test]]
 name = "attach"
 path = "attach.rs"
+
+[[test]]
+name = "adapters"
+path = "adapters.rs"
 
 [[test]]
 name = "attach_protocol"
@@ -103,6 +118,7 @@ name = "version_mismatch"
 path = "version_mismatch.rs"
 
 [dependencies]
+nomux-extension.workspace = true
 nomux-holder-protocol.workspace = true
 nomux-proto.workspace = true
 nomux-term.workspace = true

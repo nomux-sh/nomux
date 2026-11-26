@@ -17,6 +17,7 @@ This directory is the package `nomux-end-to-end`: the end-to-end tests of the co
 | `session_memory.rs` | `nomux ls --memory`: the memory of a command that allocates a known amount and of the child that it starts, the holder as a separate value, and a session without a process that has no values and is not in the total |
 | `session_lifecycle.rs` | The CLI starts the daemon and a session. The session continues after `SIGKILL` of the daemon, after `SIGKILL` of the process group of the daemon, after `nomux daemon stop` and after `nomuxd --replace`, and a new daemon finds it. A holder that does not run leaves the runtime directory, and its session is dormant. Exit codes, and the usage error for `--cmd` together with `--` |
 | `status.rs` | The status of the sessions: a program that answers the OSC 7501 query reports working, a Child work, blocked with the kind permission and done, each with the source `program_status`; a second session that waits longer decides the aggregate; `agent explain` names each source; `events --follow` prints the changes in their sequence and ends cleanly on `SIGINT`; an attach marks the result as seen; a new daemon gets the status from the holder again. A session whose holder ends shows its waiting work as done with the source `session_restore`, and after a restore the status of the new process. `nomux status set` works inside a session and gives exit code 4 with a wrong or a missing token, and no file and no output has the token |
+| `adapters.rs` | `nomux hook` in a session with the test adapter: the adapter source and the merge table, the Child work, the token, the hook without a daemon, the event of an extension in `events --follow`, and `hooks install`, `hooks uninstall` and `hooks status` |
 | `single_writer_lease.rs` | A daemon that lost the lease of a holder does not write to it and stops |
 | `version_mismatch.rs` | The CLI and a daemon without a common protocol version: exit code 5 |
 | `support/lib.rs` | The library of the tests: a private home directory for each test, the CLI and the processes |
@@ -28,12 +29,15 @@ This directory is the package `nomux-end-to-end`: the end-to-end tests of the co
 | `support/ssh_server.rs` | An `sshd` that runs as the user of the tests on a free port of this computer, with a host key and an authorized key of its own |
 | `support/tcp_relay.rs` | A TCP relay between the client and the `sshd`: a test cuts its connections, and a measurement gives it a delay |
 | `support/extension_package.rs` | A package of the test extension: a manifest and the binary `nomux-test-extension` of the package `nomux-ext-host` |
+| `support/test_adapter.rs` | The binary `nomux-test-adapter`: the adapter extension of the made-up tool `testtool`. It maps three hook events to status reports and describes a hook install |
+| `support/adapter_package.rs` | A package of the test adapter: a manifest with the `[adapter]` table and the scopes of an adapter |
 | `support/incompatible_daemon.rs` | The binary `nomux-test-incompatible-daemon`: a process in the place of a daemon that refuses each client as a daemon without a common protocol version does |
 | `support/status_program.rs` | The binary `nomux-test-status-program`: a command of a session that asks the OSC 7501 query and then writes one report for each line of its input |
 | `support/key_latency.rs` | The measurement of the time from a key to its echo |
 | `measurements/attach.rs` | Not a test: the program that measures the attach path |
 | `measurements/memory.rs` | Not a test: the program that measures the request for the memory of each session |
 | `measurements/remote.rs` | Not a test: the program that measures a remote host |
+| `measurements/hooks.rs` | Not a test: the program that measures `nomux hook` with the daemon running and with the daemon stopped |
 | `measurements/restore.rs` | Not a test: the program that measures the start of the daemon with dormant sessions that each have a full journal |
 
 Each test uses its own home directory in `/tmp`. Thus the tests run in parallel and do not touch `~/.nomux`.

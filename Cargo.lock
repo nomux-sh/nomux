@@ -1145,6 +1145,7 @@ version = "0.3.0"
 dependencies = [
  "base64",
  "nomux-client",
+ "nomux-extension",
  "nomux-holder-protocol",
  "nomux-proto",
  "nomux-term",
