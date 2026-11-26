@@ -398,7 +398,10 @@ fn no_pooled_holder_runs_before_the_first_request_or_after_the_idle_time() {
             .is_empty()
             .then_some(())
     });
-    assert!(pids.iter().all(|pid| !process_runs(*pid)));
+    // A holder removes its discovery directory before its process ends.
+    wait_for("the pooled holders end", || {
+        pids.iter().all(|pid| !process_runs(*pid)).then_some(())
+    });
     assert_eq!(sandbox.sessions().len(), 0, "a pooled holder is a session");
 }
 
