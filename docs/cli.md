@@ -357,7 +357,7 @@ The command does not check the files of the package. `ext install` also makes su
 
 ### `status`
 
-`status` prints one row for each session that is not ended: a mark of the state, the session identifier, the command, the state, the time in the state and the message. [status.md](status.md) has the model and the sources of a status.
+`status` prints one row for each session that is not ended, and for each ended session that keeps its last Agent run ([status.md](status.md#ended-sessions)): a mark of the state, the session identifier, the command, the state, the time in the state and the message. [status.md](status.md) has the model and the sources of a status.
 
 - The state of a row is the most urgent status of the session and of its Child work. `needs you` has the kind of the wait if a source says it: `needs you: permission`.
 - A status that the daemon guessed has `(guess)`: the prompt marks of the shell or the foreground program of the terminal, and no report of a program.
@@ -377,6 +377,8 @@ The command does not check the files of the package. `ext install` also makes su
 ### `agent explain`
 
 `agent explain <id>` prints the status of a session with its source, and then each source in the sequence in which they decide, with what it says and why: the note of the source. A source that reports nothing is in the list too.
+
+For an ended session, the command prints its kept run, with the resume command of the tool, until the session is removed. An ended session without a kept run gives exit code 2.
 
 ### `events --follow`
 
@@ -829,7 +831,7 @@ The document goes to the standard output also when the manifest is not valid.
 | Field | Type | Meaning |
 |---|---|---|
 | `status.attention` | object or `null` | The session with the most urgent status, and that status. `null` if the host has no session |
-| `status.sessions[]` | list | One Agent run for each session that is not ended, in the sequence of the identifiers |
+| `status.sessions[]` | list | One Agent run for each session that is not ended and for each ended session that keeps its last Agent run, in the sequence of the identifiers |
 | `.id`, `.command` | string, list of strings | The session and its command |
 | `.status` | status | The status of the Agent run |
 | `.aggregate` | status | The most urgent status of the Agent run and of its Child work |

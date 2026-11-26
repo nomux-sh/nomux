@@ -88,6 +88,7 @@ impl Sessions {
         let stopped = Arc::new(StoppedSessions::new(
             Arc::clone(&registry),
             Arc::clone(&store),
+            Arc::clone(&status),
             settings.ended_session_retention,
         ));
         let shell = env::var_os("SHELL").unwrap_or_else(|| FALLBACK_SHELL.into());

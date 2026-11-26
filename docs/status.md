@@ -116,7 +116,19 @@ A dormant session has no process: no work runs and no work waits for the user. T
 - Idle work and a guess leave nothing.
 - After a restore, the status comes from the sources of the new process. The status of the old process is gone.
 - A session that was dormant when the daemon started is `idle` with no source: the daemon keeps no status on disk.
-- An ended session has no Agent run.
+
+### Ended sessions
+
+When the command of a session is the agent tool itself, the session ends with the tool, and the result of the run matters most at that moment. Thus an ended session keeps its last Agent run: the **kept run**.
+
+- When the command ends, the Agent run becomes a kept run with the rule of a dormant session: `working` and `needs you` become `done` with the source "session restore", a result stays with its `since` and its `seen`, and Child work that ran becomes `done`.
+- The details stay: the identifier of the session of the tool and the resume command.
+- A run with nothing that stays, and no details, is not kept: the session has no Agent run.
+- The kept run is in `Agent.Tree` (`nomux status --tree`) and `Agent.Explain` (`nomux agent explain <id>`) gives it, until the session is removed: at the end of the retention time, or with its state. The removal is an `AgentRunRemoved` event.
+- No source can change a kept run: the session has no process. An adapter report and a self-report for it are refused.
+- Reading a kept run does not mark it seen. Only an attach marks a result seen, and an ended session has no attach. A request that marks a result seen is not in the control protocol yet.
+- **Limit: 64 kept runs.** When a 65th session ends with a run, the oldest kept run is removed, with an `AgentRunRemoved` event; the session stays ended. One run has 64 Child work items at most and texts of 512 bytes at most, thus the kept runs use a few MiB at most.
+- A daemon that starts keeps no run of an ended session: the daemon keeps no status on disk.
 
 ## Self-report and the token
 
@@ -139,3 +151,4 @@ Each change of the Agent run of a session is an event in the event log of the da
 - The self-report of a Child work. `nomux status set` reports the Agent run of the session.
 - More than one Agent run in one session, and the kind of a Child work (subagent, teammate, background task).
 - Input to a session that waits for the user does not clear its attention mark. The status changes when the program reports again.
+- A request that marks a result seen without an attach. Thus the kept run of an ended session stays unseen until the session is removed.

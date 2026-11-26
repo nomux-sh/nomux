@@ -12,8 +12,8 @@ use crate::session_registry::{SessionRegistry, SessionState};
 
 /// Gives `status` what the holder at `socket` reports for the session
 /// `id`, until the session ends. The task waits on the holder and never
-/// polls. A session that is dormant after its end keeps what stays of its
-/// status. A session that ended or was removed loses its status.
+/// polls. A session that is dormant or ended after the end of its process
+/// keeps what stays of its status. A session that was removed loses it.
 pub(crate) async fn watch(
     id: SessionId,
     socket: PathBuf,
@@ -34,7 +34,8 @@ pub(crate) async fn watch(
     // reported the end.
     let state = sessions.find(&id).map(|(record, _)| record.state);
     match (state, holder) {
-        (None | Some(SessionState::Ended(_)), _) => status.remove(&id),
+        (None, _) | (Some(SessionState::Ended(_)), None) => status.remove(&id),
+        (Some(SessionState::Ended(_)), Some(facts)) => status.ended(&id, facts),
         (Some(SessionState::Dormant | SessionState::Damaged), Some(facts)) => {
             status.lost_process(&id, facts);
         }

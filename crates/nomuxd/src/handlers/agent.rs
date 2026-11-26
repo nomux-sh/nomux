@@ -11,7 +11,7 @@ use crate::session_error::SessionError;
 use crate::status::{SelfReport, TokenRefused, reported_state};
 
 pub(super) fn tree(request: AgentTreeRequest, context: &Context) -> response::Result {
-    let ids = listed_sessions(context);
+    let ids = context.status.with_kept_runs(listed_sessions(context));
     let tree = context.status.tree(&ids, request.include_children);
     response::Result::AgentTree(Box::new(tree))
 }
@@ -20,8 +20,15 @@ pub(super) fn explain(
     request: &AgentExplainRequest,
     context: &Context,
 ) -> Result<response::Result, Error> {
-    let id = find(context, &request.session_id)?;
-    let explanation = context.status.explain(&id);
+    let explanation = match find(context, &request.session_id) {
+        Ok(id) => context.status.explain(&id),
+        Err(not_found) => request
+            .session_id
+            .parse()
+            .ok()
+            .and_then(|id| context.status.explain_kept(&id))
+            .ok_or(not_found)?,
+    };
     Ok(response::Result::AgentExplain(Box::new(explanation)))
 }
 

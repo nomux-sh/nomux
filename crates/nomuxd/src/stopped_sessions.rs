@@ -2,7 +2,8 @@
 //! it forgets them.
 //!
 //! - A session whose command ended stays in the list, with its state
-//!   directory, for the retention time. Then the daemon removes the two.
+//!   directory and its kept Agent run, for the retention time. Then the
+//!   daemon removes the three.
 //! - A session whose holder is gone, and whose command did not end, is
 //!   dormant. Nothing removes it but a request of a client.
 //!
@@ -21,10 +22,12 @@ use tracing::{info, warn};
 use crate::holder::SessionEnd;
 use crate::session_registry::{EndedSession, SessionRecord, SessionRegistry, SessionState};
 use crate::session_store::SessionStore;
+use crate::status::StatusRegistry;
 
 pub(crate) struct StoppedSessions {
     registry: Arc<SessionRegistry>,
     store: Arc<SessionStore>,
+    status: Arc<StatusRegistry>,
     /// How long an ended session stays.
     retention: Duration,
 }
@@ -33,11 +36,13 @@ impl StoppedSessions {
     pub(crate) fn new(
         registry: Arc<SessionRegistry>,
         store: Arc<SessionStore>,
+        status: Arc<StatusRegistry>,
         retention: Duration,
     ) -> Self {
         Self {
             registry,
             store,
+            status,
             retention,
         }
     }
@@ -106,6 +111,7 @@ impl StoppedSessions {
                 .remove_in_state(&id, SessionState::Ended(ended))
             {
                 info!(session = %id, "the retention time of the ended session is over");
+                sessions.status.remove(&id);
                 sessions.remove_state(&id);
             }
         });
