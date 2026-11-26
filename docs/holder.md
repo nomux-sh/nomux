@@ -39,11 +39,11 @@ nomux-holder --session <identifier> [options] -- <command> [argument...]
 | `--exit-timeout <seconds>` | 30 | The time to keep the exit status for the daemon |
 | `--pooled` | off | Start as a pooled holder: the command runs, and the session comes later. See "Pooled holder" |
 
-The command gets the environment of the holder and the three variables of "Environment of the command". There is no option for environment variables, because the arguments of a process are visible to other users and the environment is not. The starter sets the environment of the holder.
+The command gets the environment of the holder with the changes of "Environment of the command". There is no option for environment variables, because the arguments of a process are visible to other users and the environment is not. The starter sets the environment of the holder.
 
 ### Environment of the command
 
-The holder adds three variables to the environment of the command. A program in the session uses them to tell the daemon which session it is in, for example `nomux status set` ([status.md](status.md#self-report-and-the-token)).
+The holder changes the environment of the command with the rule of [daemon.md](daemon.md#environment-of-a-session): it sets `TERM=xterm-256color` and `COLORTERM=truecolor`, a character set of UTF-8 if it has no locale, and removes `COLUMNS`, `LINES`, `TERM_PROGRAM` and `TERM_PROGRAM_VERSION`. It also adds three variables of the session. A program in the session uses them to tell the daemon which session it is in, for example `nomux status set` ([status.md](status.md#self-report-and-the-token)).
 
 | Variable | Value |
 |---|---|

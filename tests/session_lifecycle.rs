@@ -278,3 +278,42 @@ fn a_session_starts_in_a_home_directory_whose_socket_paths_are_too_long() {
     assert_eq!(listed(&sandbox), [session_document(&id, pid)]);
     assert!(holder_is_live(&sandbox, &id));
 }
+
+#[test]
+fn a_session_of_a_daemon_without_a_terminal_type_and_a_locale_gets_them() {
+    // Issue #64: launchd and systemd give the daemon no TERM and no LANG.
+    let sandbox = Sandbox::new();
+    let marker = sandbox.home().join("marker");
+    let output = sandbox
+        .nomux_command(&[
+            "new",
+            "--cmd",
+            "sh",
+            "-c",
+            "printf '%s|%s|%s|%s' \"$TERM\" \"$COLORTERM\" \"$LC_CTYPE\" \"$COLUMNS\" > marker; \
+             sleep 600",
+        ])
+        .env_remove("TERM")
+        .env_remove("LANG")
+        .env_remove("LC_ALL")
+        .env_remove("LC_CTYPE")
+        .env("COLUMNS", "132")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+
+    let written = wait_for("the command wrote the marker", || {
+        fs::read_to_string(&marker)
+            .ok()
+            .filter(|text| !text.is_empty())
+    });
+    let character_type = if cfg!(target_os = "macos") {
+        "UTF-8"
+    } else {
+        "C.UTF-8"
+    };
+    assert_eq!(
+        written,
+        format!("xterm-256color|truecolor|{character_type}|")
+    );
+}
