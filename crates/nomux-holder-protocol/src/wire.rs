@@ -5,6 +5,9 @@
 //! that, the daemon sends a [`Request`] and the holder answers each request
 //! with one [`Reply`] that has the same request identifier.
 //!
+//! [`Reply::SessionToken`] has the token of the session, which is a secret:
+//! see [`SessionToken`].
+//!
 //! Four messages come with a file descriptor as `SCM_RIGHTS` ancillary data:
 //! the hello (the ring buffer), [`Reply::Redraw`] (the redraw sequence),
 //! [`Reply::ProgramReports`] (the program reports) and a [`Reply::Journal`]
@@ -29,6 +32,7 @@ mod hello;
 pub(crate) mod payload;
 mod reply;
 mod request;
+mod session_token;
 mod window_size;
 
 pub use descriptor::{receive_with_descriptor, send_with_descriptor};
@@ -37,4 +41,5 @@ pub use hello::{Hello, HelloError, ProtocolVersion};
 pub use payload::DecodeError;
 pub use reply::{ChildStatus, ErrorCode, Reply};
 pub use request::{ChildSignal, Request};
+pub use session_token::SessionToken;
 pub use window_size::WindowSize;

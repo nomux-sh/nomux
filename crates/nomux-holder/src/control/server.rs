@@ -218,6 +218,7 @@ fn answer(
             return Some(journal::answer(session, from, max_length));
         }
         Ok(Request::Status) => Reply::Status(session.status()),
+        Ok(Request::SessionToken) => Reply::SessionToken(session.token()),
         Ok(Request::Input(bytes)) => write_request(has_lease, || session.write_input(bytes)),
         Ok(Request::Resize(size)) => write_request(has_lease, || session.resize(size)),
         Ok(Request::Signal(signal)) => write_request(has_lease, || session.signal_child(signal)),

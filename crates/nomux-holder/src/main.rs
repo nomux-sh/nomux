@@ -11,7 +11,9 @@
 //! the output that left the ring buffer stays readable, also after the
 //! holder ended. It keeps what the programs
 //! report in the output: the program status (OSC 7501), the input line state
-//! (OSC 133) and the notifications (OSC 9, OSC 777). The daemon controls
+//! (OSC 133) and the notifications (OSC 9, OSC 777). It gives the command
+//! the session identifier, the socket of the daemon and a token in its
+//! environment. The daemon controls
 //! the holder through a Unix socket and finds it through its discovery
 //! files. The holder stays alive when the daemon stops, crashes or is
 //! updated, thus the session stays alive.
@@ -39,6 +41,7 @@ mod program_reports;
 mod pty;
 mod resize_verification;
 mod session;
+mod session_environment;
 mod session_state_directory;
 mod shared_memory;
 

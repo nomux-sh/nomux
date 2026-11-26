@@ -2,7 +2,7 @@
 
 use nomux_holder_protocol::wire::{
     ChildSignal, ChildStatus, DecodeError, ErrorCode, Frame, FrameBuffer, Hello, HelloError,
-    ProtocolVersion, Reply, Request, WindowSize,
+    ProtocolVersion, Reply, Request, SessionToken, WindowSize,
 };
 
 const SIZE: WindowSize = WindowSize {
@@ -461,4 +461,49 @@ fn a_payload_with_a_value_that_is_not_permitted_is_invalid() {
         Request::decode(read_of_no_byte),
         Err(DecodeError::InvalidPayload)
     );
+}
+
+#[test]
+fn the_session_token_frames_have_the_text_of_the_token_and_a_debug_form_without_it() {
+    let token = SessionToken::from_random([0xAB; SessionToken::RANDOM_LENGTH]);
+    assert_eq!(token.as_str(), "ab".repeat(16));
+
+    let mut request = Vec::new();
+    Request::SessionToken.encode(3, &mut request);
+    assert_eq!(request, [8, 0, 0, 0, 0x0B, 0x01, 0, 0, 3, 0, 0, 0]);
+
+    let mut reply = Vec::new();
+    Reply::SessionToken(token).encode(3, &mut reply);
+    assert_eq!(reply[..12], [40, 0, 0, 0, 0x0A, 0x00, 0, 0, 3, 0, 0, 0]);
+    assert_eq!(&reply[12..], token.as_str().as_bytes());
+    let frame = Frame {
+        kind: 0x000A,
+        request_id: 3,
+        payload: &reply[12..],
+    };
+    assert_eq!(Reply::decode(frame), Ok(Reply::SessionToken(token)));
+
+    assert!(!format!("{:?}", Reply::SessionToken(token)).contains(token.as_str()));
+    assert!(token.matches(&"ab".repeat(16)));
+    assert!(!token.matches(&"AB".repeat(16)));
+    assert!(!token.matches(&"ab".repeat(15)));
+}
+
+#[test]
+fn a_reply_with_a_token_that_is_not_lower_case_hexadecimal_is_invalid() {
+    for payload in ["AB".repeat(16), "ab".repeat(15), "zz".repeat(16)] {
+        let frame = Frame {
+            kind: 0x000A,
+            request_id: 1,
+            payload: payload.as_bytes(),
+        };
+        assert!(Reply::decode(frame).is_err(), "{payload}");
+    }
+}
+
+#[test]
+fn only_a_holder_of_version_1_4_gives_the_token() {
+    let version_1_3 = ProtocolVersion { major: 1, minor: 3 };
+    assert!(!version_1_3.supports(&Request::SessionToken));
+    assert!(ProtocolVersion::CURRENT.supports(&Request::SessionToken));
 }
