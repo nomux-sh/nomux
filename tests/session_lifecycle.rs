@@ -1,6 +1,6 @@
 //! The life of a session with the real binaries: the CLI starts the daemon,
 //! the daemon starts a holder, the daemon ends in different ways, and the
-//! session continues.
+//! session continues. `restore.rs` has the sessions without a holder.
 
 use std::fs;
 use std::process::Command;
@@ -27,6 +27,22 @@ fn session_document(id: &str, pid: u32) -> Value {
     serde_json::json!({ "id": id, "state": "running", "pid": pid })
 }
 
+/// The identifier, the state and the process ID of each session of
+/// `nomux ls --json`.
+fn listed(sandbox: &Sandbox) -> Vec<Value> {
+    sandbox
+        .sessions()
+        .iter()
+        .map(|session| {
+            serde_json::json!({
+                "id": session["id"],
+                "state": session["state"],
+                "pid": session["pid"],
+            })
+        })
+        .collect()
+}
+
 fn holder_is_live(sandbox: &Sandbox, id: &str) -> bool {
     sandbox
         .holders()
@@ -39,7 +55,7 @@ fn a_session_survives_sigkill_of_the_daemon_and_a_new_daemon_finds_it() {
     let sandbox = Sandbox::new();
 
     let (id, pid) = new_session(&sandbox);
-    assert_eq!(sandbox.sessions(), [session_document(&id, pid)]);
+    assert_eq!(listed(&sandbox), [session_document(&id, pid)]);
 
     let first_daemon = sandbox.daemon_pid();
     kill_process(first_daemon);
@@ -50,7 +66,7 @@ fn a_session_survives_sigkill_of_the_daemon_and_a_new_daemon_finds_it() {
     assert!(process_runs(pid));
 
     // `ls` starts a new daemon, which finds the holder.
-    assert_eq!(sandbox.sessions(), [session_document(&id, pid)]);
+    assert_eq!(listed(&sandbox), [session_document(&id, pid)]);
     assert_ne!(sandbox.daemon_pid(), first_daemon);
 
     let killed = sandbox.nomux_ok(&["kill", &id, "--json"]).json();
@@ -82,7 +98,7 @@ fn a_session_survives_sigkill_of_the_process_group_of_the_daemon() {
 
     assert!(holder_is_live(&sandbox, &id));
     assert!(process_runs(pid));
-    assert_eq!(sandbox.sessions(), [session_document(&id, pid)]);
+    assert_eq!(listed(&sandbox), [session_document(&id, pid)]);
 }
 
 #[test]
@@ -112,7 +128,7 @@ fn daemon_stop_keeps_the_sessions_and_is_idempotent() {
         false
     );
 
-    assert_eq!(sandbox.sessions(), [session_document(&id, pid)]);
+    assert_eq!(listed(&sandbox), [session_document(&id, pid)]);
 }
 
 #[test]
@@ -140,14 +156,14 @@ fn a_daemon_that_replaces_the_daemon_that_runs_takes_its_sessions() {
     wait_for("the first daemon ends", || {
         (!process_runs(first_daemon)).then_some(())
     });
-    assert_eq!(sandbox.sessions(), [session_document(&id, pid)]);
+    assert_eq!(listed(&sandbox), [session_document(&id, pid)]);
     assert_ne!(sandbox.daemon_pid(), first_daemon);
     assert_eq!(sandbox.holder_pid(&id), holder);
     assert!(process_runs(holder));
 }
 
 #[test]
-fn a_holder_that_does_not_run_leaves_the_list_and_the_runtime_directory() {
+fn a_holder_that_does_not_run_leaves_the_runtime_directory_and_its_session_is_dormant() {
     let sandbox = Sandbox::new();
     let (id, _) = new_session(&sandbox);
 
@@ -162,10 +178,12 @@ fn a_holder_that_does_not_run_leaves_the_list_and_the_runtime_directory() {
     assert_eq!(sandbox.sessions().len(), 1);
     assert!(!stale.exists());
 
-    // A holder that ends while the daemon is connected to it.
+    // A holder that ends while the daemon is connected to it. Its command
+    // did not end, thus the session stays as a dormant session.
     kill_process(sandbox.holder_pid(&id));
-    wait_for("the session left the list", || {
-        sandbox.sessions().is_empty().then_some(())
+    wait_for("the session is dormant", || {
+        let dormant = serde_json::json!({ "id": id, "state": "dormant", "pid": null });
+        (listed(&sandbox) == [dormant]).then_some(())
     });
     wait_for("the daemon removed the holder directory", || {
         sandbox.holders().is_empty().then_some(())
@@ -188,6 +206,9 @@ fn a_session_that_cannot_start_is_an_error_and_leaves_nothing() {
 
     assert_eq!(sandbox.sessions(), NO_SESSIONS);
     assert_eq!(sandbox.holders(), []);
+    // A new daemon finds no state of a session that never ran.
+    let _ = sandbox.nomux_ok(&["daemon", "stop"]);
+    assert_eq!(sandbox.nomux_ok(&["ls", "--all", "--quiet"]).stdout, "");
 }
 
 #[test]

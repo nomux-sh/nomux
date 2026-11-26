@@ -26,7 +26,7 @@ impl DaemonServices {
     }
 
     fn session_list(&self) -> Vec<u8> {
-        let sessions = self.sessions.list();
+        let sessions = self.sessions.list(false);
         SessionListResponse {
             sessions: sessions.into_iter().map(Session::from).collect(),
         }

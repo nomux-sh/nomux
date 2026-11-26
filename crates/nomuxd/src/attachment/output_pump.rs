@@ -5,22 +5,33 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use nomux_holder_protocol::ring::RingReader;
-use nomux_proto::frame::{EndReason, FIRST_EPOCH, FrameKind, MAX_PAYLOAD_LEN};
-use nomux_transport::FrameWriter;
+use nomux_proto::frame::EndReason;
 use tokio::sync::watch;
 use tokio::task::yield_now;
 use tokio::time::timeout;
 
-use crate::holder::{OutputFeed, Redraw, SessionEnd};
-
-/// The largest payload of one output frame, and the only output that the
-/// daemon holds for a client.
-const OUTPUT_FRAME_BYTES: usize = 64 * 1024;
+use super::frame_sink::{FrameSink, OUTPUT_FRAME_BYTES};
+use super::history_replay::{self, EarlierOutput};
+use crate::holder::{OutputFeed, SessionEnd};
+use crate::session_journal::SessionJournal;
 
 /// After the feed lost the holder, the task of the session reports how the
 /// session ended. If it does not do that in this time, the session
 /// continues and only the feed failed.
 const END_REPORT_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Where the frames of an attach start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Start {
+    /// The current screen.
+    Screen,
+    /// The output of the current epoch from this position: the client has
+    /// the output before it.
+    Resume(u64),
+    /// Output of an earlier epoch, then the mark that the command started
+    /// again, then the current screen.
+    Earlier { epoch: u32, output: EarlierOutput },
+}
 
 /// Why the output of an attach stops.
 pub(super) enum Stop {
@@ -39,51 +50,53 @@ impl From<io::Error> for Stop {
 /// The pump reads the ring buffer of the holder only when the client can
 /// take more bytes. The ring buffer is the only queue: if the holder wrote
 /// over the bytes that the client needs next, the client gets the current
-/// screen and the output from there.
+/// screen and the output from there. Only the start of an attach reads the
+/// journal: for a client that asks for output that the ring buffer has no
+/// more.
 pub(super) struct OutputPump {
-    frames: FrameWriter,
-    /// The session handle of the frames.
-    handle: u32,
+    sink: FrameSink,
     feed: Arc<OutputFeed>,
+    journal: SessionJournal,
     reader: RingReader,
+    /// `true` if the client reads the frames that say that output is gone.
+    tell_gaps: bool,
     write_position: watch::Receiver<u64>,
     ended: watch::Receiver<Option<SessionEnd>>,
-    /// The bytes that the pump read from the ring buffer and did not send.
+    /// The bytes that the pump read from the ring buffer and did not send:
+    /// the only output that the daemon holds for a client.
     buffer: Box<[u8]>,
-    /// The sequence number after the last output byte that the client got.
-    sent: u64,
 }
 
 impl OutputPump {
     pub(super) fn new(
-        frames: FrameWriter,
-        handle: u32,
+        sink: FrameSink,
         feed: Arc<OutputFeed>,
+        journal: SessionJournal,
         reader: RingReader,
+        tell_gaps: bool,
         ended: watch::Receiver<Option<SessionEnd>>,
     ) -> Self {
         Self {
-            frames,
-            handle,
+            sink,
             write_position: feed.write_position(),
             feed,
+            journal,
             reader,
+            tell_gaps,
             ended,
             buffer: vec![0; OUTPUT_FRAME_BYTES].into_boxed_slice(),
-            sent: 0,
         }
     }
 
-    /// Sends the screen, or resumes at `resume`, and then sends the output
-    /// until the session ends. After the last output, sends how the session
-    /// ended.
+    /// Sends the frames of `start`, and then sends the output until the
+    /// session ends. After the last output, sends how the session ended.
     ///
     /// # Errors
     ///
     /// Returns an error if the client does not take a frame, or if the
     /// daemon lost the holder and the session did not end.
-    pub(super) async fn run(&mut self, resume: Option<u64>) -> io::Result<()> {
-        match self.stream(resume).await {
+    pub(super) async fn run(&mut self, start: Start) -> io::Result<()> {
+        match self.stream(start).await {
             Stop::SessionEnded(end) => {
                 self.send_remaining_output().await?;
                 self.end(end.into()).await
@@ -92,17 +105,13 @@ impl OutputPump {
         }
     }
 
-    /// Sends the last frame of the attach, if the stream is at a frame
-    /// boundary.
+    /// Sends the last frame of the attach.
     pub(super) async fn end(&mut self, reason: EndReason) -> io::Result<()> {
-        if !self.frames.can_send() {
-            return Ok(());
-        }
-        self.send(FrameKind::End, self.sent, &reason.encode()).await
+        self.sink.end(reason).await
     }
 
-    async fn stream(&mut self, resume: Option<u64>) -> Stop {
-        let mut pending = match self.start(resume).await {
+    async fn stream(&mut self, start: Start) -> Stop {
+        let mut pending = match self.start(start).await {
             Ok(pending) => pending,
             Err(stop) => return stop,
         };
@@ -114,16 +123,44 @@ impl OutputPump {
         }
     }
 
-    /// The first bytes for the client are in the buffer after this: the
-    /// result is their number.
-    async fn start(&mut self, resume: Option<u64>) -> Result<usize, Stop> {
-        if let Some(from) = resume.filter(|from| *from <= self.reader.write_position()) {
-            self.reader.seek(from);
-            if let Ok(count) = self.reader.read(&mut self.buffer) {
-                return Ok(count);
+    /// The first bytes of the ring buffer for the client are in the buffer
+    /// after this: the result is their number.
+    async fn start(&mut self, start: Start) -> Result<usize, Stop> {
+        match start {
+            Start::Screen => {}
+            // A position that the holder did not write yet is not a
+            // position of this epoch.
+            Start::Resume(from) if from > self.reader.write_position() => {}
+            Start::Resume(from) => {
+                if let Some(count) = self.resume(from).await? {
+                    return Ok(count);
+                }
+            }
+            Start::Earlier { epoch, output } => {
+                history_replay::earlier_epoch(&mut self.sink, &self.journal, epoch, output).await?;
             }
         }
         self.snapshot().await
+    }
+
+    /// Continues the output at the position `from`: from the ring buffer,
+    /// or from the journal until the ring buffer has the next byte. Returns
+    /// `None` if the client must get the current screen.
+    async fn resume(&mut self, from: u64) -> io::Result<Option<usize>> {
+        self.reader.seek(from);
+        if let Ok(count) = self.reader.read(&mut self.buffer) {
+            return Ok(Some(count));
+        }
+        history_replay::catch_up(
+            &mut self.sink,
+            &self.journal,
+            &mut self.reader,
+            &mut self.buffer,
+            self.feed.epoch(),
+            from,
+            self.tell_gaps,
+        )
+        .await
     }
 
     /// Sends the `pending` bytes of the buffer and reads the next bytes.
@@ -156,7 +193,9 @@ impl OutputPump {
             // The bytes after the screen are read before the screen is
             // sent: a client that takes the screen slowly loses nothing.
             if let Ok(count) = self.reader.read(&mut self.buffer) {
-                self.send_snapshot(&redraw).await?;
+                self.sink
+                    .snapshot(self.feed.epoch(), redraw.position, &redraw.sequence)
+                    .await?;
                 return Ok(count);
             }
             // The holder wrote over the position of this screen already.
@@ -204,37 +243,8 @@ impl OutputPump {
     /// last.
     async fn send_output(&mut self, count: usize) -> io::Result<()> {
         let seq = self.reader.position() - count as u64;
-        let Self {
-            frames,
-            handle,
-            buffer,
-            ..
-        } = self;
-        frames
-            .send(
-                FrameKind::Output,
-                *handle,
-                FIRST_EPOCH,
-                seq,
-                &buffer[..count],
-            )
-            .await?;
-        self.sent = self.reader.position();
-        Ok(())
-    }
-
-    async fn send_snapshot(&mut self, redraw: &Redraw) -> io::Result<()> {
-        for part in redraw.sequence.chunks(MAX_PAYLOAD_LEN as usize) {
-            self.send(FrameKind::ScreenSnapshot, redraw.position, part)
-                .await?;
-        }
-        self.sent = redraw.position;
-        Ok(())
-    }
-
-    async fn send(&mut self, kind: FrameKind, seq: u64, payload: &[u8]) -> io::Result<()> {
-        self.frames
-            .send(kind, self.handle, FIRST_EPOCH, seq, payload)
+        self.sink
+            .output(self.feed.epoch(), seq, &self.buffer[..count])
             .await
     }
 }

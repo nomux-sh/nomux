@@ -46,6 +46,10 @@ impl SessionHandle {
         }
     }
 
+    pub(crate) fn id(&self) -> &SessionId {
+        &self.id
+    }
+
     /// Ends the session and waits until its command has ended.
     pub(crate) async fn kill(&self) -> Result<(), SessionError> {
         let (done, ended) = oneshot::channel();

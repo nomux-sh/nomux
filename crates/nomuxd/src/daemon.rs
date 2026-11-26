@@ -16,6 +16,7 @@ use crate::instance_lock::InstanceLock;
 use crate::listener;
 use crate::runtime_directory;
 use crate::sessions::Sessions;
+use crate::settings::Settings;
 use crate::shutdown::Shutdown;
 
 /// Runs the daemon until a stop is requested.
@@ -31,10 +32,15 @@ pub(crate) async fn run(running_daemon: RunningDaemon) -> io::Result<()> {
 
     let shutdown = Shutdown::new();
     shutdown.trigger_on_signals()?;
-    let sessions = Arc::new(Sessions::new(runtime_directory, shutdown.clone()));
+    let sessions = Arc::new(Sessions::new(
+        runtime_directory,
+        Settings::load(),
+        shutdown.clone(),
+    )?);
     // A client that connects now waits in the queue of the socket. It gets
-    // its answer after the daemon has the sessions of the earlier daemon.
-    sessions.adopt_holders().await?;
+    // its answer after the daemon has the sessions of the earlier daemon
+    // and of the earlier start of the host.
+    sessions.adopt_existing().await?;
     let extensions = extensions::open(Arc::clone(&sessions))?;
     info!(socket = %socket_path.display(), "the daemon listens");
 
@@ -44,7 +50,14 @@ pub(crate) async fn run(running_daemon: RunningDaemon) -> io::Result<()> {
         shutdown,
         in_flight_requests: InFlightRequests::default(),
     });
+    // The clients get their answers while the sessions with the restore
+    // policy `auto` start.
+    let restoring = tokio::task::spawn_local({
+        let sessions = Arc::clone(&context.sessions);
+        async move { sessions.restore_automatic().await }
+    });
     listener::serve(listener, Arc::clone(&context)).await;
+    restoring.abort();
 
     // A call of an extension that waits gets its answer now: the extension
     // stopped. No request starts an extension after this.

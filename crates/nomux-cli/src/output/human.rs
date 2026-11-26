@@ -4,14 +4,16 @@ use std::env;
 use std::fmt::Write;
 use std::io::{self, IsTerminal};
 
-use nomux_client::{AttachEnd, HostInfo, Session, SessionState};
+use nomux_client::{AttachEnd, ExitStatus, HostInfo, Session, SessionState};
 use nomux_core::configuration::HostEntry;
 
 use super::extension_human;
-use crate::report::{AddedHost, HostDiagnosis, Report};
+use crate::report::{AddedHost, HostDiagnosis, Report, ServiceFileAction, ServiceFileReport};
 
+const RED: &str = "\x1b[31m";
 const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[33m";
+const BLUE: &str = "\x1b[34m";
 const RESET: &str = "\x1b[0m";
 
 /// If the text has colour.
@@ -39,6 +41,11 @@ pub(super) fn report(report: &Report, style: Style) -> String {
         Report::SessionCreated(session) => format!("{}\n", session.id),
         Report::Sessions(sessions) if sessions.is_empty() => "no sessions\n".to_owned(),
         Report::Sessions(sessions) => session_table(sessions, style),
+        Report::SessionStarted(session) => format!("session {} runs\n", session.id),
+        Report::OutputCaptured { output, .. } => String::from_utf8_lossy(output).into_owned(),
+        Report::RestorePolicySet { id, policy } => {
+            format!("session {id} has the restore policy {policy}\n")
+        }
         Report::SessionKilled { id } => format!("session {id} ended\n"),
         Report::AttachEnded { id, end } => attach_end(id, *end),
         Report::ClientsDetached { id, clients: 1 } => {
@@ -59,6 +66,7 @@ pub(super) fn report(report: &Report, style: Style) -> String {
         Report::HostsChecked(hosts) if hosts.is_empty() => "no hosts\n".to_owned(),
         Report::HostsChecked(hosts) => hosts.iter().map(host_diagnosis).collect(),
         Report::Extension(report) => extension_human::report(report),
+        Report::ServiceFile(service) => service_file(service),
         Report::Version => format!("{}\n", nomux_core::version_line!()),
     }
 }
@@ -78,7 +86,11 @@ pub(super) fn quiet_report(report: &Report) -> String {
             .flat_map(|host| [host.name.as_str(), "\n"])
             .collect(),
         Report::Extension(report) => extension_human::quiet_report(report),
-        Report::SessionKilled { .. }
+        Report::OutputCaptured { output, .. } => String::from_utf8_lossy(output).into_owned(),
+        Report::SessionStarted(_)
+        | Report::RestorePolicySet { .. }
+        | Report::ServiceFile(_)
+        | Report::SessionKilled { .. }
         | Report::AttachEnded { .. }
         | Report::ClientsDetached { .. }
         | Report::DaemonStatus(_)
@@ -86,6 +98,28 @@ pub(super) fn quiet_report(report: &Report) -> String {
         | Report::HostAdded(_)
         | Report::HostRemoved { .. }
         | Report::HostsChecked(_) => String::new(),
+    }
+}
+
+fn service_file(service: &ServiceFileReport) -> String {
+    let path = service.path.display();
+    let next_step = service.next_step.as_deref().unwrap_or_default();
+    match service.action {
+        ServiceFileAction::Installed => {
+            format!("wrote {path}\nTo start the daemon at each login, run: {next_step}\n")
+        }
+        ServiceFileAction::WouldInstall => format!(
+            "# {path}\n{}",
+            service.content.as_deref().unwrap_or_default()
+        ),
+        ServiceFileAction::Removed => format!(
+            "removed {path}\nThe daemon that runs continues. To make the service manager \
+             forget the file, run: {next_step}\n"
+        ),
+        ServiceFileAction::WouldRemove => format!("would remove {path}\n"),
+        ServiceFileAction::NotInstalled => {
+            format!("no service file: {path} does not exist\n")
+        }
     }
 }
 
@@ -155,41 +189,98 @@ fn daemon_status(info: &HostInfo) -> String {
     )
 }
 
+/// One row of the session table.
+struct SessionRow<'a> {
+    id: &'a str,
+    state: SessionState,
+    pid: String,
+    command: String,
+    note: String,
+}
+
+impl<'a> SessionRow<'a> {
+    fn of(session: &'a Session) -> Self {
+        let or_dash = |text: String| {
+            if text.is_empty() {
+                "-".to_owned()
+            } else {
+                text
+            }
+        };
+        Self {
+            id: &session.id,
+            state: session.state,
+            pid: or_dash(session.pid.map_or_default(|pid| pid.to_string())),
+            command: or_dash(session.command.join(" ")),
+            note: note(session),
+        }
+    }
+}
+
+/// What a person must know about a session and what has no column: how its
+/// command ended, and why its state files are damaged.
+fn note(session: &Session) -> String {
+    let exit = session.exit.map(|exit| match exit.status {
+        ExitStatus::Exited { code } => format!("exit status {code}"),
+        ExitStatus::Signaled { signal } => format!("signal {signal}"),
+        ExitStatus::Unknown => "exit status not known".to_owned(),
+    });
+    let parts: Vec<&str> = exit
+        .as_deref()
+        .into_iter()
+        .chain(session.damage.as_deref())
+        .collect();
+    parts.join("; ")
+}
+
 fn session_table(sessions: &[Session], style: Style) -> String {
     const ID: &str = "ID";
     const STATE: &str = "STATE";
     const PID: &str = "PID";
+    const COMMAND: &str = "COMMAND";
+    const NOTE: &str = "NOTE";
 
-    let rows: Vec<(&str, SessionState, String)> = sessions
-        .iter()
-        .map(|session| {
-            let pid = session
-                .pid
-                .map_or_else(|| "-".to_owned(), |pid| pid.to_string());
-            (session.id.as_str(), session.state, pid)
-        })
-        .collect();
-    let id_width = column_width(ID, rows.iter().map(|row| row.0));
-    let state_width = column_width(STATE, rows.iter().map(|row| state_name(row.1)));
+    let rows: Vec<SessionRow<'_>> = sessions.iter().map(SessionRow::of).collect();
+    let id_width = column_width(ID, rows.iter().map(|row| row.id));
+    let state_width = column_width(STATE, rows.iter().map(|row| state_name(row.state)));
+    let pid_width = column_width(PID, rows.iter().map(|row| row.pid.as_str()));
+    let command_width = column_width(COMMAND, rows.iter().map(|row| row.command.as_str()));
+    // The table has the last column only if a session has a note.
+    let has_notes = rows.iter().any(|row| !row.note.is_empty());
 
-    let mut table = format!("{ID:<id_width$}  {STATE:<state_width$}  {PID}\n");
-    for (id, state, pid) in rows {
-        let state_text = format!("{:<state_width$}", state_name(state));
-        let state_text = coloured(&state_text, state, style);
-        // A write to a `String` does not fail.
-        let _ = writeln!(table, "{id:<id_width$}  {state_text}  {pid}");
+    // Without a note, a line ends after the command.
+    let note_header = if has_notes { NOTE } else { "" };
+    let header = format!(
+        "{ID:<id_width$}  {STATE:<state_width$}  {PID:<pid_width$}  {COMMAND:<command_width$}  \
+         {note_header}"
+    );
+    let mut table = format!("{}\n", header.trim_end());
+    for row in rows {
+        let state_text = format!("{:<state_width$}", state_name(row.state));
+        let state_text = coloured(&state_text, row.state, style);
+        let line = format!(
+            "{:<id_width$}  {state_text}  {:<pid_width$}  {:<command_width$}  {}",
+            row.id, row.pid, row.command, row.note
+        );
+        table.push_str(line.trim_end());
+        table.push('\n');
     }
     table
 }
 
 fn column_width<'a>(header: &str, values: impl Iterator<Item = &'a str>) -> usize {
-    values.map(str::len).fold(header.len(), usize::max)
+    values
+        .map(|value| value.chars().count())
+        .fold(header.len(), usize::max)
 }
 
 pub(super) fn state_name(state: SessionState) -> &'static str {
     match state {
         SessionState::Running => "running",
         SessionState::Unreachable => "unreachable",
+        SessionState::Dormant => "dormant",
+        SessionState::Ended => "ended",
+        SessionState::Damaged => "damaged",
         SessionState::Unknown => "unknown",
     }
 }
@@ -197,9 +288,13 @@ pub(super) fn state_name(state: SessionState) -> &'static str {
 /// The colour comes after the padding, thus the columns stay aligned.
 fn coloured(padded: &str, state: SessionState, style: Style) -> String {
     let colour = match (style, state) {
-        (Style::Plain, _) | (Style::Colour, SessionState::Unknown) => return padded.to_owned(),
+        (Style::Plain, _) | (Style::Colour, SessionState::Ended | SessionState::Unknown) => {
+            return padded.to_owned();
+        }
         (Style::Colour, SessionState::Running) => GREEN,
         (Style::Colour, SessionState::Unreachable) => YELLOW,
+        (Style::Colour, SessionState::Dormant) => BLUE,
+        (Style::Colour, SessionState::Damaged) => RED,
     };
     format!("{colour}{padded}{RESET}")
 }
@@ -208,18 +303,30 @@ fn coloured(padded: &str, state: SessionState, style: Style) -> String {
 mod tests {
     use super::*;
 
+    fn session(id: &str, state: SessionState) -> Session {
+        Session {
+            id: id.to_owned(),
+            state,
+            pid: None,
+            command: Vec::new(),
+            working_directory: None,
+            size: None,
+            started_at: None,
+            epoch: None,
+            restore_policy: None,
+            exit: None,
+            damage: None,
+        }
+    }
+
     fn sessions() -> Vec<Session> {
         vec![
             Session {
-                id: "ab".to_owned(),
-                state: SessionState::Running,
                 pid: Some(7),
+                command: vec!["vim".to_owned(), "notes.txt".to_owned()],
+                ..session("ab", SessionState::Running)
             },
-            Session {
-                id: "a-long-identifier".to_owned(),
-                state: SessionState::Unreachable,
-                pid: None,
-            },
+            session("a-long-identifier", SessionState::Unreachable),
         ]
     }
 
@@ -229,9 +336,41 @@ mod tests {
 
         assert_eq!(
             table,
-            "ID                 STATE        PID\n\
-             ab                 running      7\n\
-             a-long-identifier  unreachable  -\n"
+            "ID                 STATE        PID  COMMAND\n\
+             ab                 running      7    vim notes.txt\n\
+             a-long-identifier  unreachable  -    -\n"
+        );
+    }
+
+    #[test]
+    fn a_session_without_a_process_shows_why_in_a_note() {
+        use nomux_client::SessionExit;
+
+        let sessions = vec![
+            Session {
+                command: vec!["make".to_owned()],
+                exit: Some(SessionExit {
+                    ended_at: 5,
+                    status: ExitStatus::Exited { code: 2 },
+                }),
+                ..session("ab", SessionState::Ended)
+            },
+            Session {
+                command: vec!["sh".to_owned()],
+                ..session("cd", SessionState::Dormant)
+            },
+            Session {
+                damage: Some("line 3 of the session metadata is not valid".to_owned()),
+                ..session("ef", SessionState::Damaged)
+            },
+        ];
+
+        assert_eq!(
+            session_table(&sessions, Style::Plain),
+            "ID  STATE    PID  COMMAND  NOTE\n\
+             ab  ended    -    make     exit status 2\n\
+             cd  dormant  -    sh\n\
+             ef  damaged  -    -        line 3 of the session metadata is not valid\n"
         );
     }
 

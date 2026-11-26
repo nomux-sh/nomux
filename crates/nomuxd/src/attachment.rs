@@ -6,22 +6,28 @@
 //! client. `spec/frame.md` of the `proto` repository has the rules.
 
 mod attached_clients;
+mod frame_sink;
+mod history_replay;
 mod output_pump;
 
 use std::sync::Arc;
 
 use nomux_holder_protocol::ring::RingReader;
 use nomux_holder_protocol::wire::WindowSize;
-use nomux_proto::frame::{EndReason, FIRST_EPOCH, FrameKind};
+use nomux_proto::frame::{EndReason, FrameKind};
 use nomux_proto::wire::v1::{SessionAttachRequest, SessionAttachResponse};
 use nomux_transport::{EnvelopeStream, FrameReader};
 use tracing::debug;
 
 pub(crate) use self::attached_clients::AttachedClients;
-use self::output_pump::OutputPump;
+use self::frame_sink::FrameSink;
+use self::history_replay::EarlierOutput;
+use self::output_pump::{OutputPump, Start};
+use crate::handshake::ClientFeatures;
 use crate::holder::OutputFeed;
 use crate::session_error::SessionError;
 use crate::session_handle::SessionHandle;
+use crate::session_journal::SessionJournal;
 use crate::sessions::Sessions;
 
 /// The session handle of the frames. A connection has one attach, thus the
@@ -32,24 +38,24 @@ const HANDLE: u32 = 1;
 pub(crate) struct Attachment {
     session: Arc<SessionHandle>,
     feed: Arc<OutputFeed>,
+    journal: SessionJournal,
     reader: RingReader,
-    /// The position from which the client asks for the output, if it has
-    /// the output before that position.
-    resume: Option<u64>,
+    start: Start,
+    features: ClientFeatures,
 }
 
 impl Attachment {
-    /// Finds the session, gives it the window size of the client and opens
-    /// the read side of its holder.
+    /// Finds the session, starts its command again if the session is
+    /// dormant, gives it the window size of the client and opens the read
+    /// side of its holder.
     pub(crate) async fn prepare(
         request: &SessionAttachRequest,
         size: Option<WindowSize>,
+        features: ClientFeatures,
         sessions: &Sessions,
     ) -> Result<Self, SessionError> {
-        let session = sessions.find_reachable(&request.id)?;
-        if let Some(size) = size {
-            session.resize(size).await?;
-        }
+        let attachable = sessions.attachable(&request.id, size).await?;
+        let session = attachable.session;
         let cannot_read = |error| {
             SessionError::Failed(format!(
                 "the daemon cannot read the terminal of session {}: {error}",
@@ -58,22 +64,22 @@ impl Attachment {
         };
         let feed = session.output.get().await.map_err(cannot_read)?;
         let reader = feed.reader().map_err(cannot_read)?;
+        let journal = sessions.live_journal(session.id(), Arc::clone(&feed));
+        let start = start_of(request, feed.epoch(), attachable.restored_from, features);
         Ok(Self {
             session,
             feed,
+            journal,
             reader,
-            resume: (request.epoch == FIRST_EPOCH).then_some(request.from_seq),
+            start,
+            features,
         })
     }
 
-    #[expect(
-        clippy::unused_self,
-        reason = "only an attach that the daemon accepted has a response"
-    )]
     pub(crate) fn response(&self) -> SessionAttachResponse {
         SessionAttachResponse {
             handle: HANDLE,
-            epoch: FIRST_EPOCH,
+            epoch: self.feed.epoch(),
         }
     }
 
@@ -82,11 +88,13 @@ impl Attachment {
     pub(crate) async fn run(self, connection: EnvelopeStream) {
         let (input, frames) = connection.into_frames();
         let mut detach = self.session.clients.join();
+        let sink = FrameSink::new(frames, HANDLE, self.feed.epoch());
         let mut output = OutputPump::new(
-            frames,
-            HANDLE,
+            sink,
             self.feed,
+            self.journal,
             self.reader,
+            self.features.output_history,
             self.session.ended.clone(),
         );
         let result = tokio::select! {
@@ -94,11 +102,36 @@ impl Attachment {
             biased;
             () = forward_input(input, &self.session) => Ok(()),
             () = detach.received() => output.end(EndReason::Detached).await,
-            result = output.run(self.resume) => result,
+            result = output.run(self.start) => result,
         };
         if let Err(error) = result {
             debug!(%error, "an attach ended with an error");
         }
+    }
+}
+
+/// Where the frames of an attach start: what the client has, and what the
+/// client can read.
+fn start_of(
+    request: &SessionAttachRequest,
+    epoch: u32,
+    restored_from: Option<u32>,
+    features: ClientFeatures,
+) -> Start {
+    match (request.epoch, restored_from) {
+        (client, _) if client == epoch => Start::Resume(request.from_seq),
+        _ if !features.output_history => Start::Screen,
+        // The client that started the command again has no output of the
+        // session: it gets the end of the output from before the restore.
+        (0, Some(earlier)) => Start::Earlier {
+            epoch: earlier,
+            output: EarlierOutput::FromLastCheckpoint,
+        },
+        (client, _) if client != 0 && client < epoch => Start::Earlier {
+            epoch: client,
+            output: EarlierOutput::From(request.from_seq),
+        },
+        _ => Start::Screen,
     }
 }
 
@@ -107,6 +140,51 @@ async fn forward_input(mut frames: FrameReader, session: &SessionHandle) {
     while let Ok(Some(header)) = frames.receive().await {
         if header.kind == FrameKind::Input && header.session == HANDLE {
             session.forward_input(frames.payload().to_vec()).await;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn start(client_epoch: u32, restored_from: Option<u32>, output_history: bool) -> Start {
+        let request = SessionAttachRequest {
+            epoch: client_epoch,
+            from_seq: 7,
+            ..SessionAttachRequest::default()
+        };
+        start_of(
+            &request,
+            3,
+            restored_from,
+            ClientFeatures { output_history },
+        )
+    }
+
+    #[test]
+    fn only_a_client_that_reads_the_history_frames_gets_an_earlier_epoch() {
+        let earlier = Start::Earlier {
+            epoch: 2,
+            output: EarlierOutput::From(7),
+        };
+        let before_restore = Start::Earlier {
+            epoch: 2,
+            output: EarlierOutput::FromLastCheckpoint,
+        };
+
+        assert_eq!(start(3, None, true), Start::Resume(7));
+        assert_eq!(start(3, None, false), Start::Resume(7));
+        assert_eq!(start(2, None, true), earlier);
+        assert_eq!(start(2, Some(2), true), earlier);
+        assert_eq!(start(0, Some(2), true), before_restore);
+        // A client without a position gets old output only from the attach
+        // that started the command again.
+        assert_eq!(start(0, None, true), Start::Screen);
+        // An epoch that the session does not have yet.
+        assert_eq!(start(4, None, true), Start::Screen);
+        for client_epoch in [0, 2] {
+            assert_eq!(start(client_epoch, Some(2), false), Start::Screen);
         }
     }
 }

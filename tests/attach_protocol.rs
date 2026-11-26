@@ -1,6 +1,7 @@
 //! The attach of the client library with the real daemon and a real holder:
 //! what a client that attaches again gets, and the requests for the
-//! terminal of a session.
+//! terminal of a session. `journal.rs` has the tests of an attach that
+//! needs the journal.
 
 use nomux_client::{
     AttachOptions, Client, ClientError, ClientKind, OutputPosition, TerminalEvent, TerminalInput,
@@ -122,8 +123,8 @@ async fn a_client_that_attaches_again_gets_only_the_output_that_it_does_not_have
     assert!(receive_until(&mut terminal, b"four").await.snapshot);
     drop(terminal);
 
-    // The daemon has only the last output of a session. A client that was
-    // away for more output gets the screen.
+    // The ring buffer has only the last output of a session. A client that
+    // was away for more output gets the bytes before from the journal.
     let mut flood = vec![b'x'; MORE_THAN_THE_RING];
     flood.extend_from_slice(b"five");
     control.send_input(&id, &flood).await.unwrap();
@@ -132,7 +133,12 @@ async fn a_client_that_attaches_again_gets_only_the_output_that_it_does_not_have
     drop(terminal);
     let mut terminal = attach(&sandbox, &id, Some(position)).await;
     control.send_input(&id, b"six").await.unwrap();
-    assert!(receive_until(&mut terminal, b"six").await.snapshot);
+    let missed = receive_until(&mut terminal, b"six").await;
+    assert!(!missed.snapshot);
+    let mut expected = b"threefour".to_vec();
+    expected.extend_from_slice(&flood);
+    expected.extend_from_slice(b"six");
+    assert!(missed.output == expected, "{} bytes", missed.output.len());
 }
 
 #[tokio::test]

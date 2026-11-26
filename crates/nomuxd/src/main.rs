@@ -17,6 +17,9 @@
 //! - `sessions`, `session_registry`, `session_handle`, `session_id`,
 //!   `session_error`: the operations on sessions, the list of the sessions
 //!   that the daemon knows, and the ways into one session.
+//! - `session_store`, `session_journal`, `stopped_sessions`: what a session
+//!   keeps on disk, its output history, and the sessions without a holder:
+//!   dormant, ended and damaged.
 //! - `holder`: the holder side. One task owns the connection with the lease
 //!   to one holder. A second connection reads the terminal while a client
 //!   is attached.
@@ -25,7 +28,7 @@
 //! - `extensions`: the extension host of the daemon and the host services
 //!   that an extension can call. `nomux-ext-host` runs the extensions.
 //! - `shutdown`, `in_flight_requests`: the stop of the daemon.
-//! - `detach`, `logging`, `arguments`: the process setup.
+//! - `detach`, `logging`, `arguments`, `settings`: the process setup.
 //!
 //! # Boundaries
 //!
@@ -36,10 +39,11 @@
 //!
 //! # Status
 //!
-//! The daemon creates, lists and ends sessions, and it attaches clients to
-//! them. A client on a different host reaches the socket through SSH. It
-//! installs extensions from a directory and calls their methods. The daemon
-//! has no state database.
+//! The daemon creates, lists and ends sessions, attaches clients to them,
+//! reads their journal, and starts a dormant session again. A client on a
+//! different host reaches the socket through SSH. It installs extensions
+//! from a directory and calls their methods. The daemon has no state
+//! database.
 
 mod arguments;
 mod attachment;
@@ -58,9 +62,13 @@ mod runtime_directory;
 mod session_error;
 mod session_handle;
 mod session_id;
+mod session_journal;
 mod session_registry;
+mod session_store;
 mod sessions;
+mod settings;
 mod shutdown;
+mod stopped_sessions;
 
 use std::env;
 use std::io;

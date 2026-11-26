@@ -1,7 +1,25 @@
 //! The handshake: the answer of the daemon to the first request of a client.
 
+use nomux_proto::capabilities::OUTPUT_HISTORY;
 use nomux_proto::compatibility::{VersionError, VersionRange, negotiate};
 use nomux_proto::wire::v1::{Error, ErrorCode, Hello, Welcome};
+
+/// The optional features of the protocol that are active on one
+/// connection: the client and the daemon have their capability flag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ClientFeatures {
+    /// The client reads output of an earlier epoch, and the frames that say
+    /// that output is gone or that the command started again.
+    pub(crate) output_history: bool,
+}
+
+impl ClientFeatures {
+    pub(crate) fn of(hello: &Hello) -> Self {
+        Self {
+            output_history: hello.capabilities.iter().any(|flag| flag == OUTPUT_HISTORY),
+        }
+    }
+}
 
 /// Answers a `Hello`. The result is the `Welcome`, or the error for a client
 /// that has no common protocol version with this daemon.
@@ -15,8 +33,7 @@ pub(crate) fn answer(hello: &Hello) -> Result<Welcome, Error> {
         Ok(_) => Ok(Welcome {
             version: daemon.version,
             oldest: daemon.oldest,
-            // No capability flag is active in this protocol version.
-            capabilities: Vec::new(),
+            capabilities: vec![OUTPUT_HISTORY.to_owned()],
             // The daemon has no host identity yet.
             host_id: String::new(),
         }),

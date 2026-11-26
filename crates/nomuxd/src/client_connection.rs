@@ -10,7 +10,7 @@ use nomux_transport::EnvelopeStream;
 use tracing::debug;
 
 use crate::handlers::{self, Context, Outcome};
-use crate::handshake;
+use crate::handshake::{self, ClientFeatures};
 
 /// Serves one connection until the client closes it or breaks the protocol.
 pub(crate) async fn serve(stream: EnvelopeStream, context: Arc<Context>) {
@@ -20,14 +20,14 @@ pub(crate) async fn serve(stream: EnvelopeStream, context: Arc<Context>) {
 }
 
 async fn converse(mut stream: EnvelopeStream, context: &Context) -> io::Result<()> {
-    if !shake_hands(&mut stream).await? {
+    let Some(features) = shake_hands(&mut stream).await? else {
         return Ok(());
-    }
+    };
     // The requests of one connection are answered in their sequence.
     while let Some(request) = next_request(&mut stream).await? {
         let in_flight = context.in_flight_requests.begin().await;
         let outcome = match request.body {
-            Some(body) => handlers::handle(body, context).await,
+            Some(body) => handlers::handle(body, features, context).await,
             None => Outcome::Respond(response::Result::Error(failed(
                 "the daemon does not know this request",
             ))),
@@ -48,24 +48,25 @@ async fn converse(mut stream: EnvelopeStream, context: &Context) -> io::Result<(
     Ok(())
 }
 
-/// Answers the first request, which must be the `Hello`. Returns `false` if
-/// the connection must close: the client is not compatible, or it did not
-/// start with the handshake.
-async fn shake_hands(stream: &mut EnvelopeStream) -> io::Result<bool> {
+/// Answers the first request, which must be the `Hello`. Returns the
+/// features of the connection, or `None` if the connection must close: the
+/// client is not compatible, or it did not start with the handshake.
+async fn shake_hands(stream: &mut EnvelopeStream) -> io::Result<Option<ClientFeatures>> {
     let Some(request) = next_request(stream).await? else {
-        return Ok(false);
+        return Ok(None);
     };
     let answer = match &request.body {
-        Some(request::Body::Hello(hello)) => handshake::answer(hello),
+        Some(request::Body::Hello(hello)) => {
+            handshake::answer(hello).map(|welcome| (welcome, ClientFeatures::of(hello)))
+        }
         _ => Err(failed("the first request of a connection must be Hello")),
     };
-    let accepted = answer.is_ok();
-    let result = match answer {
-        Ok(welcome) => response::Result::Welcome(welcome),
-        Err(error) => response::Result::Error(error),
+    let (result, features) = match answer {
+        Ok((welcome, features)) => (response::Result::Welcome(welcome), Some(features)),
+        Err(error) => (response::Result::Error(error), None),
     };
     respond(stream, request.id, result).await?;
-    Ok(accepted)
+    Ok(features)
 }
 
 /// Reads the next request. Returns `None` if the client closed the

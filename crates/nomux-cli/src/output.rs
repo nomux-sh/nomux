@@ -38,10 +38,15 @@ pub(crate) fn print_report(report: &Report, format: Format) -> io::Result<()> {
     if let (Some(payload), Format::Human | Format::Quiet) = (report.call_payload(), format) {
         return io::stdout().lock().write_all(payload);
     }
-    let text = match format {
-        Format::Human => human::report(report, human::Style::of_standard_output()),
-        Format::Quiet => human::quiet_report(report),
-        Format::Json => json::report(report),
+    let text = match (format, report) {
+        // The output of a session is bytes, and not each byte sequence is
+        // text.
+        (Format::Human | Format::Quiet, Report::OutputCaptured { output, .. }) => {
+            return io::stdout().lock().write_all(output);
+        }
+        (Format::Human, _) => human::report(report, human::Style::of_standard_output()),
+        (Format::Quiet, _) => human::quiet_report(report),
+        (Format::Json, _) => json::report(report),
     };
     io::stdout().lock().write_all(text.as_bytes())
 }

@@ -27,6 +27,24 @@ const AFTER_ATTACH: &[u8] = b"\x1b[?1049l\x1b[!p\x1b7\x1b[r\x1b8\x1b(B\x0f\x1b[<
     \x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?2004l\
     \x1b[?1l\x1b>\x1b[?7h\x1b[?25h\x1b[0 q\x1b[0m\r\n";
 
+const RESTORED_MARK: &str = "--- nomux: the session started again. The output before this line is \
+    from the command that stopped ---";
+
+/// Shows the user that the command of the session started again, after the
+/// output from before the restore.
+///
+/// In this sequence: leave the alternate screen, the default style, the
+/// mark on a line of its own, and then one line feed in the last row for
+/// each row of the window. Thus the old output and the mark move into the
+/// scrollback of the terminal before the snapshot of the new screen clears
+/// the window.
+pub(super) fn restored_mark() -> Vec<u8> {
+    let rows = window_size().map_or(0, |size| usize::from(size.rows));
+    let mut mark = format!("\x1b[?1049l\x1b[0m\r\n{RESTORED_MARK}\r\n\x1b[{rows};1H").into_bytes();
+    mark.extend(std::iter::repeat_n(b'\n', rows));
+    mark
+}
+
 /// Saves the title of the window (XTWINOPS 22) and sets a title that says
 /// that the attach has no connection. The screen is not changed: the
 /// output of the session continues on it after the connection is back.

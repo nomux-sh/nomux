@@ -21,9 +21,11 @@
 //!   extensions of a host. [`Client::install_extension`] installs one in two
 //!   steps, and [`Client::call_extension`] calls a method of one.
 //! - [`ClientError`]: why a connection or a request failed.
-//! - [`ClientKind`], [`Session`], [`SessionState`], [`NewSession`],
-//!   [`WindowSize`] and [`HostInfo`]: the data of the requests and the
-//!   responses.
+//! - [`Client::capture`] and [`Client::capture_lines`]: the scrollback of a
+//!   session, without an attach.
+//! - [`ClientKind`], [`Session`], [`SessionState`], [`SessionExit`],
+//!   [`RestorePolicy`], [`NewSession`], [`WindowSize`] and [`HostInfo`]: the
+//!   data of the requests and the responses.
 //!
 //! # Boundaries
 //!
@@ -35,8 +37,9 @@
 //! # Status
 //!
 //! The crate has the control requests for sessions, for extensions and for
-//! the daemon, the attach to a session, and the two kinds of host: the local
-//! host and a remote host through SSH. Events are not written yet.
+//! the daemon, the attach to a session with the output of its journal, the
+//! scrollback, the restore of a dormant session, and the two kinds of host:
+//! the local host and a remote host through SSH. Events are not written yet.
 
 mod bootstrap;
 mod client;
@@ -49,6 +52,7 @@ mod host;
 mod host_info;
 mod local_host;
 mod reconnect;
+mod scrollback;
 mod session;
 mod ssh_host;
 mod terminal;
@@ -65,7 +69,9 @@ pub use extension::{
 };
 pub use host::Host;
 pub use host_info::HostInfo;
-pub use session::{NewSession, Session, SessionState};
+pub use nomux_core::configuration::RestorePolicy;
+pub use scrollback::{CaptureRange, CapturedOutput};
+pub use session::{ExitStatus, NewSession, Session, SessionExit, SessionState};
 pub use terminal::{
     AttachEnd, AttachOptions, OutputPosition, TerminalEvent, TerminalInput, TerminalOutput,
 };

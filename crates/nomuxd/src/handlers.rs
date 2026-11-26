@@ -4,6 +4,7 @@
 mod ext;
 mod host;
 mod session;
+mod session_message;
 
 use std::sync::Arc;
 
@@ -11,6 +12,7 @@ use nomux_ext_host::ExtensionHost;
 use nomux_proto::wire::v1::{Error, ErrorCode, request, response};
 
 use crate::attachment::Attachment;
+use crate::handshake::ClientFeatures;
 use crate::in_flight_requests::InFlightRequests;
 use crate::sessions::Sessions;
 use crate::shutdown::Shutdown;
@@ -32,8 +34,12 @@ pub(crate) enum Outcome {
     Attach(Attachment),
 }
 
-/// Does one request.
-pub(crate) async fn handle(body: request::Body, context: &Context) -> Outcome {
+/// Does one request of a connection that has `features`.
+pub(crate) async fn handle(
+    body: request::Body,
+    features: ClientFeatures,
+    context: &Context,
+) -> Outcome {
     let result = match body {
         request::Body::Hello(_) => Err(Error {
             code: ErrorCode::Failed.into(),
@@ -42,10 +48,10 @@ pub(crate) async fn handle(body: request::Body, context: &Context) -> Outcome {
         request::Body::HostInfo(_) => Ok(host::info(context)),
         request::Body::HostStop(_) => Ok(host::stop(context)),
         request::Body::SessionCreate(request) => session::create(request, context).await,
-        request::Body::SessionList(_) => Ok(session::list(context)),
+        request::Body::SessionList(request) => Ok(session::list(request, context)),
         request::Body::SessionKill(request) => session::kill(&request, context).await,
         request::Body::SessionAttach(request) => {
-            return match session::attach(&request, context).await {
+            return match session::attach(&request, features, context).await {
                 Ok(attachment) => Outcome::Attach(attachment),
                 Err(error) => Outcome::Respond(response::Result::Error(error)),
             };
@@ -53,6 +59,11 @@ pub(crate) async fn handle(body: request::Body, context: &Context) -> Outcome {
         request::Body::SessionDetach(request) => session::detach(&request, context),
         request::Body::SessionInput(request) => session::input(request, context).await,
         request::Body::SessionResize(request) => session::resize(&request, context).await,
+        request::Body::SessionStart(request) => session::start(&request, context).await,
+        request::Body::SessionCapture(request) => session::capture(&request, context).await,
+        request::Body::SessionSetRestorePolicy(request) => {
+            session::set_restore_policy(&request, context)
+        }
         request::Body::ExtList(_) => Ok(ext::list(context)),
         request::Body::ExtInspect(request) => ext::inspect(request).await,
         request::Body::ExtInstall(request) => ext::install(request, context).await,

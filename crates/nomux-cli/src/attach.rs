@@ -88,6 +88,12 @@ async fn show_output(
                 write(&mut terminal, bytes).await?;
             }
             TerminalEvent::Output(bytes) => write(&mut terminal, bytes).await?,
+            // The terminal of the user keeps the lines that it has. The
+            // snapshot that follows draws the screen.
+            TerminalEvent::HistoryGap => {}
+            TerminalEvent::Restored => {
+                write(&mut terminal, &local_terminal::restored_mark()).await?;
+            }
             TerminalEvent::ConnectionLost => {
                 write(&mut terminal, local_terminal::SHOW_CONNECTION_LOST).await?;
                 title_is_changed = true;

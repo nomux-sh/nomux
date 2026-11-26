@@ -1,12 +1,17 @@
 //! The JSON form of a report and of an error. `docs/cli.md` has the schema.
 
-use nomux_client::{AttachEnd, ClientError, HostInfo, Session};
+use std::borrow::Cow;
+use std::path::Path;
+
+use nomux_client::{
+    AttachEnd, ClientError, ExitStatus, HostInfo, RestorePolicy, Session, SessionExit,
+};
 use serde::Serialize;
 
 use super::extension_json::ExtensionBody;
 use super::human::state_name;
 use crate::exit_code;
-use crate::report::{AddedHost, HostDiagnosis, Report};
+use crate::report::{AddedHost, HostDiagnosis, Report, ServiceFileAction, ServiceFileReport};
 
 /// The version of the JSON schema. It increases when a field is removed or
 /// changes its meaning. A new field does not increase it.
@@ -25,6 +30,9 @@ struct Document<'a> {
 enum Body<'a> {
     Session(SessionDocument<'a>),
     Sessions(Vec<SessionDocument<'a>>),
+    Capture(CaptureDocument<'a>),
+    RestorePolicy(RestorePolicyDocument<'a>),
+    Service(ServiceDocument<'a>),
     Killed(&'a str),
     Attach(AttachDocument<'a>),
     Detached(DetachedDocument<'a>),
@@ -112,6 +120,17 @@ struct SessionDocument<'a> {
     id: &'a str,
     state: &'static str,
     pid: Option<u32>,
+    command: &'a [String],
+    cwd: Option<&'a Path>,
+    rows: Option<u16>,
+    columns: Option<u16>,
+    started_at: Option<u64>,
+    epoch: Option<u32>,
+    restore_policy: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit: Option<ExitDocument>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    damage: Option<&'a str>,
 }
 
 impl<'a> From<&'a Session> for SessionDocument<'a> {
@@ -120,6 +139,77 @@ impl<'a> From<&'a Session> for SessionDocument<'a> {
             id: &session.id,
             state: state_name(session.state),
             pid: session.pid,
+            command: &session.command,
+            cwd: session.working_directory.as_deref(),
+            rows: session.size.map(|size| size.rows),
+            columns: session.size.map(|size| size.columns),
+            started_at: session.started_at,
+            epoch: session.epoch,
+            restore_policy: session.restore_policy.map(RestorePolicy::as_str),
+            exit: session.exit.map(ExitDocument::from),
+            damage: session.damage.as_deref(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ExitDocument {
+    ended_at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signal: Option<i32>,
+}
+
+impl From<SessionExit> for ExitDocument {
+    fn from(exit: SessionExit) -> Self {
+        let (exit_code, signal) = match exit.status {
+            ExitStatus::Exited { code } => (Some(code), None),
+            ExitStatus::Signaled { signal } => (None, Some(signal)),
+            ExitStatus::Unknown => (None, None),
+        };
+        Self {
+            ended_at: exit.ended_at,
+            exit_code,
+            signal,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct CaptureDocument<'a> {
+    id: &'a str,
+    /// A byte sequence that is not UTF-8 has U+FFFD in its place.
+    output: Cow<'a, str>,
+}
+
+#[derive(Serialize)]
+struct RestorePolicyDocument<'a> {
+    id: &'a str,
+    policy: &'static str,
+}
+
+#[derive(Serialize)]
+struct ServiceDocument<'a> {
+    action: &'static str,
+    path: &'a Path,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<&'a str>,
+}
+
+impl<'a> From<&'a ServiceFileReport> for ServiceDocument<'a> {
+    fn from(service: &'a ServiceFileReport) -> Self {
+        let action = match service.action {
+            ServiceFileAction::Installed => "installed",
+            ServiceFileAction::WouldInstall => "would_install",
+            ServiceFileAction::Removed => "removed",
+            ServiceFileAction::WouldRemove => "would_remove",
+            ServiceFileAction::NotInstalled => "not_installed",
+        };
+        Self {
+            action,
+            path: &service.path,
+            content: service.content.as_deref(),
         }
     }
 }
@@ -189,7 +279,18 @@ struct ErrorDocument<'a> {
 
 pub(super) fn report(report: &Report) -> String {
     let body = match report {
-        Report::SessionCreated(session) => Body::Session(session.into()),
+        Report::SessionCreated(session) | Report::SessionStarted(session) => {
+            Body::Session(session.into())
+        }
+        Report::OutputCaptured { id, output } => Body::Capture(CaptureDocument {
+            id,
+            output: String::from_utf8_lossy(output),
+        }),
+        Report::RestorePolicySet { id, policy } => Body::RestorePolicy(RestorePolicyDocument {
+            id,
+            policy: policy.as_str(),
+        }),
+        Report::ServiceFile(service) => Body::Service(service.into()),
         Report::Sessions(sessions) => {
             Body::Sessions(sessions.iter().map(SessionDocument::from).collect())
         }
@@ -245,27 +346,63 @@ fn line(body: Body<'_>) -> String {
 /// thus a changed field name or a removed field fails it.
 #[cfg(test)]
 mod tests {
-    use nomux_client::SessionState;
+    use std::path::PathBuf;
+
+    use nomux_client::{SessionState, WindowSize};
 
     use super::*;
 
+    /// A session whose description the daemon does not know.
     fn session(pid: Option<u32>) -> Session {
         Session {
             id: "ab".to_owned(),
             state: SessionState::Running,
             pid,
+            command: Vec::new(),
+            working_directory: None,
+            size: None,
+            started_at: None,
+            epoch: None,
+            restore_policy: None,
+            exit: None,
+            damage: None,
         }
     }
 
     #[test]
     fn session_documents() {
+        let described = Session {
+            command: vec!["vim".to_owned(), "a b".to_owned()],
+            working_directory: Some(PathBuf::from("/home/user")),
+            size: Some(WindowSize {
+                rows: 24,
+                columns: 80,
+            }),
+            started_at: Some(5),
+            epoch: Some(2),
+            restore_policy: Some(RestorePolicy::OnFocus),
+            ..session(Some(7))
+        };
         assert_eq!(
-            report(&Report::SessionCreated(session(Some(7)))),
-            "{\"schema_version\":1,\"session\":{\"id\":\"ab\",\"state\":\"running\",\"pid\":7}}\n"
+            report(&Report::SessionCreated(described)),
+            "{\"schema_version\":1,\"session\":{\"id\":\"ab\",\"state\":\"running\",\"pid\":7,\"command\":[\"vim\",\"a b\"],\"cwd\":\"/home/user\",\"rows\":24,\"columns\":80,\"started_at\":5,\"epoch\":2,\"restore_policy\":\"on-focus\"}}\n"
         );
         assert_eq!(
             report(&Report::Sessions(vec![session(None)])),
-            "{\"schema_version\":1,\"sessions\":[{\"id\":\"ab\",\"state\":\"running\",\"pid\":null}]}\n"
+            "{\"schema_version\":1,\"sessions\":[{\"id\":\"ab\",\"state\":\"running\",\"pid\":null,\"command\":[],\"cwd\":null,\"rows\":null,\"columns\":null,\"started_at\":null,\"epoch\":null,\"restore_policy\":null}]}\n"
+        );
+        let ended = Session {
+            state: SessionState::Ended,
+            exit: Some(SessionExit {
+                ended_at: 9,
+                status: ExitStatus::Signaled { signal: 15 },
+            }),
+            damage: Some("a reason".to_owned()),
+            ..session(None)
+        };
+        assert_eq!(
+            report(&Report::SessionStarted(ended)),
+            "{\"schema_version\":1,\"session\":{\"id\":\"ab\",\"state\":\"ended\",\"pid\":null,\"command\":[],\"cwd\":null,\"rows\":null,\"columns\":null,\"started_at\":null,\"epoch\":null,\"restore_policy\":null,\"exit\":{\"ended_at\":9,\"signal\":15},\"damage\":\"a reason\"}}\n"
         );
         assert_eq!(
             report(&Report::Sessions(Vec::new())),
@@ -276,6 +413,40 @@ mod tests {
                 id: "ab".to_owned()
             }),
             "{\"schema_version\":1,\"killed\":\"ab\"}\n"
+        );
+    }
+
+    #[test]
+    fn capture_restore_policy_and_service_documents() {
+        assert_eq!(
+            report(&Report::OutputCaptured {
+                id: "ab".to_owned(),
+                output: b"a\x1b[0m\xff\n".to_vec(),
+            }),
+            "{\"schema_version\":1,\"capture\":{\"id\":\"ab\",\"output\":\"a\\u001b[0m\u{fffd}\\n\"}}\n"
+        );
+        assert_eq!(
+            report(&Report::RestorePolicySet {
+                id: "ab".to_owned(),
+                policy: RestorePolicy::Manual,
+            }),
+            "{\"schema_version\":1,\"restore_policy\":{\"id\":\"ab\",\"policy\":\"manual\"}}\n"
+        );
+        let service = |action, content: Option<&str>| {
+            report(&Report::ServiceFile(ServiceFileReport {
+                action,
+                path: PathBuf::from("/c/nomuxd.service"),
+                content: content.map(str::to_owned),
+                next_step: Some("a command".to_owned()),
+            }))
+        };
+        assert_eq!(
+            service(ServiceFileAction::WouldInstall, Some("[Unit]\n")),
+            "{\"schema_version\":1,\"service\":{\"action\":\"would_install\",\"path\":\"/c/nomuxd.service\",\"content\":\"[Unit]\\n\"}}\n"
+        );
+        assert_eq!(
+            service(ServiceFileAction::Removed, None),
+            "{\"schema_version\":1,\"service\":{\"action\":\"removed\",\"path\":\"/c/nomuxd.service\"}}\n"
         );
     }
 

@@ -34,8 +34,9 @@ pub struct AttachOptions {
     pub size: Option<WindowSize>,
     /// The position after the last output that the client applied in an
     /// earlier attach to the same session. If the daemon still has the
-    /// output from this position, the client gets only that output and no
-    /// snapshot. A client that starts with a new terminal gives `None`.
+    /// output from this position, in the ring buffer of the session or in
+    /// its journal, the client gets only that output and no snapshot. A
+    /// client that starts with a new terminal gives `None`.
     pub resume: Option<OutputPosition>,
 }
 
@@ -75,6 +76,16 @@ pub enum TerminalEvent<'a> {
     },
     /// Bytes that the command of the session wrote to its terminal.
     Output(&'a [u8]),
+    /// Output is gone: the daemon does not have the bytes between the last
+    /// output that the client got and the next event. The next event starts
+    /// a snapshot, or it is [`Restored`](Self::Restored).
+    HistoryGap,
+    /// The command of the session started again after the session was
+    /// dormant. The events before this one are output from before the
+    /// restore: the processes that wrote it do not run. The next event
+    /// starts a snapshot of the new screen. A client shows the user a mark
+    /// at this place.
+    Restored,
     /// The connection to the host ended, and the attach connects again.
     /// The client shows that the session does not answer now. Input is
     /// discarded until [`Reconnected`](Self::Reconnected).
@@ -110,10 +121,11 @@ pub struct TerminalOutput {
     frames: FrameReader,
     /// The session handle of the frames of this attach.
     handle: u32,
-    epoch: u32,
-    /// The sequence number of the next output byte. `None` before the first
-    /// frame of a client that does not resume.
-    next_seq: Option<u64>,
+    /// The position of the next output byte: the epoch of the last frame,
+    /// and the sequence number after its last byte. `None` when the next
+    /// frame cannot be output: before the first frame of a client that
+    /// does not resume, and after a frame that ends a numbering.
+    next: Option<OutputPosition>,
     /// `true` if the last frame was a part of a snapshot.
     in_snapshot: bool,
     /// `None`: the attach ends with an error when its connection ends.
@@ -124,19 +136,13 @@ pub struct TerminalOutput {
 }
 
 impl TerminalOutput {
-    pub(crate) fn new(
-        frames: FrameReader,
-        handle: u32,
-        epoch: u32,
-        resume: Option<OutputPosition>,
-    ) -> Self {
+    pub(crate) fn new(frames: FrameReader, handle: u32, resume: Option<OutputPosition>) -> Self {
         Self {
             frames,
             handle,
-            epoch,
-            next_seq: resume
-                .filter(|position| position.epoch == epoch)
-                .map(|position| position.seq),
+            // The first frame says if the daemon continues at the position
+            // of the client: output continues, a snapshot starts again.
+            next: resume,
             in_snapshot: false,
             reattach: None,
             connection_is_lost: false,
@@ -169,25 +175,40 @@ impl TerminalOutput {
             Received::ConnectionLost => return Ok(TerminalEvent::ConnectionLost),
             Received::Reconnected => return Ok(TerminalEvent::Reconnected),
         };
+        let position = OutputPosition {
+            epoch: header.epoch,
+            seq: header.seq,
+        };
         match header.kind {
             FrameKind::ScreenSnapshot => {
-                let starts = !self.in_snapshot || self.next_seq != Some(header.seq);
+                let starts = !self.in_snapshot || self.next != Some(position);
                 self.in_snapshot = true;
-                self.next_seq = Some(header.seq);
+                self.next = Some(position);
                 Ok(TerminalEvent::Snapshot {
                     bytes: self.frames.payload(),
                     starts,
                 })
             }
             FrameKind::Output => {
-                if self.next_seq != Some(header.seq) {
+                if self.next != Some(position) {
                     return Err(ClientError::invalid_reply(
                         "the output from the daemon has a gap or a repeat",
                     ));
                 }
                 self.in_snapshot = false;
-                self.next_seq = Some(header.seq + u64::from(header.length));
+                self.next = Some(OutputPosition {
+                    epoch: header.epoch,
+                    seq: header.seq + u64::from(header.length),
+                });
                 Ok(TerminalEvent::Output(self.frames.payload()))
+            }
+            FrameKind::HistoryGap => {
+                self.end_numbering();
+                Ok(TerminalEvent::HistoryGap)
+            }
+            FrameKind::Restored => {
+                self.end_numbering();
+                Ok(TerminalEvent::Restored)
             }
             FrameKind::End => EndReason::decode(self.frames.payload())
                 .map(|reason| TerminalEvent::End(reason.into()))
@@ -196,6 +217,13 @@ impl TerminalOutput {
                 "the daemon sent a frame that an attach does not have",
             )),
         }
+    }
+
+    /// After this, the daemon continues with a snapshot: output does not
+    /// continue the output before.
+    fn end_numbering(&mut self) {
+        self.in_snapshot = false;
+        self.next = None;
     }
 
     /// Receives the next frame of this attach. If the connection ended and
@@ -263,17 +291,12 @@ impl TerminalOutput {
             output,
             input,
             handle,
-            epoch,
         } = attached;
         // The input side is gone if the client dropped it. The new
         // connection then closes with this function.
         let _ = reattach.new_input.send((input, handle));
         self.frames = output;
         self.handle = handle;
-        if epoch != self.epoch {
-            self.epoch = epoch;
-            self.next_seq = None;
-        }
         self.in_snapshot = false;
         Ok(())
     }
@@ -282,10 +305,7 @@ impl TerminalOutput {
     /// A later attach can resume there. `None` before the first event.
     #[must_use]
     pub fn position(&self) -> Option<OutputPosition> {
-        self.next_seq.map(|seq| OutputPosition {
-            epoch: self.epoch,
-            seq,
-        })
+        self.next
     }
 }
 
