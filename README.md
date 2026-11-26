@@ -140,6 +140,8 @@ $ nomux agent explain k3xq2abc
 
 A guess of the daemon says `(guess)`: a guess is never shown as a fact. `nomux status --tree` also shows the subagents, `nomux events --follow` prints each change, and an attach marks a result as seen. A script in a session reports with `nomux status set working "tests run"`.
 
+An adapter extension of a tool gets the events of its hooks: the hook runs `nomux hook <tool> <event>`. `nomux hooks install <tool>` prints the change that the hooks need in the settings file of the tool and writes it only with `--apply`, and `nomux hooks uninstall <tool> --apply` gives the file its bytes back. [docs/adapters.md](docs/adapters.md) describes the adapters.
+
 ## Install
 
 Each release has one archive for each target and a `SHA256SUMS` file. An archive contains `nomux`, `nomuxd`, `nomux-holder`, this file and the two license files.

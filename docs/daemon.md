@@ -406,6 +406,11 @@ The daemon keeps the last events in memory: 1024 events at most, and 16 MiB of e
 - `Events.Subscribe` makes the connection a stream of events, as `Session.Attach` makes it a stream of frames. The subscription reads the log from its own position and waits for the next event. The log keeps no queue for one client.
 - A client that is too far behind, or that asks for a position that the log does not have, gets a snapshot: an `EventsSnapshot` event and the Agent run of each session that is not ended. Then the events after the snapshot follow.
 - A subscription ends when the client closes its connection.
+- The events of the extensions are in the same log: [extensions.md](extensions.md#events-for-the-clients).
+
+### Hook events
+
+`Hooks.Event` checks the token of the session as `Agent.SetStatus` does, and puts the event into a queue for the adapter extension of the tool: 256 events and 4 MiB at most. The response comes at once. One task calls the method `hook` of the adapters, one event at a time, and ends when the queue is empty. The adapter reports with the host services `agent.report` and `agent.child`, and the status registry keeps the reports as the source "adapter". [adapters.md](adapters.md) has the path of an event and the rules. The code is in `crates/nomuxd/src/hooks`, `crates/nomuxd/src/handlers/hooks.rs` and `crates/nomuxd/src/extensions/agent_services.rs`.
 
 ## What survives the end of the daemon
 
