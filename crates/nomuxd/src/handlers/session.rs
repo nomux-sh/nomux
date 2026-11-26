@@ -2,18 +2,22 @@
 
 use std::path::PathBuf;
 
+use nomux_holder_protocol::journal::MAX_RANGE_LENGTH;
 use nomux_holder_protocol::wire::WindowSize;
 use nomux_proto::wire::v1::{
-    Error, ErrorCode, Session, SessionAttachRequest, SessionCreateRequest, SessionCreateResponse,
+    Error, ErrorCode, RestorePolicy as WireRestorePolicy, Session, SessionAttachRequest,
+    SessionCaptureRequest, SessionCaptureResponse, SessionCreateRequest, SessionCreateResponse,
     SessionDetachRequest, SessionDetachResponse, SessionInputRequest, SessionInputResponse,
-    SessionKillRequest, SessionKillResponse, SessionListResponse, SessionResizeRequest,
-    SessionResizeResponse, SessionState as WireSessionState, response,
+    SessionKillRequest, SessionKillResponse, SessionListRequest, SessionListResponse,
+    SessionResizeRequest, SessionResizeResponse, SessionSetRestorePolicyRequest,
+    SessionSetRestorePolicyResponse, SessionStartRequest, SessionStartResponse, response,
 };
 
 use super::Context;
+use super::session_message::restore_policy_of;
 use crate::attachment::Attachment;
+use crate::handshake::ClientFeatures;
 use crate::session_error::SessionError;
-use crate::session_registry::{SessionRecord, SessionState};
 
 pub(super) async fn create(
     request: SessionCreateRequest,
@@ -30,8 +34,8 @@ pub(super) async fn create(
     }))
 }
 
-pub(super) fn list(context: &Context) -> response::Result {
-    let sessions = context.sessions.list();
+pub(super) fn list(request: SessionListRequest, context: &Context) -> response::Result {
+    let sessions = context.sessions.list(request.include_ended);
     response::Result::SessionList(SessionListResponse {
         sessions: sessions.into_iter().map(Session::from).collect(),
     })
@@ -41,12 +45,13 @@ pub(super) async fn kill(
     request: &SessionKillRequest,
     context: &Context,
 ) -> Result<response::Result, Error> {
-    context.sessions.find(&request.id)?.kill().await?;
+    context.sessions.kill(&request.id).await?;
     Ok(response::Result::SessionKill(SessionKillResponse {}))
 }
 
 pub(super) async fn attach(
     request: &SessionAttachRequest,
+    features: ClientFeatures,
     context: &Context,
 ) -> Result<Attachment, Error> {
     // Without a window size, the session keeps the size that it has.
@@ -54,14 +59,14 @@ pub(super) async fn attach(
         (0, 0) => None,
         (rows, columns) => Some(window_size(rows, columns)?),
     };
-    Ok(Attachment::prepare(request, size, &context.sessions).await?)
+    Ok(Attachment::prepare(request, size, features, &context.sessions).await?)
 }
 
 pub(super) fn detach(
     request: &SessionDetachRequest,
     context: &Context,
 ) -> Result<response::Result, Error> {
-    let clients = context.sessions.find(&request.id)?.clients.detach_all();
+    let clients = context.sessions.detach(&request.id)?;
     Ok(response::Result::SessionDetach(SessionDetachResponse {
         detached: u32::try_from(clients).unwrap_or(u32::MAX),
     }))
@@ -86,6 +91,60 @@ pub(super) async fn resize(
     Ok(response::Result::SessionResize(SessionResizeResponse {}))
 }
 
+pub(super) async fn start(
+    request: &SessionStartRequest,
+    context: &Context,
+) -> Result<response::Result, Error> {
+    let session = context.sessions.start(&request.id).await?;
+    Ok(response::Result::SessionStart(SessionStartResponse {
+        session: Some(session.into()),
+    }))
+}
+
+pub(super) async fn capture(
+    request: &SessionCaptureRequest,
+    context: &Context,
+) -> Result<response::Result, Error> {
+    let journal = context.sessions.journal(&request.id).await?;
+    let epoch = (request.epoch != 0).then_some(request.epoch);
+    let max_length = match request.max_bytes {
+        0 => MAX_RANGE_LENGTH,
+        max_bytes => usize::try_from(max_bytes).unwrap_or(MAX_RANGE_LENGTH),
+    };
+    let captured = journal
+        .output_before(epoch, request.before_seq, max_length)
+        .await
+        .map_err(|error| {
+            SessionError::Failed(format!(
+                "the output of session {} cannot be read: {error}",
+                request.id
+            ))
+        })?;
+    Ok(response::Result::SessionCapture(SessionCaptureResponse {
+        epoch: captured.epoch,
+        seq: captured.position,
+        data: captured.bytes,
+    }))
+}
+
+pub(super) fn set_restore_policy(
+    request: &SessionSetRestorePolicyRequest,
+    context: &Context,
+) -> Result<response::Result, Error> {
+    let policy = WireRestorePolicy::try_from(request.policy)
+        .ok()
+        .and_then(restore_policy_of)
+        .ok_or_else(|| {
+            SessionError::Failed(
+                "the request has no restore policy that the daemon knows".to_owned(),
+            )
+        })?;
+    context.sessions.set_restore_policy(&request.id, policy)?;
+    Ok(response::Result::SessionSetRestorePolicy(
+        SessionSetRestorePolicyResponse {},
+    ))
+}
+
 /// The window size of a request, if the holder accepts it.
 fn window_size(rows: u32, columns: u32) -> Result<WindowSize, Error> {
     let size = match (u16::try_from(rows), u16::try_from(columns)) {
@@ -101,20 +160,6 @@ fn window_size(rows: u32, columns: u32) -> Result<WindowSize, Error> {
                 WindowSize::MAX_CELLS
             ),
         })
-}
-
-impl From<SessionRecord> for Session {
-    fn from(record: SessionRecord) -> Self {
-        let (state, pid) = match record.state {
-            SessionState::Running { pid } => (WireSessionState::Running, pid),
-            SessionState::Unreachable => (WireSessionState::Unreachable, 0),
-        };
-        Self {
-            id: record.id.to_string(),
-            state: state.into(),
-            pid,
-        }
-    }
 }
 
 impl From<SessionError> for Error {

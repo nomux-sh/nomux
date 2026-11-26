@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use nomux_client::RestorePolicy;
 
 use crate::extension_commands::ExtCommand;
 
@@ -82,24 +83,52 @@ pub(crate) enum Command {
         command_after_separator: Vec<String>,
     },
     /// List the sessions
-    Ls,
-    /// Show a session in this terminal. To detach, press Ctrl-\ and then d
+    Ls {
+        /// Also list the sessions whose command ended
+        #[arg(long, short)]
+        all: bool,
+    },
+    /// Show a session in this terminal. To detach, press Ctrl-\ and then d.
+    /// A dormant session starts again
     #[command(after_help = ATTACH_KEYS)]
     Attach {
         /// The session identifier
         id: String,
+    },
+    /// Start the command of a dormant session again
+    Start {
+        /// The session identifier
+        id: String,
+    },
+    /// Print the last output lines of a session
+    Capture {
+        /// The session identifier
+        id: String,
+
+        /// The number of lines
+        #[arg(long, value_name = "N", default_value_t = 100)]
+        lines: usize,
+    },
+    /// Set when a dormant session starts again
+    RestorePolicy {
+        /// The session identifier
+        id: String,
+
+        /// auto: when the daemon starts. on-focus: at the first attach.
+        /// manual: only with `nomux start`
+        policy: RestorePolicy,
     },
     /// Detach the clients that are attached to a session. The session continues
     Detach {
         /// The session identifier
         id: String,
     },
-    /// End a session
+    /// End a session. A dormant session is removed with its output
     Kill {
         /// The session identifier
         id: String,
     },
-    /// Show or stop the daemon
+    /// Show or stop the daemon, and start it at login
     Daemon {
         #[command(subcommand)]
         command: DaemonCommand,
@@ -151,6 +180,19 @@ pub(crate) enum DaemonCommand {
     Status,
     /// Stop the daemon. The sessions continue
     Stop,
+    /// Write the file that starts the daemon at login: a systemd user unit
+    /// on Linux, a launchd agent on macOS
+    InstallService {
+        /// Print the path and the content of the file, and write nothing
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Remove the file that starts the daemon at login
+    UninstallService {
+        /// Print the path of the file, and remove nothing
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[cfg(test)]

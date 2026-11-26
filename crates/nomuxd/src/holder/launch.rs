@@ -1,6 +1,8 @@
-//! Starts a `nomux-holder` process for a new session.
+//! Starts a `nomux-holder` process for a session: a new session, or a
+//! dormant session that starts again.
 
 use std::error::Error;
+use std::ffi::OsString;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom};
@@ -12,6 +14,7 @@ use std::time::Duration;
 use nomux_core::companion_binary;
 use nomux_holder_protocol::SessionId;
 use nomux_holder_protocol::discovery::{READY_FILE, holder_directory};
+use nomux_holder_protocol::wire::WindowSize;
 use tokio::process::{Child, Command};
 use tokio::time::sleep;
 use tracing::debug;
@@ -57,29 +60,53 @@ impl fmt::Display for LaunchError {
 
 impl Error for LaunchError {}
 
-/// Starts a holder for `session_id` and waits until it is ready.
+/// The session that a holder starts.
+pub(crate) struct HolderStart<'a> {
+    pub(crate) session_id: &'a SessionId,
+    /// The program and its arguments.
+    pub(crate) command: &'a [OsString],
+    pub(crate) working_directory: &'a Path,
+    /// The size of the terminal window. `None` is the default size of the
+    /// holder.
+    pub(crate) size: Option<WindowSize>,
+}
+
+/// Starts a holder for `start` and waits until it is ready. The holder
+/// keeps its discovery files in `runtime_directory` and the state of the
+/// session in `state_directory`.
 ///
 /// The holder is not tied to the daemon. It makes its own session with
 /// `setsid`, it has no pipe to the daemon, and the daemon sets no signal for
 /// the end of the parent. Thus the holder continues when the daemon ends.
 pub(crate) async fn launch(
     runtime_directory: &Path,
-    session_id: &SessionId,
-    command: &[String],
-    working_directory: &Path,
+    state_directory: &Path,
+    start: HolderStart<'_>,
 ) -> Result<(), LaunchError> {
+    let session_id = start.session_id;
     let mut standard_error =
         unnamed_file(runtime_directory, session_id).map_err(LaunchError::Spawn)?;
     let holder_error = standard_error.try_clone().map_err(LaunchError::Spawn)?;
-    let mut holder = Command::new(companion_binary(HOLDER_BINARY))
+    let mut holder = Command::new(companion_binary(HOLDER_BINARY));
+    holder
         .arg("--session")
         .arg(session_id.as_str())
         .arg("--runtime-directory")
         .arg(runtime_directory)
+        .arg("--state-directory")
+        .arg(state_directory)
         .arg("--working-directory")
-        .arg(working_directory)
+        .arg(start.working_directory);
+    if let Some(size) = start.size {
+        holder
+            .arg("--rows")
+            .arg(size.rows.to_string())
+            .arg("--columns")
+            .arg(size.columns.to_string());
+    }
+    let mut holder = holder
         .arg("--")
-        .args(command)
+        .args(start.command)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(holder_error)

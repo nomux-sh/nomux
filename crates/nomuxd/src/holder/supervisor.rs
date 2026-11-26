@@ -21,6 +21,7 @@ use super::backoff::Backoff;
 use super::connection::{HolderConnection, HolderLink, open_with_lease};
 use crate::session_registry::{SessionRegistry, SessionState};
 use crate::shutdown::Shutdown;
+use crate::stopped_sessions::StoppedSessions;
 
 /// After `SIGHUP`, the command has this time to end. Then it gets `SIGKILL`.
 const HANGUP_GRACE: Duration = Duration::from_secs(2);
@@ -110,6 +111,8 @@ pub(crate) struct Supervisor {
     session_id: SessionId,
     runtime_directory: PathBuf,
     registry: Arc<SessionRegistry>,
+    /// Takes the session when its holder is gone.
+    stopped: Arc<StoppedSessions>,
     shutdown: Shutdown,
     commands: mpsc::Receiver<SessionCommand>,
     /// Tells the attached clients how the session ended.
@@ -127,6 +130,7 @@ impl Supervisor {
         session_id: SessionId,
         runtime_directory: PathBuf,
         registry: Arc<SessionRegistry>,
+        stopped: Arc<StoppedSessions>,
         shutdown: Shutdown,
         commands: mpsc::Receiver<SessionCommand>,
         ended: watch::Sender<Option<SessionEnd>>,
@@ -135,6 +139,7 @@ impl Supervisor {
             session_id,
             runtime_directory,
             registry,
+            stopped,
             shutdown,
             commands,
             ended,
@@ -144,8 +149,8 @@ impl Supervisor {
         }
     }
 
-    /// Runs until the session ends. Without a link, the task connects to
-    /// the holder first.
+    /// Runs until the holder of the session is gone. Without a link, the
+    /// task connects to the holder first.
     pub(crate) async fn run(mut self, mut link: Option<HolderLink>) {
         let end = loop {
             let current = match link.take() {
@@ -169,10 +174,28 @@ impl Supervisor {
                 }
             }
         };
-        info!(session = %self.session_id, ?end, "the session ended");
-        self.registry.remove(&self.session_id);
+        info!(session = %self.session_id, ?end, "the holder of the session is gone");
+        self.hand_over(end);
         self.ended.send_replace(Some(end));
         self.answer_kill_waiters(Ok(()));
+    }
+
+    /// Gives the session, which has no holder now, to the list of the
+    /// stopped sessions.
+    fn hand_over(&self, end: SessionEnd) {
+        match end {
+            // A client asked for the end of the session, thus the session
+            // does not stay as a dormant session.
+            SessionEnd::Lost if !self.kill_waiters.is_empty() => {
+                self.stopped.forget(&self.session_id);
+            }
+            // The command did not end: the state directory says what the
+            // session is now.
+            SessionEnd::Lost => self.stopped.classify(&self.session_id),
+            SessionEnd::Exited { .. } | SessionEnd::Signaled { .. } => {
+                self.stopped.command_ended(&self.session_id, end);
+            }
+        }
     }
 
     /// Only one daemon can write to a holder. The daemon that asked for the

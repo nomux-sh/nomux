@@ -118,13 +118,8 @@ impl Host {
             session_id: id.to_owned(),
             new_input,
         };
-        let output = TerminalOutput::new(
-            attached.output,
-            attached.handle,
-            attached.epoch,
-            options.resume,
-        )
-        .reattaching(reattach);
+        let output = TerminalOutput::new(attached.output, attached.handle, options.resume)
+            .reattaching(reattach);
         Ok((output, input))
     }
 }

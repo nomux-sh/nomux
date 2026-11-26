@@ -1,6 +1,8 @@
 //! The result of a command that did not fail.
 
-use nomux_client::{AttachEnd, HostCheck, HostInfo, Installation, Session};
+use std::path::PathBuf;
+
+use nomux_client::{AttachEnd, HostCheck, HostInfo, Installation, RestorePolicy, Session};
 use nomux_core::configuration::HostEntry;
 
 use crate::exit_code;
@@ -10,6 +12,16 @@ use crate::extension_commands::ExtensionReport;
 pub(crate) enum Report {
     SessionCreated(Session),
     Sessions(Vec<Session>),
+    SessionStarted(Session),
+    OutputCaptured {
+        id: String,
+        /// The output bytes, as the command of the session wrote them.
+        output: Vec<u8>,
+    },
+    RestorePolicySet {
+        id: String,
+        policy: RestorePolicy,
+    },
     SessionKilled {
         id: String,
     },
@@ -35,7 +47,31 @@ pub(crate) enum Report {
     },
     HostsChecked(Vec<HostDiagnosis>),
     Extension(ExtensionReport),
+    ServiceFile(ServiceFileReport),
     Version,
+}
+
+/// What a command did with the file that starts the daemon at login.
+#[derive(Debug)]
+pub(crate) struct ServiceFileReport {
+    pub(crate) action: ServiceFileAction,
+    pub(crate) path: PathBuf,
+    /// The content of the file. Only for an install.
+    pub(crate) content: Option<String>,
+    /// The command that tells the service manager about the change.
+    pub(crate) next_step: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ServiceFileAction {
+    Installed,
+    /// A dry run of an install.
+    WouldInstall,
+    Removed,
+    /// A dry run of a removal.
+    WouldRemove,
+    /// The file does not exist, thus there is nothing to remove.
+    NotInstalled,
 }
 
 /// A remote host that `host add` saved.

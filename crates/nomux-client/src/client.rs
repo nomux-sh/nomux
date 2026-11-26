@@ -4,17 +4,23 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
+use nomux_proto::capabilities::OUTPUT_HISTORY;
 use nomux_proto::compatibility::{VersionRange, negotiate};
 use nomux_proto::wire::v1::{
     self as wire, Envelope, Hello, HostInfoRequest, HostStopRequest, Request, SessionAttachRequest,
-    SessionCreateRequest, SessionDetachRequest, SessionInputRequest, SessionKillRequest,
-    SessionListRequest, SessionResizeRequest, envelope, request, response,
+    SessionCaptureRequest, SessionCreateRequest, SessionDetachRequest, SessionInputRequest,
+    SessionKillRequest, SessionListRequest, SessionResizeRequest, SessionSetRestorePolicyRequest,
+    SessionStartRequest, envelope, request, response,
 };
 use nomux_transport::{EnvelopeStream, FrameReader, FrameWriter};
 use tokio::time::timeout;
 
+use crate::session::wire_restore_policy;
 use crate::terminal::{AttachOptions, TerminalInput, TerminalOutput};
-use crate::{ClientError, ClientKind, HostInfo, NewSession, Session, WindowSize};
+use crate::{
+    CaptureRange, CapturedOutput, ClientError, ClientKind, HostInfo, NewSession, RestorePolicy,
+    Session, WindowSize,
+};
 
 /// The longest time that a client waits for the response to one request.
 /// The daemon ends each request of this protocol version earlier.
@@ -73,7 +79,9 @@ impl Client {
         let hello = Hello {
             version: local.version,
             oldest: local.oldest,
-            capabilities: Vec::new(),
+            // This client reads the output of an earlier epoch and the
+            // frames that come with it.
+            capabilities: vec![OUTPUT_HISTORY.to_owned()],
             client_kind: wire::ClientKind::from(kind).into(),
             token: String::new(),
         };
@@ -121,13 +129,19 @@ impl Client {
         }
     }
 
-    /// Lists the sessions of the host, in the sequence of their identifiers.
+    /// Lists the sessions of the host, in the sequence of their identifiers:
+    /// the sessions whose command runs, the dormant sessions and the
+    /// damaged sessions. With `include_ended`, also the sessions whose
+    /// command ended and that the daemon still keeps.
     ///
     /// # Errors
     ///
     /// Returns an error if the connection fails.
-    pub async fn list_sessions(&mut self) -> Result<Vec<Session>, ClientError> {
-        let request = request::Body::SessionList(SessionListRequest {});
+    pub async fn list_sessions(
+        &mut self,
+        include_ended: bool,
+    ) -> Result<Vec<Session>, ClientError> {
+        let request = request::Body::SessionList(SessionListRequest { include_ended });
         match self.call(request).await? {
             response::Result::SessionList(list) => {
                 Ok(list.sessions.into_iter().map(Session::from).collect())
@@ -136,7 +150,86 @@ impl Client {
         }
     }
 
-    /// Ends the session `id` and waits until its command has ended.
+    /// Starts the command of the dormant session `id` again, with the
+    /// command, the working directory and the window size that it had. A
+    /// session whose command runs stays as it is.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::NotFound`] if no session has the identifier
+    /// or if the command of the session ended, and [`ClientError::Failed`]
+    /// if the command cannot start.
+    pub async fn start_session(&mut self, id: &str) -> Result<Session, ClientError> {
+        let request = SessionStartRequest { id: id.to_owned() };
+        match self.call(request::Body::SessionStart(request)).await? {
+            response::Result::SessionStart(started) => started
+                .session
+                .map(Session::from)
+                .ok_or_else(|| ClientError::invalid_reply("the response has no session")),
+            _ => Err(unexpected_result()),
+        }
+    }
+
+    /// Sets when the daemon starts the command of the session `id` again
+    /// after the session became dormant.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::NotFound`] if no session has the identifier
+    /// or if the command of the session ended.
+    pub async fn set_restore_policy(
+        &mut self,
+        id: &str,
+        policy: RestorePolicy,
+    ) -> Result<(), ClientError> {
+        let request = SessionSetRestorePolicyRequest {
+            id: id.to_owned(),
+            policy: wire_restore_policy(policy).into(),
+        };
+        match self
+            .call(request::Body::SessionSetRestorePolicy(request))
+            .await?
+        {
+            response::Result::SessionSetRestorePolicy(_) => Ok(()),
+            _ => Err(unexpected_result()),
+        }
+    }
+
+    /// Reads output bytes of the session `id` that are before a position:
+    /// one part of its scrollback. The session can have each state, also
+    /// dormant and ended.
+    ///
+    /// The bytes are the last ones before `range.before` that the daemon
+    /// has without a gap. To read the bytes before them, ask again with
+    /// `before` equal to the `seq` of the result. No bytes: the daemon has
+    /// no output of that epoch before the position.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::NotFound`] if no session has the identifier.
+    pub async fn capture(
+        &mut self,
+        id: &str,
+        range: CaptureRange,
+    ) -> Result<CapturedOutput, ClientError> {
+        let request = SessionCaptureRequest {
+            id: id.to_owned(),
+            epoch: range.epoch.unwrap_or(0),
+            before_seq: range.before,
+            max_bytes: range.max_bytes.unwrap_or(0),
+        };
+        match self.call(request::Body::SessionCapture(request)).await? {
+            response::Result::SessionCapture(captured) => Ok(CapturedOutput {
+                epoch: captured.epoch,
+                seq: captured.seq,
+                bytes: captured.data,
+            }),
+            _ => Err(unexpected_result()),
+        }
+    }
+
+    /// Ends the session `id` and waits until its command has ended. A
+    /// dormant or a damaged session leaves the host with its output.
     ///
     /// # Errors
     ///
@@ -154,6 +247,9 @@ impl Client {
     /// the terminal of the attach: the result is the screen and the output
     /// of the session, and the way to send input.
     ///
+    /// An attach to a dormant session starts its command again, if the
+    /// restore policy of the session is not [`RestorePolicy::Manual`].
+    ///
     /// To send a request during the attach, for example
     /// [`resize_session`](Self::resize_session), use a second connection.
     ///
@@ -164,8 +260,9 @@ impl Client {
     /// # Errors
     ///
     /// Returns [`ClientError::NotFound`] if no session has the identifier,
-    /// and [`ClientError::Failed`] if the window size is not valid or the
-    /// daemon cannot read the terminal of the session.
+    /// and [`ClientError::Failed`] if the window size is not valid, if the
+    /// daemon cannot read the terminal of the session, or if the session is
+    /// dormant and cannot start.
     pub async fn attach(
         self,
         id: &str,
@@ -173,12 +270,7 @@ impl Client {
     ) -> Result<(TerminalOutput, TerminalInput), ClientError> {
         let attached = self.attach_frames(id, options).await?;
         Ok((
-            TerminalOutput::new(
-                attached.output,
-                attached.handle,
-                attached.epoch,
-                options.resume,
-            ),
+            TerminalOutput::new(attached.output, attached.handle, options.resume),
             TerminalInput::new(attached.input, attached.handle),
         ))
     }
@@ -211,7 +303,6 @@ impl Client {
             output,
             input,
             handle: attached.handle,
-            epoch: attached.epoch,
         })
     }
 
@@ -359,8 +450,6 @@ pub(crate) struct AttachedFrames {
     pub(crate) input: FrameWriter,
     /// The session handle of the frames.
     pub(crate) handle: u32,
-    /// The epoch of the session.
-    pub(crate) epoch: u32,
 }
 
 pub(crate) fn unexpected_result() -> ClientError {

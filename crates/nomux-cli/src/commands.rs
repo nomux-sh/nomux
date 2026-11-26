@@ -9,7 +9,7 @@ use nomux_client::{ClientError, ClientKind, Host, NewSession};
 use crate::arguments::{Command, DaemonCommand};
 use crate::output::Format;
 use crate::report::Report;
-use crate::{attach, extension_commands, host_commands, selected_host};
+use crate::{attach, extension_commands, host_commands, selected_host, service_files};
 
 pub(crate) const KIND: ClientKind = ClientKind::Cli;
 
@@ -32,6 +32,12 @@ pub(crate) async fn run(
         Command::Ext { command } => {
             return extension_commands::run(command, host_name, format).await;
         }
+        Command::Daemon {
+            command: DaemonCommand::InstallService { dry_run },
+        } => return on_this_computer(host_name).and_then(|()| service_files::install(dry_run)),
+        Command::Daemon {
+            command: DaemonCommand::UninstallService { dry_run },
+        } => return on_this_computer(host_name).and_then(|()| service_files::uninstall(dry_run)),
         Command::New { attach: true, .. } | Command::Attach { .. } => {
             // A session that no terminal can show does not start, and a
             // host is not contacted for it.
@@ -64,9 +70,22 @@ pub(crate) async fn run(
             let clients = host.client(KIND).await?.detach_session(&id).await?;
             Ok(Report::ClientsDetached { id, clients })
         }
-        Command::Ls => {
-            let sessions = host.client(KIND).await?.list_sessions().await?;
+        Command::Ls { all } => {
+            let sessions = host.client(KIND).await?.list_sessions(all).await?;
             Ok(Report::Sessions(sessions))
+        }
+        Command::Start { id } => {
+            let session = host.client(KIND).await?.start_session(&id).await?;
+            Ok(Report::SessionStarted(session))
+        }
+        Command::Capture { id, lines } => {
+            let output = host.client(KIND).await?.capture_lines(&id, lines).await?;
+            Ok(Report::OutputCaptured { id, output })
+        }
+        Command::RestorePolicy { id, policy } => {
+            let mut client = host.client(KIND).await?;
+            client.set_restore_policy(&id, policy).await?;
+            Ok(Report::RestorePolicySet { id, policy })
         }
         // A session lives without a daemon, thus `kill` starts one too.
         Command::Kill { id } => {
@@ -103,6 +122,19 @@ async fn daemon(host: &Host, command: DaemonCommand) -> Result<Report, ClientErr
             client.stop_daemon().await?;
             Ok(Report::DaemonStopped { was_running: true })
         }
+        (DaemonCommand::InstallService { .. } | DaemonCommand::UninstallService { .. }, _) => {
+            unreachable!("handled before the connection")
+        }
+    }
+}
+
+/// A service file is a file of the computer of the CLI.
+fn on_this_computer(host_name: Option<&str>) -> Result<(), ClientError> {
+    match host_name {
+        None => Ok(()),
+        Some(_) => Err(ClientError::Failed(
+            "the --host option cannot be used with this command: run it on the host".to_owned(),
+        )),
     }
 }
 

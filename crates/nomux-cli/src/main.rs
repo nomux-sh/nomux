@@ -17,6 +17,7 @@
 //! - `extension_commands`: the `ext` commands, which install, list, remove
 //!   and call the extensions of a host and check a manifest.
 //! - `attach`: the `attach` command, which uses the terminal of the user.
+//! - `service_files`: the file that starts the daemon at login.
 //! - `report`: the result of a command.
 //! - `output`: the text and the JSON form of a result and of an error.
 //! - `exit_code`: the exit codes.
@@ -29,10 +30,12 @@
 //!
 //! # Status
 //!
-//! The CLI has the commands `new`, `ls`, `attach`, `detach`, `kill`,
-//! `daemon status`, `daemon stop`, `host add`, `host ls`, `host rm`,
-//! `host doctor`, `ext ls`, `ext install`, `ext rm`, `ext enable`,
-//! `ext disable`, `ext call`, `ext validate` and `version`, and the `--host`
+//! The CLI has the commands `new`, `ls`, `attach`, `start`, `capture`,
+//! `restore-policy`, `detach`, `kill`, `daemon status`, `daemon stop`,
+//! `daemon install-service`, `daemon uninstall-service`, `host add`,
+//! `host ls`, `host rm`, `host doctor`, `ext ls`, `ext install`, `ext rm`,
+//! `ext enable`, `ext disable`, `ext call`, `ext validate` and `version`,
+//! and the `--host`
 //! option. The other commands are not written yet.
 
 mod arguments;
@@ -44,6 +47,7 @@ mod host_commands;
 mod output;
 mod report;
 mod selected_host;
+mod service_files;
 
 use std::io;
 use std::process::ExitCode;
