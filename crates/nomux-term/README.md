@@ -1,7 +1,7 @@
 # nomux-term
 
 The terminal state of nomux: a thin abstraction over one VT library, `alacritty_terminal` 0.26.0.
-The holder gives the output of a program to a `Terminal`, and reads the screen, the redraw sequence for a client that attaches, and the OSC sequences that the library does not handle.
+The holder gives the output of a program to a `Terminal`, and reads the screen, the redraw sequence for a client that attaches, the OSC sequences that the library does not handle, and the answers to the queries of the program.
 
 The documentation of the crate (`cargo doc -p nomux-term --open`) has the interface.
 [ADR-0003](https://github.com/nomux-sh/docs/blob/main/adr/0003-vt-library.md) has the selection of the VT library.
@@ -49,8 +49,34 @@ The fuzz targets in [`fuzz`](../../fuzz/README.md) give arbitrary output to the 
 | Program reports | `Osc::record` parses the program status (OSC 7501), the prompt marks (OSC 133) and the notifications (OSC 9, OSC 777) | The unit tests of `src/osc` |
 | History | `Terminal::with_history` keeps the rows that scroll out above the primary screen, up to a limit, with the cells and the styles. `Terminal::new` keeps no history. A resize reflows the primary screen and the history when the number of columns changes, and moves rows between the screen and the history when the number of rows changes. ED 3 clears the history. The alternate screen has no history | H |
 | Redraw sequence | The cells, the cursor, the modes, the kitty keyboard flags and the style of the next character. With the alternate screen, also the screen behind it | R |
+| Answers to queries | `Terminal::take_replies` gives the answers in the order of the queries, also when a call of `Terminal::feed` divides a query. The table "Answers" has each answer | K `queries` |
+| Query filter | `QueryFilter` removes the queries that `Terminal` answers from output that goes to a second terminal, and passes all other bytes in their order | The unit tests of `src/query_filter.rs` |
 
 The library also handles the OSC sequences for the title, the palette colors, the hyperlinks (OSC 8) and the clipboard (OSC 52). `nomux-term` has no interface for them yet.
+
+### Answers
+
+The answers make nomux one terminal type, with the same answers in each session. They do not change between versions, except the version numbers in the secondary device attributes and in XTVERSION.
+
+| Query | Sequence | Answer of nomux |
+|---|---|---|
+| Primary device attributes (DA1) | `CSI c`, `CSI 0 c` | `CSI ? 62 ; 22 c`: a VT220 (62) with ANSI colors (22). It does not say sixel (4) or ReGIS (3), because nomux keeps no picture. The library says `CSI ? 6 c` (a VT102) |
+| Secondary device attributes (DA2) | `CSI > c`, `CSI > 0 c` | `CSI > 1 ; Pv ; 0 c`: a VT220 (1), the version of nomux as one number (`Pv` = major × 10000 + minor × 100 + patch) and no ROM cartridge (0). The library says its own version |
+| Terminal name and version (XTVERSION) | `CSI > q`, `CSI > 0 q` | `DCS > \| nomux(version) ST`, for example `nomux(0.5.0)` |
+| Device status | `CSI 5 n` | `CSI 0 n` |
+| Cursor position | `CSI 6 n` | `CSI row ; column R` of the cursor of the session |
+| Mode request (DECRQM) | `CSI Ps $ p`, `CSI ? Ps $ p` | `CSI ? Ps ; Pm $ y` from the modes of the session. DEC mode 2026 (synchronized updates) is 2, reset: a program can send the mode, and `nomux-term` applies the output immediately |
+| Kitty keyboard flags | `CSI ? u` | `CSI ? flags u` of the session |
+| Text area size in cells | `CSI 18 t` | `CSI 8 ; rows ; columns t` |
+| Text area size in pixels | `CSI 14 t` | `CSI 4 ; 0 ; 0 t`: nomux knows no pixel size |
+| Colors | `OSC 4 ; index ; ?`, `OSC 10 ; ?`, `OSC 11 ; ?`, `OSC 12 ; ?` | `OSC 4 ; index ; rgb:RRRR/GGGG/BBBB` and the same form for 10, 11 and 12, with the end of the query (BEL or ST). The color that the program set, else the color of the `Palette` of `Terminal::set_palette` |
+| Setting request (DECRQSS) | `DCS $ q Pt ST` | `DCS 0 $ r ST`: the setting is not known |
+
+The default `Palette` is dark: the foreground `e5e5e5`, the background `000000`, the cursor in the foreground color, the 16 colors of xterm, and the 6 × 6 × 6 cube and the 24 grays of xterm for the indexes 16 to 255. The holder uses the default until a client can give its palette ([#118](https://github.com/nomux-sh/nomux/issues/118)). Thus a program that reads the background color to choose a light or a dark scheme gets dark.
+
+`nomux-term` does not answer a request for the clipboard (`OSC 52 ; c ; ?`): a program must not read the clipboard of the user. It does not answer the other queries, for example the tertiary device attributes (`CSI = c`) and XTGETTCAP (`DCS + q`). A program that sends such a query usually sends DA1 after it and continues when the answer to DA1 comes.
+
+A terminal keeps 4096 bytes of answers at most until `take_replies`: a program that sends queries and does not read the answers does not make the memory grow.
 
 ### Known gaps
 
@@ -74,7 +100,8 @@ The library also handles the OSC sequences for the title, the palette colors, th
 | DECSCNM | Not handled: no reverse video of the screen | K `modes` |
 | SGR 21, 5 and 53 | Not kept: double underline with SGR 21 (SGR `4:2` works), blink and overline | K `sgr` |
 | Mouse modes 9 and 1015 | Not handled: a client sends no X10 mouse report and no urxvt encoding | K `modes` |
-| Answers to queries | `nomux-term` answers no query: device attributes (DA1, DA2), DECRQM, the device status and the cursor position (DSR), the kitty keyboard flags (`CSI ? u`), the colors (OSC 10, 11, 12), the text area size (`CSI 18 t`, `CSI 14 t`), XTVERSION and DECRQSS. A program that waits for an answer waits until its timeout | K `queries`, [#89](https://github.com/nomux-sh/nomux/issues/89) |
+| DECRQSS | The answer says that the setting is not known (`DCS 0 $ r ST`). xterm answers with the setting, for example `DCS 1 $ r 0 m ST` for the SGR | K `queries` |
+| Colors of the client | The colors that the program did not set come from a fixed dark palette, not from the terminal of the client | K `queries`, [#118](https://github.com/nomux-sh/nomux/issues/118) |
 
 The redraw sequence does not make these parts of the state, because the library has no read access to them. A client that attaches has the default value until the program sets the value again:
 

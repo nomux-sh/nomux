@@ -13,6 +13,11 @@
 //!   screen in a new terminal. The daemon sends it to a client that attaches.
 //! - [`Terminal::incomplete_tail`] is the number of bytes at the end of the
 //!   output that are a sequence or a character that is not complete.
+//! - [`Terminal::take_replies`] gives the answers to the queries of the
+//!   program, with the colors of a [`Palette`]. The holder writes them to
+//!   the input of the program.
+//! - [`QueryFilter`] removes the queries from output that goes to a second
+//!   terminal, thus that terminal does not answer them too.
 //! - [`Osc`] is an OSC sequence that the VT library does not handle.
 //!   [`Osc::record`] parses the sequences with which a program or a shell
 //!   reports its state: the program status (OSC 7501), the prompt marks
@@ -59,7 +64,10 @@ mod conversion;
 mod cursor;
 mod modes;
 pub mod osc;
+mod palette;
+mod query_filter;
 mod redraw;
+mod reply;
 mod screen;
 mod sequence_scanner;
 mod size;
@@ -69,6 +77,8 @@ pub use cell::{Attributes, Cell, CellWidth, Color, Style, Underline};
 pub use cursor::{Cursor, CursorShape, Position};
 pub use modes::Modes;
 pub use osc::Osc;
+pub use palette::{Palette, Rgb};
+pub use query_filter::QueryFilter;
 pub use screen::Screen;
 pub use size::Size;
 pub use terminal::Terminal;
