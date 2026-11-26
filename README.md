@@ -8,7 +8,7 @@ This repository is a part of [nomux](https://github.com/nomux-sh), a native and 
 
 In development. Versions earlier than 1.0.0 are pre-releases: interfaces can change between minor versions.
 
-The repository now has the Cargo workspace, the developer tools, CI and the first version of the holder ([docs/holder.md](docs/holder.md)), of the daemon ([docs/daemon.md](docs/daemon.md)) and of the CLI ([docs/cli.md](docs/cli.md)). The CLI creates, lists and ends sessions, attaches a terminal to a session and detaches it, and a session continues when the daemon stops. The same commands work on a remote host through SSH ([docs/remote.md](docs/remote.md)). The daemon runs extensions that the user installs from a directory ([docs/extensions.md](docs/extensions.md)). The journal and the scrollback are the next work: refer to the [roadmap](https://github.com/nomux-sh/docs/blob/main/src/content/docs/project/roadmap.md).
+The repository now has the Cargo workspace, the developer tools, CI and the first version of the holder ([docs/holder.md](docs/holder.md)), of the daemon ([docs/daemon.md](docs/daemon.md)) and of the CLI ([docs/cli.md](docs/cli.md)). The CLI creates, lists and ends sessions, attaches a terminal to a session and detaches it, and a session continues when the daemon stops. Each session keeps its output in a journal on disk: a client reads the scrollback from it, and after a restart of the host a session starts again when it is opened. The same commands work on a remote host through SSH ([docs/remote.md](docs/remote.md)). The daemon runs extensions that the user installs from a directory ([docs/extensions.md](docs/extensions.md)). Refer to the [roadmap](https://github.com/nomux-sh/docs/blob/main/src/content/docs/project/roadmap.md) for the next work.
 
 ## Quick start
 
@@ -29,8 +29,8 @@ The repository now has the Cargo workspace, the developer tools, CI and the firs
    ```console
    detached from session k3xq2abc
    $ nomux ls
-   ID        STATE    PID
-   k3xq2abc  running  41873
+   ID        STATE    PID    COMMAND
+   k3xq2abc  running  41873  /bin/zsh
    ```
 
 4. Attach again from the same terminal or from a different one. More than one terminal can show the same session at the same time.
@@ -47,6 +47,27 @@ The repository now has the Cargo workspace, the developer tools, CI and the firs
    ```
 
 A session does not need the daemon: it continues when the daemon stops (`nomux daemon stop`), fails or is updated. The next command starts a new daemon, which finds the session.
+
+`nomux capture k3xq2abc --lines 50` prints the last 50 lines that the session wrote, also the lines that left its screen.
+
+### After a restart of the host
+
+A restart of the host stops each process, thus also the commands of the sessions. The sessions are not lost: each one keeps its command, its working directory, its window size and its output on disk.
+
+```console
+$ nomux ls
+ID        STATE    PID  COMMAND
+k3xq2abc  dormant  -    /bin/zsh
+m7pd4xyz  dormant  -    npm run dev
+```
+
+- A dormant session uses no process and no memory. `nomux attach k3xq2abc` starts its command again in its working directory. The terminal shows the end of the old output, a line that says that the session started again, and the new command. The programs that ran before the restart do not come back.
+- `nomux capture k3xq2abc` prints the old output without a start of the session.
+- `nomux restore-policy m7pd4xyz auto` makes a session start again when the daemon starts, for example a development server. The other policies are `on-focus` (the default: the session starts at the first attach) and `manual` (only `nomux start`).
+- `nomux daemon install-service` writes the file that starts the daemon at login: a systemd user unit on Linux, a launchd agent on macOS. Without it, the first `nomux` command after the restart starts the daemon.
+- `nomux kill k3xq2abc` removes a dormant session and its output.
+
+A session whose command ended is not dormant. The daemon keeps it and its output for 24 hours: `nomux ls --all` shows it with its exit status.
 
 Each command accepts `--json`. [docs/cli.md](docs/cli.md) has the commands, the keys of an attach, the JSON schema and the exit codes.
 
