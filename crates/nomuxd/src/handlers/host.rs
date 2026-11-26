@@ -11,6 +11,7 @@ pub(super) fn info(context: &Context) -> response::Result {
         daemon_version: env!("CARGO_PKG_VERSION").to_owned(),
         daemon_pid: process::id(),
         session_count: u32::try_from(context.sessions.list(false).len()).unwrap_or(u32::MAX),
+        memory_limit: None,
     })
 }
 
