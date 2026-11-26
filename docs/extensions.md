@@ -267,7 +267,7 @@ The clients use the extensions through the `Ext` service of the control protocol
 | `Ext.SetEnabled` | `ExtensionHost::enable`, or `ExtensionHost::disable` with the reason `the user disabled the extension` |
 | `Ext.Call` | `ExtensionHost::call`. The first call of an extension starts its process |
 
-**No extension runs before the user approved its permissions.** The daemon starts a process only for `Ext.Call`, and only for an extension that `Ext.Install` installed. `Ext.Install` records the permissions of its request and no others. A client shows the answer of `Ext.Inspect` to the user and sends `Ext.Install` only with the approval of the user. The CLI gets the approval from its arguments: [cli.md](cli.md) describes `nomux ext install`.
+**No extension runs before the user approved its permissions.** The daemon starts a process only for `Ext.Call`, and only for an extension that `Ext.Install` installed. `Ext.Install` records the permissions of its request and no others. A client shows the answer of `Ext.Inspect` to the user and sends `Ext.Install` only with the approval of the user. The CLI gets the approval from its arguments: [cli.md](cli.md) describes `nomux ext install`. For a release archive, the client reads the archive and shows its manifest before it writes the package on the host; the daemon reads only a package directory.
 
 An extension has one state for a client:
 

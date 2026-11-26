@@ -34,7 +34,7 @@ pub use crate::adapter_package::{TEST_ADAPTER, adapter_package};
 pub use crate::extension_package::extension_package;
 pub use crate::key_latency::{key_to_echo, latency_row};
 pub use crate::process_guard::ProcessGuard;
-pub use crate::remote_host::RemoteHost;
+pub use crate::remote_host::{RemoteHost, release_archive, release_target};
 pub use crate::ssh_server::{SshServer, generate_key, public_key, sshd_path};
 pub use crate::tcp_relay::{Impairment, TcpRelay};
 pub use crate::terminal_client::TerminalClient;

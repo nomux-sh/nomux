@@ -23,8 +23,10 @@ use nomux_transport::ssh::{CommandOutput, SshConnection};
 pub use self::binaries::BinarySource;
 pub(crate) use self::binaries::sha256_hex;
 use self::binaries::{Binaries, read_directory};
-pub(crate) use self::platform::RemotePlatform;
+pub(crate) use self::install::unique_suffix;
+pub(crate) use self::platform::{RELEASE_TARGETS, RemotePlatform};
 pub(crate) use self::probe::probe;
+pub(crate) use self::release_archive::check_sha256;
 use crate::ClientError;
 
 /// The version of this client. The three binaries of an installation have

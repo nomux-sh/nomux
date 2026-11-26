@@ -4,7 +4,10 @@
 
 use std::sync::Arc;
 
-use crate::bootstrap::{BinarySource, BootstrapStep, Installation};
+use std::path::PathBuf;
+
+use crate::bootstrap::{BinarySource, BootstrapStep, Installation, RemotePlatform};
+use crate::extension_archive::{ExtensionArchive, downloads_directory};
 use crate::local_host::LocalHost;
 use crate::ssh_host::SshHost;
 use crate::terminal::{AttachOptions, Reattach, TerminalInput, TerminalOutput};
@@ -17,6 +20,21 @@ use crate::{Client, ClientError, ClientKind};
 #[derive(Debug, Clone)]
 pub struct Host {
     place: Place,
+}
+
+/// The package of an archive on a host, before the daemon installs it.
+#[derive(Debug)]
+pub struct StagedPackage {
+    /// The package directory: a path on the host.
+    pub directory: PathBuf,
+    root: StagedRoot,
+}
+
+#[derive(Debug)]
+enum StagedRoot {
+    Local(PathBuf),
+    /// A path below the home directory of the user on the host.
+    Remote(String),
 }
 
 #[derive(Debug, Clone)]
@@ -61,6 +79,75 @@ impl Host {
             place: Place::Ssh(Arc::new(host)),
         };
         Ok((host, installation))
+    }
+
+    /// The release target of the host, for example
+    /// `x86_64-unknown-linux-musl`: the name of a release archive for the
+    /// host ends with it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::Failed`] if nomux has no release target for
+    /// this computer.
+    pub fn release_target(&self) -> Result<String, ClientError> {
+        match &self.place {
+            Place::Local(_) => Ok(RemotePlatform::of_this_computer()?.target.to_owned()),
+            Place::Ssh(ssh) => Ok(ssh.release_target().to_owned()),
+        }
+    }
+
+    /// Writes the package of `archive` on the host, into a new directory
+    /// of `~/.nomux/downloads` that only the user can read. Call it only
+    /// after the user accepted the extension.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a file cannot be written on the host.
+    pub async fn stage_extension_package(
+        &self,
+        archive: &ExtensionArchive,
+    ) -> Result<StagedPackage, ClientError> {
+        match &self.place {
+            Place::Local(_) => {
+                let parent = downloads_directory()?;
+                let root = tempfile::Builder::new()
+                    .prefix("package-")
+                    .tempdir_in(&parent)
+                    .map_err(|error| ClientError::Failed(format!("{}: {error}", parent.display())))?
+                    .keep();
+                let directory = archive.write_package(&root).map_err(|error| {
+                    let _ = std::fs::remove_dir_all(&root);
+                    ClientError::Failed(format!("the package cannot be written: {error}"))
+                })?;
+                Ok(StagedPackage {
+                    directory,
+                    root: StagedRoot::Local(root),
+                })
+            }
+            Place::Ssh(ssh) => {
+                let (root, directory) = ssh.stage_package(archive).await?;
+                Ok(StagedPackage {
+                    directory: PathBuf::from(directory),
+                    root: StagedRoot::Remote(root),
+                })
+            }
+        }
+    }
+
+    /// Removes a package that [`stage_extension_package`] wrote. The daemon
+    /// keeps a copy of an installed package.
+    ///
+    /// [`stage_extension_package`]: Self::stage_extension_package
+    pub async fn remove_staged_package(&self, staged: StagedPackage) {
+        match (&self.place, staged.root) {
+            (_, StagedRoot::Local(root)) => {
+                let _ = std::fs::remove_dir_all(root);
+            }
+            (Place::Ssh(ssh), StagedRoot::Remote(root)) => {
+                ssh.remove_staged(&root).await;
+            }
+            _ => {}
+        }
     }
 
     /// Opens a connection to the daemon of the host. If no daemon runs,

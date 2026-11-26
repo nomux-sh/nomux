@@ -11,6 +11,7 @@ use tokio::sync::Mutex;
 use tokio::time::{Instant, sleep};
 
 use crate::bootstrap::{self, BinarySource, BootstrapStep, Installation, remote_shell};
+use crate::extension_archive::ExtensionArchive;
 use crate::{Client, ClientError, ClientKind};
 
 /// The longest time from the start of the daemon to its first answer.
@@ -96,6 +97,70 @@ impl SshHost {
             Ok(stream) => Ok(Some(stream)),
             Err(SshError::SocketUnavailable) => Ok(None),
             Err(error) => Err(error.into()),
+        }
+    }
+
+    /// The release target of the host.
+    pub(crate) fn release_target(&self) -> &str {
+        &self.installation.target
+    }
+
+    /// Sends the package of `archive` to `~/.nomux/downloads/<unique>` on
+    /// the host. Gives that directory below the home directory, and the
+    /// path of the package directory. The
+    /// names of a package have only the characters of
+    /// `archive_entries::is_path_character`, thus each path is safe in
+    /// double quotes.
+    pub(crate) async fn stage_package(
+        &self,
+        archive: &ExtensionArchive,
+    ) -> Result<(String, String), ClientError> {
+        let connection = self.connection().await?;
+        let run = async |what: &str, script: String, input: &[u8]| {
+            let output = connection.run(&remote_shell(&script), input).await?;
+            if output.succeeded() {
+                Ok(output.stdout)
+            } else {
+                Err(bootstrap::script_failed(what, &output))
+            }
+        };
+        let root = format!(".nomux/downloads/{}", bootstrap::unique_suffix());
+        let package = format!("{root}/{}", archive.package);
+        let script = format!(
+            "umask 077 && mkdir -p \"$HOME/{package}\" && printf \"%s\\n\" \"$HOME/{package}\""
+        );
+        let path = run("the directory of the package", script, &[]).await?;
+        let staged = async {
+            for (path, file) in archive.files() {
+                let path = format!("\"$HOME/{package}/{}\"", path.display());
+                let (script, input) = match file {
+                    None => (format!("umask 077 && mkdir -p {path}"), &[][..]),
+                    Some((content, executable)) => {
+                        let mode = if executable { 700 } else { 600 };
+                        (
+                            format!("umask 077 && cat > {path} && chmod {mode} {path}"),
+                            content,
+                        )
+                    }
+                };
+                run("the upload of the package", script, input).await?;
+            }
+            Ok::<_, ClientError>(())
+        };
+        if let Err(error) = staged.await {
+            self.remove_staged(&root).await;
+            return Err(error);
+        }
+        Ok((root, String::from_utf8_lossy(&path).trim().to_owned()))
+    }
+
+    /// Removes the directory `~/.nomux/downloads/<unique>` of a package on
+    /// the host. The package is in the extension directory of the daemon
+    /// after an install.
+    pub(crate) async fn remove_staged(&self, root: &str) {
+        let script = format!("rm -rf \"$HOME/{root}\"");
+        if let Ok(connection) = self.connection().await {
+            let _ = connection.run(&remote_shell(&script), &[]).await;
         }
     }
 

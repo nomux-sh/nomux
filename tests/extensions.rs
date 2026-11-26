@@ -3,13 +3,15 @@
 //! `nomux-ext-host`, which uses the extension SDK.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use nomux_end_to_end::{CliRun, Sandbox, extension_package, process_runs, wait_for};
+use nomux_end_to_end::{
+    CliRun, Sandbox, extension_package, process_runs, release_archive, release_target, wait_for,
+};
 use prost::Message;
 use serde_json::{Value, json};
 
@@ -344,4 +346,118 @@ fn validate_reports_the_field_that_is_not_valid_without_a_daemon() {
     // The command started no daemon.
     let status = sandbox.nomux(&["daemon", "status"]);
     assert_eq!(status.code, NOT_FOUND, "{status:?}");
+}
+
+/// A release archive of the test extension `id` for `target`, with its
+/// `SHA256SUMS` file, in a new directory. Returns the path of the archive.
+fn release_archive_of(sandbox: &Sandbox, id: &str, target: &str) -> PathBuf {
+    let releases = sandbox.home().join("releases").join(target);
+    let name = format!("nomux-test-1.0.0-{target}");
+    let package = extension_package(&releases, id, REQUESTED);
+    fs::rename(&package, releases.join(&name)).unwrap();
+    release_archive(&releases, &name);
+    fs::remove_dir_all(releases.join(&name)).unwrap();
+    releases.join(format!("{name}.tar.gz"))
+}
+
+fn installed_ids(sandbox: &Sandbox) -> Vec<String> {
+    extensions(sandbox)
+        .iter()
+        .map(|extension| extension["id"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+fn downloads(sandbox: &Sandbox) -> Vec<PathBuf> {
+    let directory = sandbox.home().join(".nomux").join("downloads");
+    fs::read_dir(&directory).map_or_else(
+        |_| Vec::new(),
+        |entries| entries.map(|entry| entry.unwrap().path()).collect(),
+    )
+}
+
+#[test]
+fn a_release_archive_is_installed_after_the_summary_and_an_answer() {
+    let sandbox = Sandbox::new();
+    let target = release_target();
+    let archive = release_archive_of(&sandbox, "test.archive", &target);
+    let archive = archive.to_str().unwrap();
+
+    // The summary comes before anything is written, and without a terminal
+    // an install needs --yes.
+    let unanswered = sandbox.nomux(&["ext", "install", archive, "--grant-all"]);
+    assert_eq!(unanswered.code, NO_PERMISSION, "{unanswered:?}");
+    assert!(
+        unanswered
+            .stderr
+            .contains("extension:   test.archive (Test)")
+            && unanswered
+                .stderr
+                .contains(&format!("platform:    {target}"))
+            && unanswered.stderr.contains("process=git"),
+        "{unanswered:?}"
+    );
+    assert!(
+        unanswered.stderr.contains("Nothing was written"),
+        "{unanswered:?}"
+    );
+    assert_eq!(downloads(&sandbox), Vec::<PathBuf>::new());
+
+    let installed = sandbox.nomux_ok(&["ext", "install", archive, "--grant-all", "--yes"]);
+    assert!(
+        installed
+            .stderr
+            .contains("checksum:    the SHA-256 checksum is the one of SHA256SUMS"),
+        "{installed:?}"
+    );
+    assert_eq!(installed_ids(&sandbox), ["test.archive"]);
+    assert_eq!(
+        text_result(&call(&sandbox, "test.archive", "echo", "hi")),
+        "hi"
+    );
+    // The daemon keeps a copy: the written package is gone.
+    assert_eq!(downloads(&sandbox), Vec::<PathBuf>::new());
+}
+
+#[test]
+fn an_archive_with_a_wrong_checksum_or_for_a_different_platform_is_refused() {
+    let sandbox = Sandbox::new();
+    let target = release_target();
+    let archive = release_archive_of(&sandbox, "test.archive", &target);
+    let checksums = archive.with_file_name("SHA256SUMS");
+    let name = archive.file_name().unwrap().to_str().unwrap();
+    fs::write(&checksums, format!("{}  {name}\n", "0".repeat(64))).unwrap();
+
+    let wrong = sandbox.nomux(&[
+        "ext",
+        "install",
+        archive.to_str().unwrap(),
+        "--grant-all",
+        "--yes",
+    ]);
+    assert_eq!(wrong.code, ERROR, "{wrong:?}");
+    assert!(wrong.stderr.contains("the checksum of"), "{wrong:?}");
+
+    let other = if target == "aarch64-apple-darwin" {
+        "x86_64-unknown-linux-musl"
+    } else {
+        "aarch64-apple-darwin"
+    };
+    let foreign = release_archive_of(&sandbox, "test.archive", other);
+    let refused = sandbox.nomux(&[
+        "ext",
+        "install",
+        foreign.to_str().unwrap(),
+        "--grant-all",
+        "--yes",
+    ]);
+    assert_eq!(refused.code, ERROR, "{refused:?}");
+    assert!(
+        refused
+            .stderr
+            .contains(&format!("it is for {other}, and the host is {target}")),
+        "{refused:?}"
+    );
+    assert!(Path::new(&checksums).is_file());
+    assert_eq!(installed_ids(&sandbox), Vec::<String>::new());
+    assert_eq!(downloads(&sandbox), Vec::<PathBuf>::new());
 }

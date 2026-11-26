@@ -52,7 +52,7 @@ Bare `nomux` on a terminal attaches to the most recent session (see `attach` wit
 | `host rm <name>` | Removes a saved host. Nothing changes on the host |
 | `host doctor [<name>]` | Checks the connection, the platform, the binaries, the permissions and the daemon of a host, and shows if its operating system applies a memory limit |
 | `ext ls` | Lists the installed extensions |
-| `ext install <directory> [--grant <permission>]... [--grant-all]` | Installs an extension from a directory on the host, with the permissions that the options approve |
+| `ext install <source> [--grant <permission>]... [--grant-all] [--yes]` | Installs an extension from a directory on the host, a release archive, an `https` address of one, or the short form of an extension of `nomux-sh/extensions` (`git`, `git@0.1.0`), with the permissions that the options approve |
 | `ext rm <id>` | Stops an extension and removes its package, its state and its data |
 | `ext enable <id>` | Enables an extension, also after the daemon disabled it because of failures |
 | `ext disable <id>` | Disables an extension and stops its process |
@@ -435,6 +435,42 @@ extension nomux.git 1.0.0 installed with the permissions: fs=/home/user/project 
 - An extension that is already installed fails with the exit code 1: remove it first.
 - With `--host`, `<directory>` is an absolute path on the remote host. On the local host, a relative path is relative to the current directory.
 - The command starts no process of the extension. The first `ext call` does.
+
+#### From a release archive
+
+`<source>` can also be a release archive. The command finds the form in this sequence:
+
+| `<source>` | Archive |
+|---|---|
+| A text with `://` | The address of an archive. Only `https`, with a host, without a user name or a password, ending with `.tar.gz`. The checksum file is `SHA256SUMS` in the same directory of the server |
+| A directory of this computer | No archive: the package directory, as above |
+| A file of this computer | The archive. If a file `SHA256SUMS` is next to it, the command compares the checksum. If not, the summary says that the checksum was not compared |
+| `<name>` or `<name>@<version>`: lower-case letters, digits and `-`, and a version `X.Y.Z` | The release `<name>@<version>` of [`nomux-sh/extensions`](https://github.com/nomux-sh/extensions) for the release target of the host: `https://github.com/nomux-sh/extensions/releases/download/<name>@<version>/nomux-<name>-<version>-<target>.tar.gz` and its `SHA256SUMS`. Without a version, the newest release `<name>@X.Y.Z` from the release list of the GitHub API |
+| Each other text | The path of a package directory, as above |
+
+The steps:
+
+1. The command gets the archive and its checksum file, and compares the SHA-256 checksum before it opens the archive. With `--host`, the target is the target of the remote host.
+2. It reads the archive in memory and refuses it, with nothing written, if an entry is not a regular file or a directory (a link, a device, a FIFO, a pax or GNU long name header), if a path is absolute, leaves the package directory or has a character other than letters, digits and `. _ + -`, if the archive has more than one package directory, more than 256 entries or more than 256 MiB of files, or if the package directory does not end with the release target of the host.
+3. It prints a summary on the standard error: the archive, the identifier and the name of the extension, its version, the platform, the result of the checksum and the permissions that the extension asks for. Nothing is written before.
+4. Without an approval of the permissions, it stops as above. Then it asks `Install ... with the approved permissions? [y/N]` on the terminal. `--yes` accepts without the question. Without a terminal and without `--yes`, nothing is written and the exit code is 4.
+5. It writes the package into a new directory of `~/.nomux/downloads` that only the user can read, on the host of the extension (with `--host`, through the SSH connection), installs it as a directory package, and removes the directory. The daemon keeps its own copy.
+
+The download uses the program `curl` of the user, with `--proto =https --proto-redir =https --tlsv1.2`, 10 redirects at most, a connection time of 15 seconds and a total time of 300 seconds at most, and 64 MiB at most for each file; `--disable` makes `curl` ignore a `.curlrc` file. The download files are in a temporary directory of `~/.nomux/downloads` with the mode 0600, not in `/tmp`. Without `curl`, download the archive by hand and give its path. No other command of nomux uses the network for an extension.
+
+```console
+$ nomux ext install git --grant-all --grant fs=/home/user/project
+nomux: the archive https://github.com/nomux-sh/extensions/releases/download/git@0.1.0/nomux-git-0.1.0-x86_64-unknown-linux-musl.tar.gz
+  extension:   nomux.git (Git)
+  version:     0.1.0
+  platform:    x86_64-unknown-linux-musl
+  checksum:    the SHA-256 checksum is the one of SHA256SUMS
+  permissions:
+    fs=${worktree}
+    process=git
+Install nomux.git 0.1.0 with the approved permissions? [y/N] y
+extension nomux.git 0.1.0 installed with the permissions: fs=/home/user/project process=git
+```
 
 ### `ext ls`, `ext enable`, `ext disable` and `ext rm`
 

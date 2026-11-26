@@ -100,7 +100,7 @@ The first version connects to the daemon of the local host or of a remote host t
 Rules:
 
 - A client talks to the daemon only. It does not talk to a holder.
-- The CLI (`nomux`) contains no protocol code. It reads the command line, calls `nomux-client` and prints the result. For `attach` it also owns the terminal of the user: raw mode, the keys and the window size. For `ext validate` it checks a manifest with the validator of the extension SDK, without a daemon.
+- The CLI (`nomux`) contains no protocol code. It reads the command line, calls `nomux-client` and prints the result. For `attach` it also owns the terminal of the user: raw mode, the keys and the window size. For `ext validate` it checks a manifest with the validator of the extension SDK, without a daemon. For `ext install` of a release archive it shows the manifest of the archive and asks the user before `nomux-client` writes the package on the host.
 
 ## Crates
 

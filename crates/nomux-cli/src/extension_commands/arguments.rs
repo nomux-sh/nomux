@@ -10,11 +10,14 @@ use super::grant::Grant;
 pub(crate) enum ExtCommand {
     /// List the installed extensions
     Ls,
-    /// Install an extension from a directory on the host. Without --grant or
-    /// --grant-all, print the permissions that it asks for and install nothing
+    /// Install an extension from a directory on the host, a release archive,
+    /// an https address of one, or a short form for an extension of
+    /// nomux-sh/extensions (git, git@0.1.0). Without --grant or --grant-all,
+    /// print the permissions that it asks for and install nothing
     Install {
-        /// The directory of the package, which has the file extension.toml
-        directory: PathBuf,
+        /// A package directory with the file extension.toml, a .tar.gz file,
+        /// an https address of a .tar.gz file, or <name>[@<version>]
+        source: String,
 
         /// Approve one permission that the extension asks for: fs=<directory>,
         /// process=<program>, network or scope=<scope>
@@ -25,6 +28,11 @@ pub(crate) enum ExtCommand {
         /// directory that starts with ${worktree}
         #[arg(long)]
         grant_all: bool,
+
+        /// For an archive: write and install the package without the
+        /// question after the summary
+        #[arg(long)]
+        yes: bool,
     },
     /// Stop an extension and remove its package, its state and its data
     Rm {

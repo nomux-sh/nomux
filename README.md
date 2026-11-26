@@ -101,7 +101,7 @@ nomux uses `~/.ssh/config`, ssh-agent and the key files of the user. It asks for
 
 ### Extensions
 
-An extension is a package in a directory: a manifest (`extension.toml`) and the program of its daemon part. The [`extension-api`](https://github.com/nomux-sh/extension-api) repository has the SDK and an example.
+An extension is a package in a directory: a manifest (`extension.toml`) and the program of its daemon part. The [`extension-api`](https://github.com/nomux-sh/extension-api) repository has the SDK and an example. `nomux ext install` also takes a release archive (`.tar.gz`), an `https` address of one, or the short form of an extension of [`nomux-sh/extensions`](https://github.com/nomux-sh/extensions), for example `nomux ext install git`: it downloads the archive for the host with `curl`, compares its checksum and shows the extension before it writes anything. [docs/cli.md](docs/cli.md#from-a-release-archive) has the rules.
 
 1. Install the extension. Without an approval, the command prints the permissions that the extension asks for and installs nothing:
 
