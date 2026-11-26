@@ -1,26 +1,35 @@
 //! The global configuration file of nomux: `config.toml`.
 //!
-//! This module reads and writes only the part of the file that the core
-//! uses now: the hosts in `[hosts.<name>]`. It keeps each other part of the
-//! file, also the comments, when it writes the file.
+//! This module reads only the parts of the file that the core uses now: the
+//! hosts in `[hosts.<name>]`, `default_policy` in `[restore]` and
+//! `ended_retention` in `[sessions]`. It writes only the hosts, and it keeps
+//! each other part of the file, also the comments, when it writes the file.
 
+mod duration_text;
 mod error;
 mod host_entry;
 mod location;
+mod restore_policy;
 
 use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use toml_edit::{DocumentMut, Item, Table, value};
 
 pub use self::error::ConfigurationError;
 pub use self::host_entry::{HostEntry, is_valid_host_name};
 pub use self::location::default_configuration_path;
+pub use self::restore_policy::{RestorePolicy, UnknownRestorePolicy};
 
 const HOSTS: &str = "hosts";
 const SSH: &str = "ssh";
+const RESTORE: &str = "restore";
+const DEFAULT_POLICY: &str = "default_policy";
+const SESSIONS: &str = "sessions";
+const ENDED_RETENTION: &str = "ended_retention";
 const OWNER_ONLY_DIRECTORY: u32 = 0o700;
 const OWNER_READ_WRITE: u32 = 0o600;
 
@@ -38,8 +47,8 @@ impl ConfigurationFile {
     /// # Errors
     ///
     /// Returns an error if the file cannot be read, if it is not TOML, or
-    /// if a key of `hosts` is not valid. The error has the path of the file
-    /// and the key.
+    /// if a key that this module knows is not valid. The error has the path
+    /// of the file and the key.
     pub fn load(path: &Path) -> Result<Self, ConfigurationError> {
         let text = match fs::read_to_string(path) {
             Ok(text) => text,
@@ -54,6 +63,8 @@ impl ConfigurationFile {
             document,
         };
         file.hosts()?;
+        file.default_restore_policy()?;
+        file.ended_session_retention()?;
         Ok(file)
     }
 
@@ -90,6 +101,61 @@ impl ConfigurationFile {
     /// Returns an error with the key that is not valid.
     pub fn host(&self, name: &str) -> Result<Option<HostEntry>, ConfigurationError> {
         Ok(self.hosts()?.into_iter().find(|host| host.name == name))
+    }
+
+    /// The restore policy of a session that has none: `default_policy` in
+    /// `[restore]`. Returns `None` if the file does not have the key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is not `auto`, `on-focus` or `manual`.
+    pub fn default_restore_policy(&self) -> Result<Option<RestorePolicy>, ConfigurationError> {
+        self.text_value(RESTORE, DEFAULT_POLICY, |text| {
+            text.parse()
+                .map_err(|error: UnknownRestorePolicy| error.to_string())
+        })
+    }
+
+    /// How long the daemon keeps a session whose command ended:
+    /// `ended_retention` in `[sessions]`, for example `"24h"`. Returns
+    /// `None` if the file does not have the key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is not a number with the unit `s`,
+    /// `m`, `h` or `d`.
+    pub fn ended_session_retention(&self) -> Result<Option<Duration>, ConfigurationError> {
+        self.text_value(SESSIONS, ENDED_RETENTION, |text| {
+            duration_text::parse(text).ok_or_else(|| {
+                "must be a number with the unit s, m, h or d, for example \"24h\"".to_owned()
+            })
+        })
+    }
+
+    /// The value of the string `key` of `table`, as `read` gives it.
+    fn text_value<T>(
+        &self,
+        table: &str,
+        key: &str,
+        read: impl FnOnce(&str) -> Result<T, String>,
+    ) -> Result<Option<T>, ConfigurationError> {
+        let Some(item) = self.document.get(table) else {
+            return Ok(None);
+        };
+        let Some(item) = item
+            .as_table_like()
+            .ok_or_else(|| self.invalid(table, "must be a table"))?
+            .get(key)
+        else {
+            return Ok(None);
+        };
+        let full_key = format!("{table}.{key}");
+        let text = item
+            .as_str()
+            .ok_or_else(|| self.invalid(&full_key, "must be a string"))?;
+        read(text)
+            .map(Some)
+            .map_err(|problem| self.invalid(&full_key, &problem))
     }
 
     /// Adds the host `entry`, or replaces the host with the same name.
@@ -205,6 +271,37 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(bad_name.contains("hosts.a b"), "{bad_name}");
+    }
+
+    #[test]
+    fn the_session_settings_are_read_and_a_wrong_value_names_its_key() {
+        let file =
+            load("[restore]\ndefault_policy = \"manual\"\n[sessions]\nended_retention = \"2h\"\n")
+                .unwrap();
+        assert_eq!(
+            file.default_restore_policy().unwrap(),
+            Some(RestorePolicy::Manual)
+        );
+        assert_eq!(
+            file.ended_session_retention().unwrap(),
+            Some(Duration::from_hours(2))
+        );
+
+        // A key of a table that this module does not read is not an error.
+        let other_keys = load("[restore]\nrevert = true\n[sessions]\n").unwrap();
+        assert_eq!(other_keys.default_restore_policy().unwrap(), None);
+        assert_eq!(other_keys.ended_session_retention().unwrap(), None);
+
+        let policy = load("[restore]\ndefault_policy = \"always\"\n").unwrap_err();
+        assert!(
+            policy.to_string().contains("restore.default_policy"),
+            "{policy}"
+        );
+        let retention = load("[sessions]\nended_retention = 24\n").unwrap_err();
+        assert!(
+            retention.to_string().contains("sessions.ended_retention"),
+            "{retention}"
+        );
     }
 
     #[test]

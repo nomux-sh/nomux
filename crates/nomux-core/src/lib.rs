@@ -16,10 +16,11 @@
 //! # Status
 //!
 //! This crate contains the `--version` output that the three binaries share,
-//! the lookup of a binary of the same installation, and the hosts of the
-//! global configuration file ([`configuration`]). The glossary types, the
-//! error type and the other parts of the configuration model are not written
-//! yet.
+//! the lookup of a binary of the same installation, and the parts of the
+//! global configuration file that the core uses ([`configuration`]): the
+//! hosts, the default restore policy and the retention time of an ended
+//! session. The glossary types, the error type and the other parts of the
+//! configuration model are not written yet.
 
 mod companion_binary;
 pub mod configuration;
