@@ -28,6 +28,9 @@ const RUNS: usize = 50;
 const POOL_SIZE: usize = 2;
 /// The time in which the CPU time of the idle processes is read.
 const IDLE_TIME: Duration = Duration::from_secs(30);
+/// The shell of each measurement. The pool changes the directory of `bash`
+/// and `zsh` only.
+const SHELL: &str = "/bin/bash";
 /// A shell whose start takes as long as a shell with many start files.
 const SLOW_START_FILE: &str = "sleep 0.2\n";
 /// The shell runs this line when it reads input. The quotes keep the echo
@@ -76,10 +79,9 @@ fn main() {
 fn sandbox(configuration: &str, slow_shell: bool) -> Sandbox {
     let mut sandbox = Sandbox::new();
     sandbox.write_configuration(configuration);
-    if slow_shell {
-        fs::write(sandbox.home().join(".bashrc"), SLOW_START_FILE).expect("a start file");
-        sandbox.set_variable("SHELL", "/bin/bash");
-    }
+    let start_file = if slow_shell { SLOW_START_FILE } else { "" };
+    fs::write(sandbox.home().join(".bashrc"), start_file).expect("a start file");
+    sandbox.set_variable("SHELL", SHELL);
     sandbox
 }
 

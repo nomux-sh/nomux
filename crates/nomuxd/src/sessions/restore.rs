@@ -103,6 +103,7 @@ impl Sessions {
             working_directory: &metadata.working_directory,
             size: Some(size.unwrap_or(metadata.size)),
             pooled: false,
+            shell_start: None,
         };
         let link = self.start_holder(start).await?;
         Ok((self.supervise(id.clone(), Some(link)), Some(metadata.epoch)))

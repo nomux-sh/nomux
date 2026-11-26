@@ -31,6 +31,9 @@ pub(crate) struct Settings {
     /// How long the pool stays when no session starts: `idle_time` in
     /// `[pool]`.
     pub(crate) pool_idle_time: Duration,
+    /// A pooled bash, zsh or fish starts with a start file of nomux:
+    /// `shell_start_files` in `[pool]`.
+    pub(crate) pool_shell_start_files: bool,
 }
 
 impl Default for Settings {
@@ -40,6 +43,7 @@ impl Default for Settings {
             ended_session_retention: DEFAULT_ENDED_SESSION_RETENTION,
             pool_size: DEFAULT_POOL_SIZE,
             pool_idle_time: DEFAULT_POOL_IDLE_TIME,
+            pool_shell_start_files: true,
         }
     }
 }
@@ -75,6 +79,9 @@ impl Settings {
                 .unwrap_or(defaults.ended_session_retention),
             pool_size: file.pool_size()?.unwrap_or(defaults.pool_size),
             pool_idle_time: file.pool_idle_time()?.unwrap_or(defaults.pool_idle_time),
+            pool_shell_start_files: file
+                .pool_shell_start_files()?
+                .unwrap_or(defaults.pool_shell_start_files),
         })
     }
 }

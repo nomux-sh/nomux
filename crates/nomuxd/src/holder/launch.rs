@@ -19,6 +19,8 @@ use tokio::process::{Child, ChildStdin, Command};
 use tokio::time::sleep;
 use tracing::debug;
 
+use crate::holder_pool::ShellStart;
+
 const HOLDER_BINARY: &str = "nomux-holder";
 /// The longest time from the start of the holder to its `ready` file.
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -72,6 +74,8 @@ pub(crate) struct HolderStart<'a> {
     /// The holder waits in the pool: it has no session until the daemon
     /// assigns `session_id` to it.
     pub(crate) pooled: bool,
+    /// The start file of nomux for the shell of a pooled holder.
+    pub(crate) shell_start: Option<&'a ShellStart>,
 }
 
 impl HolderStart<'_> {
@@ -118,6 +122,20 @@ pub(crate) async fn launch(
         .arg(start.working_directory);
     if start.pooled {
         holder.arg("--pooled");
+    }
+    if let Some(shell_start) = start.shell_start {
+        holder
+            .arg("--directory-fifo")
+            .arg(&shell_start.directory_fifo);
+        for argument in &shell_start.arguments {
+            holder.arg("--start-argument").arg(argument);
+        }
+        for (name, value) in &shell_start.environment {
+            match value {
+                Some(value) => holder.env(name, value),
+                None => holder.env_remove(name),
+            };
+        }
     }
     if let Some(size) = start.size {
         holder

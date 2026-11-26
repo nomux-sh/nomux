@@ -112,7 +112,12 @@ impl Sessions {
             shutdown,
             status,
             restoring: Mutex::new(()),
-            pool: HolderPool::new(shell.clone(), settings.pool_size, settings.pool_idle_time),
+            pool: HolderPool::new(
+                shell.clone(),
+                settings.pool_size,
+                settings.pool_idle_time,
+                settings.pool_shell_start_files,
+            ),
             shell,
             home,
             resolved_directories: ResolvedDirectories::default(),
@@ -159,6 +164,7 @@ impl Sessions {
             working_directory: &working_directory,
             size: None,
             pooled: false,
+            shell_start: None,
         };
         let link = self.start_holder(start).await.inspect_err(|_| {
             // A holder that did not start leaves the state directory of a

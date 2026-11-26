@@ -2,8 +2,10 @@
 //!
 //! A pooled holder runs the shell of the user in the home directory before
 //! its session exists. A new session with the shell takes one: the session
-//! then opens without the start of a process. `docs/daemon.md` has the
-//! rules.
+//! then opens without the start of a process. A shell with a start file of
+//! nomux changes to the directory of the session before its first prompt;
+//! the pool gives any other shell only to a session in the home directory.
+//! `docs/daemon.md` has the rules.
 //!
 //! - No pooled holder exists before the first request of a client after the
 //!   start of the daemon.
@@ -14,7 +16,7 @@
 //! - The daemon does not poll. One timer for the end of the idle time wakes
 //!   the task of the pool.
 
-mod directory_change;
+mod shell_start;
 
 use std::collections::VecDeque;
 use std::ffi::{OsStr, OsString};
@@ -30,6 +32,8 @@ use tokio::time::Instant;
 
 use crate::holder::HolderLink;
 
+pub(crate) use self::shell_start::{ShellStart, StartFileShell, remove_pool_directory};
+
 /// A holder in the pool, with the lease of the daemon. When the value is
 /// dropped, the pipe to the holder closes, and a holder that is still
 /// pooled ends.
@@ -40,13 +44,6 @@ pub(crate) struct PooledHolder {
     /// The standard input of the holder. The daemon writes nothing: the
     /// value only keeps the pipe open.
     pub(crate) _pipe: ChildStdin,
-}
-
-/// A pooled holder that a new session takes, and the input that changes the
-/// directory of its shell.
-pub(crate) struct TakenHolder {
-    pub(crate) holder: PooledHolder,
-    pub(crate) directory_change: Option<Vec<u8>>,
 }
 
 /// What the task of the pool does next.
@@ -62,6 +59,10 @@ pub(crate) enum PoolStep {
 pub(crate) struct HolderPool {
     /// The shell of the pooled holders. `None` turns the pool off.
     shell: Option<OsString>,
+    /// The shell starts with a start file of nomux, thus it can change to
+    /// the directory of any session. `None`: the pool takes only sessions
+    /// in the home directory.
+    start_file_shell: Option<StartFileShell>,
     size: usize,
     idle_time: Duration,
     state: Mutex<PoolState>,
@@ -84,12 +85,19 @@ struct PoolState {
 
 impl HolderPool {
     /// A pool of `size` holders with `shell`, which empties after
-    /// `idle_time` without a new session. The pool is off if `size` is 0,
-    /// or if the daemon cannot change the directory of `shell`.
-    pub(crate) fn new(shell: OsString, size: usize, idle_time: Duration) -> Self {
-        let shell = (size > 0 && directory_change::is_known_shell(&shell)).then_some(shell);
+    /// `idle_time` without a new session. The pool is off if `size` is 0.
+    /// With `start_files`, a shell that has a start file of nomux starts
+    /// with it.
+    pub(crate) fn new(
+        shell: OsString,
+        size: usize,
+        idle_time: Duration,
+        start_files: bool,
+    ) -> Self {
+        let start_file_shell = start_files.then(|| StartFileShell::of(&shell)).flatten();
         Self {
-            shell,
+            shell: (size > 0).then_some(shell),
+            start_file_shell,
             size,
             idle_time,
             state: Mutex::default(),
@@ -100,6 +108,11 @@ impl HolderPool {
     /// The shell that a pooled holder starts.
     pub(crate) fn shell(&self) -> Option<&OsStr> {
         self.shell.as_deref()
+    }
+
+    /// The shell with a start file of nomux, if the pool starts one.
+    pub(crate) fn start_file_shell(&self) -> Option<StartFileShell> {
+        self.start_file_shell
     }
 
     /// Starts the pool for the first request of a client after the start of
@@ -132,17 +145,11 @@ impl HolderPool {
     /// `working_directory`. `home` is the directory in which the pooled
     /// shells started. Returns `None` if the pool has no holder, or if the
     /// shell cannot change to the directory.
-    pub(crate) fn take(&self, working_directory: &Path, home: &Path) -> Option<TakenHolder> {
-        let directory_change = if working_directory == home {
-            None
-        } else {
-            Some(directory_change::input(working_directory)?)
-        };
-        let holder = self.state().ready.pop_front()?;
-        Some(TakenHolder {
-            holder,
-            directory_change,
-        })
+    pub(crate) fn take(&self, working_directory: &Path, home: &Path) -> Option<PooledHolder> {
+        if working_directory != home && self.start_file_shell.is_none() {
+            return None;
+        }
+        self.state().ready.pop_front()
     }
 
     /// The next step of the task of the pool. At the end of the idle time,
