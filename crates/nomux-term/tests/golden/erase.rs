@@ -77,22 +77,17 @@ fn erase_in_display_above_includes_the_cursor() {
 cursor 2,1
 ",
     );
-}
-
-/// A known gap: the VT library erases the rows above the cursor only if the
-/// cursor is below the second row. A VT terminal also erases the first row
-/// here: <https://github.com/nomux-sh/nomux/issues/29>.
-#[test]
-fn erase_in_display_above_from_the_second_row_keeps_the_first_row() {
     assert_screen(
-        &format!("{THREE_ROWS}\x1b[2;2H\x1b[1J"),
+        &format!("{THREE_ROWS}\x1b[2;2H\x1b[44m\x1b[1J"),
         "
-|one                 |
+|                    |
 |  o                 |
 |three               |
 |                    |
 |                    |
 cursor 1,1
+style 0,0-19 bg=4
+style 1,0-1 bg=4
 ",
     );
 }

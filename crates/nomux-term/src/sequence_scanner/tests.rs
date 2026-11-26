@@ -3,7 +3,7 @@
 
 use alacritty_terminal::vte::{Params, Parser, Perform};
 
-use super::SequenceScanner;
+use super::{Found, SequenceScanner};
 use crate::osc::Osc;
 
 /// One call of the parser of the library.
@@ -69,7 +69,11 @@ impl Perform for Recorder {
 /// The code and the payload of each OSC sequence that the scanner gives for
 /// `parts`.
 fn scanned_osc(scanner: &mut SequenceScanner, part: &[u8], found: &mut Vec<(u32, Vec<u8>)>) {
-    scanner.scan(part, |osc| found.push((osc.code, osc.payload.to_vec())));
+    scanner.scan(part, |result| {
+        if let Found::Osc(osc) = result {
+            found.push((osc.code, osc.payload.to_vec()));
+        }
+    });
 }
 
 /// The OSC sequences of the library that have a decimal code.
@@ -229,4 +233,60 @@ fn the_tail_is_the_sequence_or_the_character_that_is_not_complete() {
     assert_eq!(tail_of(b"a\xe2\x82"), 2);
     assert_eq!(tail_of(b"a\xe2\x82\xac"), 0);
     assert_eq!(tail_of(b"\xf0\x9f\x98"), 3);
+}
+
+/// The offsets after each `J` sequence that the library reads as an erase
+/// in display above the cursor.
+fn library_erase_above_ends(output: &[u8]) -> Vec<usize> {
+    let mut library = Recorder::default();
+    let mut parser = Parser::new();
+    let mut ends = Vec::new();
+    for (offset, byte) in output.iter().enumerate() {
+        parser.advance(&mut library, &[*byte]);
+        if let Some(Action::Csi(params, intermediates, false, 'J')) = library.actions.last()
+            && intermediates.is_empty()
+            && params.first().and_then(|first| first.first()) == Some(&1)
+        {
+            ends.push(offset + 1);
+            library.actions.clear();
+        }
+    }
+    ends
+}
+
+fn scanned_erase_above_ends(output: &[u8], cut: usize) -> Vec<usize> {
+    let mut scanner = SequenceScanner::new();
+    let mut ends = Vec::new();
+    for (start, part) in [(0, &output[..cut]), (cut, &output[cut..])] {
+        scanner.scan(part, |found| {
+            if let Found::EraseAbove { end } = found {
+                ends.push(start + end);
+            }
+        });
+    }
+    ends
+}
+
+#[test]
+fn the_erase_above_the_cursor_agrees_with_the_library_at_each_cut() {
+    let output = [
+        b"\x1b[1J\x1b[J\x1b[0J\x1b[2J\x1b[01J\x1b[1;5J\x1b[1:2J\x1b[;1J".as_slice(),
+        // A private marker, an intermediate, a parameter after the first,
+        // a control character and DEL in the sequence, and a sequence in
+        // a sequence.
+        b"\x1b[?1J\x1b[1 J\x1b[11J\x1b[1\r\x7fJ\x1b[2\x1b[1J\x1b]0;\x1b[1J\x07",
+        // A first parameter with all the bytes that the scanner keeps.
+        b"\x1b[00000001J",
+        SEQUENCES.concat().as_slice(),
+    ]
+    .concat();
+    let expected = library_erase_above_ends(&output);
+    assert_eq!(expected.len(), 8, "the output has the known sequences");
+    for cut in 0..=output.len() {
+        assert_eq!(
+            scanned_erase_above_ends(&output, cut),
+            expected,
+            "cut {cut}"
+        );
+    }
 }
