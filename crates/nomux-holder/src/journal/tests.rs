@@ -102,7 +102,7 @@ struct Recorded {
 impl Recorded {
     fn new(limits: JournalLimits) -> Self {
         let directory = TempDir::new().expect("the test helper works");
-        let journal = Journal::create(directory.path().to_owned(), EPOCH, limits)
+        let journal = Journal::create(directory.path().to_owned(), EPOCH, 0, limits)
             .expect("the journal starts");
         Self {
             directory,
@@ -300,7 +300,7 @@ fn the_segments_of_an_earlier_epoch_are_the_first_that_the_size_limit_removes() 
     assert!(earlier_files.len() > 1);
 
     let mut journal =
-        Journal::create(earlier.directory.path().to_owned(), EPOCH + 1, limits).unwrap();
+        Journal::create(earlier.directory.path().to_owned(), EPOCH + 1, 0, limits).unwrap();
     let mut screen = terminal(SIZES[0]);
     for chunk in output.chunks(300) {
         screen.feed(chunk, |_| {});

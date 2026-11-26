@@ -6,11 +6,11 @@ use std::io::Write;
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use nomux_holder_protocol::discovery::{HolderState, scan};
+use nomux_holder_protocol::discovery::{DiscoveredHolder, HolderState, scan, scan_pooled};
 use nomux_holder_protocol::journal;
 use nomux_holder_protocol::program_reports::{self, ProgramReports};
 use nomux_holder_protocol::redraw;
@@ -84,6 +84,22 @@ impl Holder {
         Self { process }
     }
 
+    /// Starts a pooled holder. Its standard input is a pipe, as from the
+    /// daemon: the holder ends when the returned end is dropped while it is
+    /// pooled.
+    pub(crate) fn start_pooled(
+        runtime: &Path,
+        session: &str,
+        command: &[&str],
+    ) -> (Self, ChildStdin) {
+        let mut process = holder_command(runtime, session, &["--pooled"], command)
+            .stdin(Stdio::piped())
+            .spawn()
+            .expect("the test helper works");
+        let pipe = process.stdin.take().expect("the holder has a pipe");
+        (Self { process }, pipe)
+    }
+
     /// Stops the holder with `SIGKILL`: it cannot write or remove a file.
     pub(crate) fn kill(&mut self) {
         self.process.kill().expect("the test helper works");
@@ -122,11 +138,15 @@ impl Client {
     /// Finds the one live holder of `runtime` through its discovery files
     /// and connects to it.
     pub(crate) fn connect(runtime: &Path) -> Self {
-        let holder = wait_for("a live holder", || {
-            let mut holders = scan(runtime).expect("the test helper works");
-            holders.retain(|holder| holder.state == HolderState::Live);
-            holders.pop()
-        });
+        Self::connect_to(&live_holder(runtime, scan))
+    }
+
+    /// Finds the one live pooled holder of `runtime` and connects to it.
+    pub(crate) fn connect_pooled(runtime: &Path) -> Self {
+        Self::connect_to(&live_holder(runtime, scan_pooled))
+    }
+
+    fn connect_to(holder: &DiscoveredHolder) -> Self {
         let stream = UnixStream::connect(holder.socket_path()).expect("the test helper works");
         stream
             .set_read_timeout(Some(TIMEOUT))
@@ -339,4 +359,15 @@ impl Client {
             self.wait_output();
         }
     }
+}
+
+fn live_holder(
+    runtime: &Path,
+    scan: fn(&Path) -> std::io::Result<Vec<DiscoveredHolder>>,
+) -> DiscoveredHolder {
+    wait_for("a live holder", || {
+        let mut holders = scan(runtime).expect("the test helper works");
+        holders.retain(|holder| holder.state == HolderState::Live);
+        holders.pop()
+    })
 }

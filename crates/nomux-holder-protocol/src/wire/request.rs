@@ -16,10 +16,13 @@
 //! 0x010A  JournalRead         position of the first byte (8), largest number
 //!                             of bytes (4); since protocol version 1.3
 //! 0x010B  SessionToken        empty; since protocol version 1.4
+//! 0x010C  AssignSession       rows (2), columns (2), length of the working
+//!                             directory (2), working directory; since
+//!                             protocol version 1.5
 //! ```
 
 use super::frame::Frame;
-use super::payload::{DecodeError, PayloadReader};
+use super::payload::{DecodeError, PayloadReader, write_block};
 use super::window_size::WindowSize;
 
 const ACQUIRE_LEASE: u16 = 0x0101;
@@ -33,6 +36,7 @@ const PROGRAM_REPORTS: u16 = 0x0108;
 const WAIT_PROGRAM_REPORTS: u16 = 0x0109;
 const JOURNAL_READ: u16 = 0x010A;
 const SESSION_TOKEN: u16 = 0x010B;
+const ASSIGN_SESSION: u16 = 0x010C;
 
 /// A signal that the daemon can send to the child command.
 ///
@@ -120,6 +124,16 @@ pub enum Request<'payload> {
     /// Give the token of the session: the value of the `NOMUX_TOKEN`
     /// variable of its command. Since protocol version 1.4.
     SessionToken,
+    /// Make a pooled holder the holder of its session: write the state
+    /// directory, start the journal and give the holder directory the name
+    /// of the session. Needs the lease. Since protocol version 1.5.
+    AssignSession {
+        /// The size of the terminal window of the session.
+        size: WindowSize,
+        /// The working directory of the session, for the session metadata.
+        /// The bytes of a path: a path can have bytes that are not UTF-8.
+        working_directory: &'payload [u8],
+    },
 }
 
 impl<'payload> Request<'payload> {
@@ -128,9 +142,11 @@ impl<'payload> Request<'payload> {
     /// # Panics
     ///
     /// Panics if the bytes of an [`Request::Input`] are longer than
-    /// [`MAX_PAYLOAD_LENGTH`](super::MAX_PAYLOAD_LENGTH).
+    /// [`MAX_PAYLOAD_LENGTH`](super::MAX_PAYLOAD_LENGTH), or if the working
+    /// directory of a [`Request::AssignSession`] is longer than 65535 bytes.
     pub fn encode(&self, request_id: u32, output: &mut Vec<u8>) {
         let mut fields = [0u8; 12];
+        let assignment;
         let (kind, payload): (u16, &[u8]) = match *self {
             Self::AcquireLease => (ACQUIRE_LEASE, &[]),
             Self::Input(bytes) => (INPUT, bytes),
@@ -159,6 +175,13 @@ impl<'payload> Request<'payload> {
                 (JOURNAL_READ, &fields)
             }
             Self::SessionToken => (SESSION_TOKEN, &[]),
+            Self::AssignSession {
+                size,
+                working_directory,
+            } => {
+                assignment = assignment_payload(size, working_directory);
+                (ASSIGN_SESSION, &assignment)
+            }
         };
         let frame = Frame {
             kind,
@@ -199,6 +222,15 @@ impl<'payload> Request<'payload> {
                 Ok(Self::JournalRead { from, max_length })
             }
             SESSION_TOKEN => Ok(Self::SessionToken),
+            ASSIGN_SESSION => {
+                let size = WindowSize::decode(&mut reader)?;
+                let length = usize::from(reader.u16()?);
+                let working_directory = reader.bytes(length)?;
+                Ok(Self::AssignSession {
+                    size,
+                    working_directory,
+                })
+            }
             kind => Err(DecodeError::UnknownKind(kind)),
         }
     }
@@ -216,6 +248,16 @@ impl<'payload> Request<'payload> {
             Self::ProgramReports | Self::WaitProgramReports { .. } => 2,
             Self::JournalRead { .. } => 3,
             Self::SessionToken => 4,
+            Self::AssignSession { .. } => 5,
         }
     }
+}
+
+fn assignment_payload(size: WindowSize, working_directory: &[u8]) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(WindowSize::ENCODED_LENGTH + 2 + working_directory.len());
+    payload.extend_from_slice(&size.encode());
+    write_block(&mut payload, |block| {
+        block.extend_from_slice(working_directory);
+    });
+    payload
 }

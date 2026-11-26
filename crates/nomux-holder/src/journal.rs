@@ -65,13 +65,17 @@ pub(crate) struct Journal {
 }
 
 impl Journal {
-    /// Starts the journal of `epoch` in `directory`, which must exist.
+    /// Starts the journal of `epoch` in `directory`, which must exist. The
+    /// first byte of the journal is the output byte at the position `start`:
+    /// 0 for a holder that started with its session, and the write position
+    /// at the assignment for a pooled holder.
     pub(crate) fn create(
         directory: PathBuf,
         epoch: u32,
+        start: u64,
         limits: JournalLimits,
     ) -> io::Result<Self> {
-        let writer = SegmentWriter::create(directory.clone(), epoch, &limits)?;
+        let writer = SegmentWriter::create(directory.clone(), epoch, start, &limits)?;
         Ok(Self {
             limits,
             directory,
@@ -79,12 +83,12 @@ impl Journal {
             writer: Some(writer),
             encoder: RecordEncoder::new(),
             block: Vec::with_capacity(limits.block_length + BLOCK_RESERVE),
-            block_position: 0,
+            block_position: start,
             flush_deadline: None,
             checkpoint_due: false,
             output_after_checkpoint: 0,
             checkpoint_interval: limits.checkpoint_interval,
-            // The first record of an epoch is a checkpoint at position 0.
+            // The first record of the journal is a checkpoint at `start`.
             window_changed: true,
         })
     }

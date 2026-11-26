@@ -24,6 +24,9 @@ Options:
   --columns <number>          Columns of the terminal window (default: 80)
   --ring-capacity <bytes>     Size of the ring buffer, a power of two (default: 262144)
   --exit-timeout <seconds>    Time to keep the exit status for the daemon (default: 30)
+  --pooled                    Start without a session: the daemon assigns the session
+                              later. The standard input must be a pipe from the daemon:
+                              a holder without a session ends when the pipe closes
 
 The command gets the environment of the holder, and the variables
 NOMUX_SESSION_ID, NOMUX_SOCK and NOMUX_TOKEN.
@@ -46,7 +49,7 @@ pub(crate) enum Invocation {
 }
 
 /// The description of the session that the holder starts.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SessionArguments {
     pub(crate) session_id: SessionId,
     pub(crate) runtime_directory: PathBuf,
@@ -55,6 +58,8 @@ pub(crate) struct SessionArguments {
     pub(crate) size: WindowSize,
     pub(crate) ring_capacity: usize,
     pub(crate) exit_timeout: Duration,
+    /// The holder waits in the pool of the daemon for its session.
+    pub(crate) pooled: bool,
     pub(crate) program: OsString,
     pub(crate) program_arguments: Vec<OsString>,
 }
@@ -68,6 +73,7 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Inv
     let mut size = DEFAULT_SIZE;
     let mut ring_capacity = DEFAULT_RING_CAPACITY;
     let mut exit_timeout = DEFAULT_EXIT_TIMEOUT;
+    let mut pooled = false;
 
     loop {
         let Some(option) = arguments.next() else {
@@ -84,6 +90,7 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Inv
         match option {
             "--version" | "-V" => return Ok(Invocation::Version),
             "--" => break,
+            "--pooled" => pooled = true,
             "--session" => session_id = Some(parse_value(option, &value()?)?),
             "--runtime-directory" => runtime_directory = Some(PathBuf::from(value()?)),
             "--state-directory" => state_directory = Some(PathBuf::from(value()?)),
@@ -125,6 +132,7 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Inv
         size,
         ring_capacity,
         exit_timeout,
+        pooled,
         program,
         program_arguments: arguments.collect(),
     }))

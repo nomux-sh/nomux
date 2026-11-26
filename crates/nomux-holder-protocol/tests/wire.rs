@@ -507,3 +507,46 @@ fn only_a_holder_of_version_1_4_gives_the_token() {
     assert!(!version_1_3.supports(&Request::SessionToken));
     assert!(ProtocolVersion::CURRENT.supports(&Request::SessionToken));
 }
+
+#[test]
+fn the_assignment_has_the_size_and_the_bytes_of_the_directory_and_reads_added_fields() {
+    let assignment = Request::AssignSession {
+        size: SIZE,
+        working_directory: b"/w\xff",
+    };
+    let mut request = Vec::new();
+    assignment.encode(4, &mut request);
+    assert_eq!(
+        request,
+        [
+            17, 0, 0, 0, 0x0C, 0x01, 0, 0, 4, 0, 0, 0, 40, 0, 100, 0, 3, 0, b'/', b'w', 0xff
+        ]
+    );
+    let frame = Frame {
+        kind: 0x010C,
+        request_id: 4,
+        payload: &request[12..],
+    };
+    assert_eq!(Request::decode(frame), Ok(assignment));
+    let mut buffer = FrameBuffer::new();
+    feed(&mut buffer, &with_added_fields(&request));
+    let longer = buffer.next_frame().unwrap().unwrap();
+    assert_eq!(Request::decode(longer), Ok(assignment));
+
+    let cut = Frame {
+        payload: &request[12..19],
+        ..frame
+    };
+    assert_eq!(Request::decode(cut), Err(DecodeError::InvalidPayload));
+}
+
+#[test]
+fn a_holder_of_version_1_4_gets_no_assignment() {
+    let version_1_4 = ProtocolVersion { major: 1, minor: 4 };
+    let assignment = Request::AssignSession {
+        size: SIZE,
+        working_directory: b"/",
+    };
+    assert!(!version_1_4.supports(&assignment));
+    assert!(ProtocolVersion::CURRENT.supports(&assignment));
+}

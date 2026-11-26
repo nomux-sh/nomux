@@ -1,14 +1,21 @@
 //! The session: the terminal, the child command, the ring buffer, the
 //! screen state, the program reports and the journal.
+//!
+//! A pooled holder runs the command before its session exists. It has no
+//! files until the daemon assigns the session to it.
 
+use std::ffi::OsStr;
 use std::io;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
+use std::os::unix::ffi::OsStrExt;
+use std::path::PathBuf;
 use std::time::Instant;
 
 use nomux_holder_protocol::SessionId;
 use nomux_holder_protocol::ring::RingWriter;
 use nomux_holder_protocol::wire::{
-    ChildSignal, ChildStatus, ErrorCode, Hello, ProtocolVersion, SessionToken, WindowSize,
+    ChildSignal, ChildStatus, ErrorCode, Hello, POOLED_EPOCH, ProtocolVersion, SessionToken,
+    WindowSize,
 };
 use nomux_term::osc::OscRecord;
 use nomux_term::osc::program_status::QUERY_REPLY;
@@ -18,14 +25,14 @@ use rustix::io::Errno;
 
 use crate::arguments::SessionArguments;
 use crate::child::ChildProcess;
+use crate::discovery_directory::DiscoveryDirectory;
 use crate::foreground_program::ForegroundProgram;
 use crate::input_queue::InputQueue;
-use crate::journal::Journal;
 use crate::program_reports::ProgramReportStore;
 use crate::pty;
 use crate::resize_verification::ResizeVerification;
 use crate::session_environment;
-use crate::session_state_directory::SessionStateDirectory;
+use crate::session_files::SessionFiles;
 
 /// The largest number of bytes that one read moves from the terminal to the
 /// ring buffer. The kernel gives 4096 bytes at most for one read of a
@@ -49,9 +56,16 @@ pub(crate) struct Session {
     screen: Terminal,
     /// What the programs reported in each byte that the ring buffer got.
     reports: ProgramReportStore,
-    /// Each byte that the ring buffer got, on disk.
-    journal: Journal,
-    state_directory: SessionStateDirectory,
+    /// The metadata of the session and each byte that the ring buffer got
+    /// since the session exists, on disk. `None` while the holder is pooled.
+    files: Option<SessionFiles>,
+    /// The description of the session that a pooled holder becomes. `None`
+    /// after the assignment, and for a holder that started with its
+    /// session.
+    pooled: Option<SessionArguments>,
+    /// The discovery files. The directory is removed when the session is
+    /// dropped.
+    discovery: DiscoveryDirectory,
     input: InputQueue,
     size: WindowSize,
     resize_verification: ResizeVerification,
@@ -61,12 +75,13 @@ pub(crate) struct Session {
 }
 
 impl Session {
-    /// Opens the pseudoterminal and starts the child command.
+    /// Opens the pseudoterminal and starts the child command. Without
+    /// `files`, the holder is pooled until [`assign`](Self::assign).
     pub(crate) fn start(
         arguments: &SessionArguments,
         ring: RingWriter,
-        state_directory: SessionStateDirectory,
-        journal: Journal,
+        files: Option<SessionFiles>,
+        discovery: DiscoveryDirectory,
     ) -> io::Result<Self> {
         let screen_size = screen_size(arguments.size).ok_or(io::ErrorKind::InvalidInput)?;
         let pty = pty::open(arguments.size)?;
@@ -90,8 +105,9 @@ impl Session {
             ring,
             screen: Terminal::new(screen_size),
             reports: ProgramReportStore::default(),
-            journal,
-            state_directory,
+            pooled: files.is_none().then(|| arguments.clone()),
+            files,
+            discovery,
             input: InputQueue::default(),
             size: arguments.size,
             resize_verification: ResizeVerification::default(),
@@ -105,8 +121,71 @@ impl Session {
             session_id: self.id.clone(),
             child_pid: self.child.pid(),
             size: self.size,
-            epoch: self.state_directory.epoch(),
+            epoch: self
+                .files
+                .as_ref()
+                .map_or(POOLED_EPOCH, SessionFiles::epoch),
         }
+    }
+
+    /// Tells the daemon that it can connect. Call it after the start.
+    pub(crate) fn mark_ready(&self) -> io::Result<()> {
+        self.discovery.mark_ready()
+    }
+
+    /// `true` while the holder has no session.
+    pub(crate) fn is_pooled(&self) -> bool {
+        self.pooled.is_some()
+    }
+
+    /// Makes the pooled holder the holder of its session: writes the state
+    /// directory with `working_directory` and `size`, starts the journal at
+    /// the current position with a checkpoint of the screen, and gives the
+    /// discovery directory the name of the session.
+    ///
+    /// The command already runs, thus its working directory does not change
+    /// here: the daemon types the change into the terminal.
+    pub(crate) fn assign(
+        &mut self,
+        size: WindowSize,
+        working_directory: &[u8],
+    ) -> Result<(), ErrorCode> {
+        if self.child.has_exited() {
+            return Err(ErrorCode::ChildExited);
+        }
+        let working_directory = PathBuf::from(OsStr::from_bytes(working_directory));
+        let Some(mut arguments) = self.pooled.clone() else {
+            return Err(ErrorCode::InvalidPayload);
+        };
+        if !working_directory.is_absolute() {
+            return Err(ErrorCode::InvalidPayload);
+        }
+        // The journal starts at a position that the screen corresponds to.
+        if self.screen.incomplete_tail() != 0 {
+            return Err(ErrorCode::Failed);
+        }
+        if size != self.size {
+            self.resize(size)?;
+        }
+        arguments.working_directory = Some(working_directory);
+        arguments.size = size;
+        let mut files =
+            SessionFiles::create(&arguments, self.ring.position()).map_err(|error| {
+                eprintln!("nomux-holder: the assignment failed: {error}");
+                ErrorCode::Failed
+            })?;
+        // The checkpoint now: the journal has the screen of the assignment
+        // also when no output follows.
+        files.journal().before_output(&mut self.screen, self.size);
+        self.discovery
+            .assign(&arguments.runtime_directory, &arguments.session_id)
+            .map_err(|error| {
+                eprintln!("nomux-holder: cannot rename the discovery directory: {error}");
+                ErrorCode::Failed
+            })?;
+        self.files = Some(files);
+        self.pooled = None;
+        Ok(())
     }
 
     /// The token of the session, for the daemon.
@@ -135,9 +214,11 @@ impl Session {
         let Some(terminal) = &self.terminal else {
             return Ok(false);
         };
-        self.journal.before_output(&mut self.screen, self.size);
+        let mut journal = self.files.as_mut().map(SessionFiles::journal);
+        if let Some(journal) = &mut journal {
+            journal.before_output(&mut self.screen, self.size);
+        }
         let (screen, reports, input) = (&mut self.screen, &mut self.reports, &mut self.input);
-        let journal = &mut self.journal;
         let foreground = ForegroundProgram::of(terminal.as_fd());
         let read = self.ring.write_with(OUTPUT_CHUNK, |chunk| {
             let count = rustix::io::read(terminal, &mut *chunk)?;
@@ -146,7 +227,9 @@ impl Session {
                     keep_record(record, reports, input, &foreground);
                 }
             });
-            journal.append(&chunk[..count]);
+            if let Some(journal) = &mut journal {
+                journal.append(&chunk[..count]);
+            }
             Ok::<_, Errno>(count)
         });
         match read {
@@ -157,7 +240,9 @@ impl Session {
                 Ok(false)
             }
             Ok(_) => {
-                self.journal.output_written(&mut self.screen, self.size);
+                if let Some(journal) = journal {
+                    journal.output_written(&mut self.screen, self.size);
+                }
                 self.resize_verification
                     .output_read(terminal.as_fd(), self.size);
                 // The answer to a program status query.
@@ -193,17 +278,23 @@ impl Session {
     /// The time at which the event loop must call
     /// [`flush_journal`](Self::flush_journal).
     pub(crate) fn journal_flush_deadline(&self) -> Option<Instant> {
-        self.journal.flush_deadline()
+        self.files.as_ref().and_then(SessionFiles::flush_deadline)
     }
 
     /// Writes the output bytes that wait in memory to the journal.
     pub(crate) fn flush_journal(&mut self) {
-        self.journal.flush(&mut self.screen, self.size);
+        if let Some(files) = &mut self.files {
+            files.journal().flush(&mut self.screen, self.size);
+        }
     }
 
-    /// Output bytes from the journal: see `Journal::read`.
+    /// Output bytes from the journal: see `Journal::read`. A pooled holder
+    /// has no journal: its end is the write position.
     pub(crate) fn read_journal(&self, from: u64, max_length: usize) -> io::Result<(u64, Vec<u8>)> {
-        self.journal.read(from, max_length)
+        match &self.files {
+            Some(files) => files.read_journal(from, max_length),
+            None => Ok((self.ring.position(), Vec::new())),
+        }
     }
 
     /// The number of changes to the program reports.
@@ -246,8 +337,9 @@ impl Session {
         self.screen.resize(screen_size);
         self.size = size;
         self.resize_verification.window_resized();
-        self.journal.window_resized();
-        report_state_error(self.state_directory.record_window_size(size));
+        if let Some(files) = &mut self.files {
+            files.window_resized(size);
+        }
         Ok(())
     }
 
@@ -280,16 +372,10 @@ impl Session {
         }
         self.terminal = None;
         self.input.clear();
-        self.journal.finish(&mut self.screen, self.size);
-        report_state_error(self.state_directory.record_end(self.child.status()));
+        if let Some(files) = &mut self.files {
+            files.finish(&mut self.screen, self.size, self.child.status());
+        }
         Ok(true)
-    }
-}
-
-/// The session continues when its metadata cannot be written.
-fn report_state_error(result: io::Result<()>) {
-    if let Err(error) = result {
-        eprintln!("nomux-holder: cannot write the session metadata: {error}");
     }
 }
 

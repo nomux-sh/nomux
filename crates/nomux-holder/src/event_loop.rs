@@ -1,13 +1,21 @@
 //! The one loop of the holder. While the child runs, it waits in `poll`
 //! with no timeout, or until the journal must write the output bytes that
 //! wait in memory. Thus an idle holder uses no CPU time.
+//!
+//! A pooled holder belongs to the daemon that started it: its standard
+//! input is a pipe from that daemon. When the pipe closes, because the
+//! daemon ended or does not need the holder, a holder that is still pooled
+//! ends. Thus a pooled holder never stays without a daemon.
 
 use std::array;
-use std::io;
+use std::io::{self, Stdin};
+use std::os::fd::AsFd;
 use std::time::{Duration, Instant};
 
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::io::Errno;
+
+use nomux_holder_protocol::wire::ChildSignal;
 
 use crate::child_exit_signal::ChildExitSignal;
 use crate::control::{ControlServer, MAX_CONNECTIONS};
@@ -16,7 +24,8 @@ use crate::session::Session;
 const CHILD_EXIT: usize = 0;
 const LISTENER: usize = 1;
 const TERMINAL: usize = 2;
-const FIRST_CONNECTION: usize = 3;
+const DAEMON_PIPE: usize = 3;
+const FIRST_CONNECTION: usize = 4;
 const DESCRIPTORS: usize = FIRST_CONNECTION + MAX_CONNECTIONS;
 
 /// Runs the session until it ends.
@@ -30,11 +39,17 @@ pub(crate) fn run(
     exit_timeout: Duration,
 ) -> io::Result<()> {
     let mut exit_deadline = None;
+    let daemon_pipe = io::stdin();
     loop {
         let flush_deadline = session.journal_flush_deadline();
         let deadline = earliest(exit_deadline, flush_deadline);
-        let ready = wait(&session, &server, &child_exit, deadline)?;
+        let ready = wait(&session, &server, &child_exit, &daemon_pipe, deadline)?;
 
+        if session.is_pooled() && !ready[DAEMON_PIPE].is_empty() && is_closed(&daemon_pipe) {
+            // The command of a holder without a session has no user.
+            let _ = session.signal_child(ChildSignal::Hangup);
+            return Ok(());
+        }
         if !ready[CHILD_EXIT].is_empty() {
             child_exit.clear()?;
             if session.reap_child()? {
@@ -75,6 +90,7 @@ fn wait(
     session: &Session,
     server: &ControlServer,
     child_exit: &ChildExitSignal,
+    daemon_pipe: &Stdin,
     deadline: Option<Instant>,
 ) -> io::Result<[PollFlags; DESCRIPTORS]> {
     // A position that is not in use holds the listener with no events.
@@ -84,6 +100,9 @@ fn wait(
     descriptors[LISTENER] = PollFd::from_borrowed_fd(server.listener(), PollFlags::IN);
     if let Some((terminal, interest)) = session.terminal_interest() {
         descriptors[TERMINAL] = PollFd::from_borrowed_fd(terminal, interest);
+    }
+    if session.is_pooled() {
+        descriptors[DAEMON_PIPE] = PollFd::from_borrowed_fd(daemon_pipe.as_fd(), PollFlags::IN);
     }
     // While the terminal does not take the input, the requests wait in the
     // socket.
@@ -103,6 +122,16 @@ fn wait(
             Err(Errno::INTR) => {}
             Err(error) => return Err(error.into()),
         }
+    }
+}
+
+/// `true` if the pipe from the daemon has ended. `poll` reported it as
+/// readable, thus the read does not wait. The daemon writes no byte.
+fn is_closed(daemon_pipe: &Stdin) -> bool {
+    let mut discarded = [0; 64];
+    match rustix::io::read(daemon_pipe, &mut discarded) {
+        Ok(read) => read == 0,
+        Err(error) => !matches!(error, Errno::AGAIN | Errno::INTR),
     }
 }
 

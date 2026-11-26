@@ -4,6 +4,7 @@
 mod compatibility;
 mod fixture;
 mod journal;
+mod pool;
 mod program_reports;
 mod redraw;
 mod session;

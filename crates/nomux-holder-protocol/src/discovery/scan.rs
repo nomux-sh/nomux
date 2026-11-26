@@ -6,7 +6,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use super::process_identity::ProcessIdentity;
-use super::{PID_FILE, READY_FILE, SOCKET_FILE};
+use super::{PID_FILE, POOLED_DIRECTORY_SUFFIX, READY_FILE, SOCKET_FILE};
 use crate::SessionId;
 
 /// Why a holder directory has no live holder.
@@ -35,7 +35,8 @@ pub enum HolderState {
 /// One holder directory that [`scan`] found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveredHolder {
-    /// The session of the holder.
+    /// The session of the holder. A pooled holder has the identifier that
+    /// the daemon keeps for the session that it becomes.
     pub session_id: SessionId,
     /// The holder directory.
     pub directory: PathBuf,
@@ -64,8 +65,9 @@ impl DiscoveredHolder {
 /// Reads the holder directories of `runtime_directory`.
 ///
 /// An entry that is not a directory, or whose name is not a session
-/// identifier, is not a holder directory and is ignored. A runtime directory
-/// that does not exist has no holders.
+/// identifier, is not a holder directory and is ignored. Thus the scan does
+/// not give the pooled holders: [`scan_pooled`] gives them. A runtime
+/// directory that does not exist has no holders.
 ///
 /// A holder that starts makes its directory and then writes `pid`. A scan
 /// between these two steps reports `Stale(InvalidPidFile)` for it.
@@ -76,6 +78,27 @@ impl DiscoveredHolder {
 /// read, or if the operating system does not give the start time of a
 /// process.
 pub fn scan(runtime_directory: &Path) -> io::Result<Vec<DiscoveredHolder>> {
+    scan_directories(runtime_directory, |name| name.parse().ok())
+}
+
+/// Reads the directories of the pooled holders of `runtime_directory`: the
+/// holders that have no session yet. The rules of [`scan`] apply.
+///
+/// # Errors
+///
+/// Returns the errors of [`scan`].
+pub fn scan_pooled(runtime_directory: &Path) -> io::Result<Vec<DiscoveredHolder>> {
+    scan_directories(runtime_directory, |name| {
+        name.strip_suffix(POOLED_DIRECTORY_SUFFIX)?.parse().ok()
+    })
+}
+
+/// The directories of `runtime_directory` whose name gives a session
+/// identifier with `session_id_of`.
+fn scan_directories(
+    runtime_directory: &Path,
+    session_id_of: impl Fn(&str) -> Option<SessionId>,
+) -> io::Result<Vec<DiscoveredHolder>> {
     let entries = match fs::read_dir(runtime_directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -84,10 +107,7 @@ pub fn scan(runtime_directory: &Path) -> io::Result<Vec<DiscoveredHolder>> {
     let mut holders = Vec::new();
     for entry in entries {
         let entry = entry?;
-        let session_id = entry
-            .file_name()
-            .to_str()
-            .and_then(|name| name.parse().ok());
+        let session_id = entry.file_name().to_str().and_then(&session_id_of);
         let Some(session_id) = session_id else {
             continue;
         };

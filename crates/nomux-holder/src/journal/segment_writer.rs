@@ -49,19 +49,20 @@ pub(super) struct SegmentWriter {
 }
 
 impl SegmentWriter {
-    /// Starts the first segment of `epoch` in `directory`. The segments of
-    /// the earlier epochs of the session count for the size limit: they are
-    /// the oldest segments.
+    /// Starts the first segment of `epoch` in `directory` at the position
+    /// `start`. The segments of the earlier epochs of the session count for
+    /// the size limit: they are the oldest segments.
     pub(super) fn create(
         directory: PathBuf,
         epoch: u32,
+        start: u64,
         limits: &JournalLimits,
     ) -> io::Result<Self> {
         let mut retention = Retention::new(limits.total_length);
         for file in segment_files(&directory)? {
             retention.add_closed(file.path, file.length);
         }
-        let open = OpenSegment::create(&directory, SegmentName { epoch, start: 0 })?;
+        let open = OpenSegment::create(&directory, SegmentName { epoch, start })?;
         Ok(Self {
             directory,
             open,

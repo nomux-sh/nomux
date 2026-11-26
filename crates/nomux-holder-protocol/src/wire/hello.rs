@@ -39,7 +39,7 @@ pub struct ProtocolVersion {
 
 impl ProtocolVersion {
     /// The version that this crate implements.
-    pub const CURRENT: Self = Self { major: 1, minor: 4 };
+    pub const CURRENT: Self = Self { major: 1, minor: 5 };
 
     /// `true` if a holder of this version knows `request`. The daemon asks
     /// this before it sends a request that a minor version added.
@@ -62,9 +62,15 @@ pub struct Hello {
     pub size: WindowSize,
     /// The epoch of the session: one continuous numbering of the output
     /// positions. A holder of a protocol version before 1.3 does not send
-    /// it, and it then is [`FIRST_EPOCH`]. Since protocol version 1.3.
+    /// it, and it then is [`FIRST_EPOCH`]. A pooled holder, which has no
+    /// session yet, sends [`POOLED_EPOCH`]. Since protocol version 1.3.
     pub epoch: u32,
 }
+
+/// The epoch in the hello of a pooled holder: no epoch of a session has
+/// this value. The holder gets the epoch of its session with
+/// [`Request::AssignSession`].
+pub const POOLED_EPOCH: u32 = 0;
 
 /// The minor version that added the epoch to the hello.
 const EPOCH_MINOR_VERSION: u16 = 3;

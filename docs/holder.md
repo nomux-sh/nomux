@@ -37,6 +37,7 @@ nomux-holder --session <identifier> [options] -- <command> [argument...]
 | `--rows <number>`, `--columns <number>` | 24, 80 | The size of the terminal window: 1 row or more, 2 columns or more, and 1048576 cells at most |
 | `--ring-capacity <bytes>` | 262144 | The size of the ring buffer: a power of two, 4096 or more |
 | `--exit-timeout <seconds>` | 30 | The time to keep the exit status for the daemon |
+| `--pooled` | off | Start as a pooled holder: the command runs, and the session comes later. See "Pooled holder" |
 
 The command gets the environment of the holder and the three variables of "Environment of the command". There is no option for environment variables, because the arguments of a process are visible to other users and the environment is not. The starter sets the environment of the holder.
 
@@ -66,10 +67,35 @@ At the start, the holder does these steps in this sequence:
 7. It opens the PTY and starts the command. The command is the leader of a new session, and the PTY is its controlling terminal.
 8. It writes `ready`.
 
+A pooled holder does not do step 6, and its directory of step 4 is the directory of a pooled holder: see "Pooled holder".
+
 Then the holder waits in one `poll` call for these descriptors: the `SIGCHLD` pipe, the listening socket, the PTY and each connection.
 While the command runs, `poll` has a timeout only when output bytes wait in memory for the journal: 1 second at most after the holder read them. An idle holder makes no system call and uses no CPU time.
 
 The holder uses `rustix` for the system calls. It uses `signal-hook` for the `SIGCHLD` handler, because the end of a child process has no file descriptor that is the same on Linux and macOS.
+
+## Pooled holder
+
+The daemon keeps a small number of holders ready for a new session: the holder pool ([daemon.md](daemon.md#holder-pool)). A pooled holder runs the shell of the user before its session exists. A new session takes it, and the holder gets its session with the `AssignSession` request. Thus a new session opens without the start of a process.
+
+```sh
+nomux-holder --pooled --session <identifier> [options] -- <shell>
+```
+
+- **The identifier.** The daemon keeps a session identifier for the pooled holder when it starts it. The holder gives the command `NOMUX_SESSION_ID` with this identifier, `NOMUX_SOCK` and its token, as each holder does. Thus the environment of the shell is correct when the session takes it, and the token stays only in memory: no request carries it. The command of a running process cannot get a new environment.
+- **Nothing that looks like a session.** A pooled holder writes no session state directory, no session metadata and no journal. Its discovery directory has the name `<session identifier>.pool`, which is not a session identifier: thus `discovery::scan` does not give it, and `discovery::scan_pooled` gives it. The hello of a pooled holder has the epoch 0 (`POOLED_EPOCH`), which no session has. `JournalRead` gives no bytes.
+- **The daemon owns it.** The standard input of a pooled holder is a pipe from the daemon. The daemon writes no byte. When the pipe closes, because the daemon ended (also after `kill -9`) or because the daemon does not need the holder, a holder that is still pooled sends `SIGHUP` to its command and ends. Thus a pooled holder never stays without its daemon. A pooled holder whose standard input is `/dev/null` ends immediately.
+- **The assignment.** `AssignSession` has the window size and the working directory of the session. The holder changes the window size if it is different, makes the session state directory with the metadata, and starts the journal at the current write position with a checkpoint of the screen. Then it renames its discovery directory to the session identifier. A connection that is open continues: the socket stays the same, and a new connection finds it by the new path. After the assignment, the holder is a holder of its session, and the pipe has no function.
+- **The working directory.** The command already runs, thus the assignment does not change its directory: the metadata has the directory of the session, and the daemon types the change of the directory into the terminal. [daemon.md](daemon.md#holder-pool) has the rules.
+
+| Case | Answer to `AssignSession` |
+|---|---|
+| The connection does not have the lease | `Error` with `LeaseRequired` |
+| The holder is not pooled: it started with its session, or it has its session already | `Error` with `InvalidPayload` |
+| The working directory is not an absolute path | `Error` with `InvalidPayload` |
+| The command has ended | `Error` with `ChildExited` |
+| The output ends in a sequence that is not complete, thus the journal cannot start with a checkpoint | `Error` with `Failed` |
+| The state directory, the journal or the rename fails | `Error` with `Failed`. The holder stays pooled |
 
 ## Ring buffer
 
@@ -412,6 +438,7 @@ The holder gives each chunk to the journal in the step that writes the chunk to 
 - The **sequence number** of an output byte is its position: the number of bytes that the command wrote before it. The ring buffer and the journal count the same bytes.
 - An **epoch** is one continuous numbering. One holder process gives one epoch, because a holder counts from 0 and its position never goes back.
 - A session gets a new epoch exactly when a new holder starts for it. That is the only case in which the numbering cannot continue: the restore after a restart of the host, or a new holder after the first one was killed. The position 0 of the new epoch is the first byte that the new command wrote.
+- A pooled holder starts the journal at its assignment. The first segment then starts at the write position of that moment, with a checkpoint at that position: the output before it is in the checkpoint as a screen.
 - The first epoch of a session is 1. The epoch of a new holder is 1 more than the largest epoch in the `session` file and in the names of the segment files. The holder reads the two, because a person can remove each.
 - The epoch is in the hello (since version 1.3) and in the `session` file. The daemon gives it to the clients as the `epoch` field of a terminal frame, and it gives the position as the `seq` field.
 
@@ -541,9 +568,9 @@ The session is more important than its journal. If a write to a segment fails, o
 ## Control protocol
 
 The control socket is a Unix stream socket. The protocol has its own version, which is independent of the product version and of the protocol between the clients and the daemon.
-The current version is 1.4. "Protocol versions" shows what each version added.
+The current version is 1.5. "Protocol versions" shows what each version added.
 
-The encoding is written by hand: fixed little-endian fields with a length prefix. The holder decodes 10 small messages, thus a schema compiler and its runtime give no benefit, and the binary stays small.
+The encoding is written by hand: fixed little-endian fields with a length prefix. The holder decodes 12 small messages, thus a schema compiler and its runtime give no benefit, and the binary stays small.
 
 ### Frame
 
@@ -607,6 +634,7 @@ The holder answers each request with one message that has the same request ident
 | `0x0109` | `WaitProgramReports` | The revision that the daemon already has (8). Since version 1.2 | | `ProgramReportsChanged`, possibly later |
 | `0x010A` | `JournalRead` | The position of the first byte (8), the largest number of bytes (4, not 0). Since version 1.3 | | `Journal`, with a descriptor if it has bytes |
 | `0x010B` | `SessionToken` | Empty. Since version 1.4 | | `SessionToken` |
+| `0x010C` | `AssignSession` | Rows (2), columns (2), length of the working directory (2), the bytes of the working directory. Since version 1.5 | necessary | `Done` |
 
 `Signal` sends the signal to the process of the command. After the holder has the exit status, it sends no signal, because the process ID can belong to a different process.
 
@@ -755,6 +783,7 @@ An old daemon never sees a new reply kind or a new error code, because only a ne
 | 1.2 | Requests `ProgramReports` and `WaitProgramReports`, replies `ProgramReports` and `ProgramReportsChanged` | It has no program status, no input line state and no notification from that holder. A holder of version 1.1 does not answer the OSC 7501 query, thus the tools in its session send no program status report |
 | 1.3 | Field `epoch` at the end of the hello, request `JournalRead`, reply `Journal` | The epoch is 1. The holder has no journal: a client that needs bytes that the ring buffer has no more gets a redraw, and the session has no scrollback and no state on disk |
 | 1.4 | The variables `NOMUX_SESSION_ID`, `NOMUX_SOCK` and `NOMUX_TOKEN` for the command, request `SessionToken`, reply `SessionToken` | It has no token of the session. The command of that holder has none of the three variables, and the daemon refuses each self-report for the session with a message that says why. The other status sources work |
+| 1.5 | Option `--pooled`, request `AssignSession`, epoch 0 in the hello of a pooled holder | Nothing changes for a holder of a session. The daemon sends `AssignSession` only to a pooled holder that it started, and only if the hello has version 1.5 or later. A pooled holder of an earlier version does not exist |
 
 Release 0.1.0 has a holder of version 1.2. No release has a holder of version 1.0 or 1.1, thus each holder that runs has version 1.2 or later.
 
@@ -774,14 +803,15 @@ The last request wins because a new daemon must be able to take the lease from a
 
 ## Discovery files
 
-Each holder has one directory in the runtime directory of the user. The name of the directory is the session identifier.
+Each holder has one directory in the runtime directory of the user. The name of the directory is the session identifier. A pooled holder has the name `<session identifier>.pool` until its assignment.
 
 ```
-~/.nomux/run/            runtime directory, mode 0700
-  <session identifier>/  holder directory, mode 0700
-    pid                  "<process ID> <start time>\n"
-    sock                 control socket, mode 0600
-    ready                empty; the holder writes it last
+~/.nomux/run/                 runtime directory, mode 0700
+  <session identifier>/       holder directory, mode 0700
+    pid                       "<process ID> <start time>\n"
+    sock                      control socket, mode 0600
+    ready                     empty; the holder writes it last
+  <session identifier>.pool/  directory of a pooled holder, with the same files
 ```
 
 The start time tells a holder from a later process that got the same process ID.
@@ -793,7 +823,7 @@ The start time tells a holder from a later process that got the same process ID.
 
 The value is compared only for equality.
 
-`nomux_holder_protocol::discovery::scan` reads a runtime directory and gives the state of each holder directory:
+`nomux_holder_protocol::discovery::scan` reads a runtime directory and gives the state of each holder directory. `discovery::scan_pooled` gives the directories of the pooled holders with the same states:
 
 | State | Condition |
 |---|---|
@@ -811,7 +841,7 @@ A holder makes its directory and then writes `pid`. A scan between these two ste
 
 ## Lifecycle
 
-1. **Start.** The holder does the steps of "Process model". If a step fails, the holder removes its directory and exits with status 1. A usage error gives status 2.
+1. **Start.** The holder does the steps of "Process model". If a step fails, the holder removes its directory and exits with status 1. A usage error gives status 2. A pooled holder waits for its assignment, and ends with status 0 when the pipe of its daemon closes before it.
 2. **Run.** The holder moves output from the PTY to the ring buffer, and answers requests. If all processes close the PTY but the command continues, the holder stops reading the PTY and waits for the end of the command.
 3. **End of the command.** `SIGCHLD` wakes the holder. It collects the exit status, reads the output that is in the PTY (256 chunks at most), closes the PTY and answers each `WaitOutput` request. The close of the PTY sends `SIGHUP` to the processes that remain in the session. The holder writes the output that waits to the journal, calls `fdatasync` for the open segment, and writes the exit status to the session metadata.
 4. **Exit status.** The holder keeps answering requests. `Status` gives the exit status. `Input`, `Resize` and `Signal` give `ChildExited`.
@@ -845,6 +875,9 @@ Measured on Linux x86-64 with the release profile. The targets are in [bench/REA
 | Resident memory, ring buffer full, after 8 MB of output (glibc) | 3.1 MB | < 3 MB: not met |
 | Resident memory, ring buffer full and program reports full (glibc) | 3.3 MB | < 3 MB: not met |
 | CPU time and context switches in 10 s, idle | 0 and 0 | 0 |
+| Size of `nomux-holder` (musl, static), with the pooled holder | 737968 bytes: 4128 bytes more than before | < 1 MB |
+| Resident memory, idle pooled holder with `/bin/sh` (musl, static) | 0.8 MB to 0.9 MB | < 3 MB |
+| Start of the holder to its `ready` file, with `/bin/sh`: median of 50 | 1.07 ms | |
 | Output of `cat` of a 128 MiB file through the holder, plain text | 82 MiB/s | |
 | Output of `cat` of a 128 MiB file through the holder, colored words | 69 MiB/s | |
 | Output of `cat` of a 32 MiB file through the holder, a program status report in each line | 30 MiB/s | |
@@ -906,7 +939,6 @@ These parts are not in the holder yet:
 - **The `restore` key of the session metadata.** The holder always writes `on-focus`, and the daemon does not read the key: the restore policy is in the file `restore-policy` of the daemon. A later format version removes the key.
 - **Program reports.** The holder does not see RIS, thus a full reset does not remove the program status records. The forgery guard reads only the name of the leader of the foreground process group: it ignores the reports of a tool that runs in an interpreter, behind a pipe or on a remote host. The holder does not read OSC 99, and it does not read the text of the input line from the screen.
 - **Fuzz target.** The parsers of `nomux_term::osc` have no fuzz target yet.
-- **Warm pool.** There is no message that gives a session to a holder that already runs.
 - **Lease notification.** The connection that loses the lease learns it from the answer to its next write request, not from a message.
 - **Send across threads.** `RingReader` is not `Send`. The daemon decides how it shares a reader between tasks.
 - **Compatibility tests.** When a release has a holder, CI must test the new daemon code with a holder of each older version.
