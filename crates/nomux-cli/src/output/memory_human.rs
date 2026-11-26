@@ -6,6 +6,7 @@ use nomux_client::{MemoryMeasure, Session, SessionMemory};
 use super::human::state_name;
 use super::memory_size::memory_size;
 use super::table::{Cell, Table};
+use super::wrapped_line::wrapped;
 use crate::session_memory::{MemoryTotal, memory_of};
 
 const HEADERS: [&str; 7] = [
@@ -24,14 +25,21 @@ pub(super) fn session_table(
     memory: &[SessionMemory],
     width: Option<usize>,
 ) -> String {
+    const PROCESSES: usize = 3;
+    const HOLDER: usize = 4;
+    const MEASURE: usize = 5;
     const COMMAND: usize = 6;
-    let mut table = Table::new(&HEADERS).shorten(&[COMMAND]);
+    // The total line names the measure, and the memory of the command
+    // matters more than its number of processes and its holder.
+    let mut table = Table::new(&HEADERS)
+        .shorten(&[COMMAND])
+        .omit(&[MEASURE, PROCESSES, HOLDER]);
     for session in sessions {
         let row = row(session, memory_of(memory, &session.id));
         table.push(row.into_iter().map(Cell::new).collect());
     }
     let mut text = table.render(width);
-    text.push_str(&total_line(&MemoryTotal::of(memory)));
+    text.push_str(&wrapped(&total_line(&MemoryTotal::of(memory)), width));
     text
 }
 
@@ -70,14 +78,14 @@ fn row(session: &Session, memory: Option<&SessionMemory>) -> [String; 7] {
 
 fn total_line(total: &MemoryTotal) -> String {
     if total.sessions == 0 {
-        return "total: no session has a process\n".to_owned();
+        return "total: no session has a process".to_owned();
     }
     let measure = match total.measure {
         Some(measure) => measure_name(measure),
         None => "pss and rss",
     };
     format!(
-        "total: {} in {} of {}, and {} in the holders ({measure})\n",
+        "total: {} in {} of {}, and {} in the holders ({measure})",
         memory_size(total.command_bytes),
         counted(total.command_processes, "process", "processes"),
         counted(total.sessions, "session", "sessions"),
@@ -104,6 +112,7 @@ pub(super) fn measure_name(measure: MemoryMeasure) -> &'static str {
 mod tests {
     use nomux_client::SessionState;
 
+    use super::super::table::assert_fits;
     use super::*;
 
     const MEBIBYTE: u64 = 1024 * 1024;
@@ -150,6 +159,31 @@ mod tests {
              cd  dormant  -          -          -        -        vim notes.txt\n\
              total: 512.0 MiB in 3 processes of 1 session, and 2.0 MiB in the holders (pss)\n"
         );
+    }
+
+    #[test]
+    fn a_terminal_of_60_columns_leaves_out_the_measure_and_breaks_the_total_line() {
+        let sessions = [
+            session("2anrctpr", SessionState::Running, &["/bin/zsh"]),
+            session(
+                "emh2yo3q",
+                SessionState::Dormant,
+                &["sh", "-c", "sleep 600"],
+            ),
+        ];
+        let memory = [memory("2anrctpr", 3 * MEBIBYTE, MemoryMeasure::Resident)];
+
+        let text = session_table(&sessions, &memory, Some(60));
+
+        assert_eq!(
+            text,
+            "ID        STATE    MEMORY   PROCESSES  HOLDER   COMMAND\n\
+             2anrctpr  running  3.0 MiB  3          2.0 MiB  /bin/zsh\n\
+             emh2yo3q  dormant  -        -          -        sh -c sleep\u{2026}\n\
+             total: 3.0 MiB in 3 processes of 1 session, and 2.0 MiB in\n\
+             the holders (rss)\n"
+        );
+        assert_fits(&text, 60);
     }
 
     #[test]

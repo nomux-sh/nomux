@@ -179,13 +179,16 @@ fn child_rows<'a>(children: &'a [ChildWork], depth: usize, rows: &mut Vec<Row<'a
 
 /// The table of `rows`. `header` is the header of the column of the names.
 fn status_table(header: &str, rows: &[Row<'_>], style: Style, width: Option<usize>) -> String {
+    const NAME: usize = 0;
     const COMMAND: usize = 1;
+    const FOR: usize = 3;
     const MESSAGE: usize = 4;
     let now = now_ms();
     // The mark of the state is before the name, in the column of the name.
     let header = format!("  {header}");
-    let mut table =
-        Table::new(&[&header, "COMMAND", "STATE", "FOR", "MESSAGE"]).shorten(&[COMMAND, MESSAGE]);
+    let mut table = Table::new(&[&header, "COMMAND", "STATE", "FOR", "MESSAGE"])
+        .shorten(&[COMMAND, MESSAGE, NAME])
+        .omit(&[FOR, COMMAND]);
     for row in rows {
         let (mark, state, time, message) = match row.status {
             Some(status) => (
@@ -403,6 +406,7 @@ mod tests {
     use nomux_client::{AgentRun, SessionState, Sourced};
 
     use super::super::human::RESET;
+    use super::super::table::assert_fits;
 
     use super::*;
 
@@ -489,6 +493,37 @@ mod tests {
              ! a1       claude     needs you: permission  0s   run tests?\n\
              * b22      make test  working (guess)        0s\n"
         );
+    }
+
+    #[test]
+    fn a_terminal_of_60_columns_leaves_out_the_time_and_keeps_the_full_state() {
+        let tree = AgentTree {
+            runs: vec![run(
+                "k3xq2abc",
+                status(
+                    AgentState::NeedsYou(Some(NeedsYouKind::Permission)),
+                    StatusSource::ForegroundProgram,
+                    Some("may I run cargo test in the workspace?"),
+                ),
+                Vec::new(),
+            )],
+            attention: None,
+        };
+        let sessions = [session("k3xq2abc", "claude --dangerously-skip-permissions")];
+
+        let text = status_table(
+            "SESSION",
+            &rows(&tree, &sessions, false, None),
+            Style::Plain,
+            Some(60),
+        );
+
+        assert_eq!(
+            text,
+            "  SESSION   COMMAND  STATE                          MESSAGE\n\
+             ! k3xq2abc  claude\u{2026}  needs you: permission (guess)  may I r\u{2026}\n"
+        );
+        assert_fits(&text, 60);
     }
 
     #[test]

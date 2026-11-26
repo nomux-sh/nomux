@@ -1,7 +1,8 @@
 //! The tables of the text output. The columns are aligned by the width of
 //! their text on a terminal, and a table fits the width of the terminal: a
 //! column that can be shortened loses its end, and an ellipsis marks the
-//! cut.
+//! cut. If the shortened columns at the width of their headers are not
+//! enough, the table leaves out columns that it can do without.
 
 use std::io::{self, IsTerminal};
 
@@ -57,6 +58,9 @@ pub(super) struct Table {
     /// The columns that the table shortens when it is wider than its
     /// limit, in the sequence in which it shortens them.
     shortened: Vec<usize>,
+    /// The columns that the table leaves out when the shortened columns
+    /// are not enough, in the sequence in which it leaves them out.
+    omitted: Vec<usize>,
 }
 
 impl Table {
@@ -65,6 +69,7 @@ impl Table {
             header: header.iter().map(|text| Cell::new(*text)).collect(),
             rows: Vec::new(),
             shortened: Vec::new(),
+            omitted: Vec::new(),
         }
     }
 
@@ -75,24 +80,34 @@ impl Table {
         self
     }
 
+    /// Leaves out the columns `columns` in this sequence when the table is
+    /// too wide also with each shortened column at the width of its header.
+    pub(super) fn omit(mut self, columns: &[usize]) -> Self {
+        self.omitted = columns.to_vec();
+        self
+    }
+
     /// Adds a row with one cell for each column.
     pub(super) fn push(&mut self, row: Vec<Cell>) {
         self.rows.push(row);
     }
 
     /// The lines of the table. With `width`, a line is not wider than
-    /// `width` columns if the shortened columns permit it.
+    /// `width` columns if the shortened and the omitted columns permit it.
     pub(super) fn render(&self, width: Option<usize>) -> String {
-        let widths = self.column_widths(width);
+        let columns = self.columns(width);
         let mut text = String::new();
         for row in std::iter::once(&self.header).chain(&self.rows) {
-            text.push_str(line(row, &widths).trim_end());
+            text.push_str(line(row, &columns).trim_end());
             text.push('\n');
         }
         text
     }
 
-    fn column_widths(&self, limit: Option<usize>) -> Vec<usize> {
+    /// The columns that the table shows, with their widths. A column is
+    /// left out only if the table is too wide with each shortened column at
+    /// the width of its header. Then the shown columns are shortened.
+    fn columns(&self, limit: Option<usize>) -> Vec<(usize, usize)> {
         let mut widths: Vec<usize> = (0..self.header.len())
             .map(|column| {
                 std::iter::once(&self.header)
@@ -102,30 +117,56 @@ impl Table {
                     .unwrap_or(0)
             })
             .collect();
+        let mut shown: Vec<usize> = (0..widths.len()).collect();
         let Some(limit) = limit else {
-            return widths;
+            return shown.into_iter().zip(widths).collect();
         };
-        let line_width = widths.iter().sum::<usize>() + SEPARATOR.len() * (widths.len() - 1);
-        let mut excess = line_width.saturating_sub(limit);
-        for &column in &self.shortened {
-            let shortest = self.header[column].text.width();
-            let cut = widths[column].saturating_sub(shortest).min(excess);
+        let shortest = |column: usize, widths: &[usize]| {
+            if self.shortened.contains(&column) {
+                widths[column].min(self.header[column].text.width())
+            } else {
+                widths[column]
+            }
+        };
+        for &column in &self.omitted {
+            if line_width(&shown, |column| shortest(column, &widths)) <= limit {
+                break;
+            }
+            shown.retain(|&shown_column| shown_column != column);
+        }
+        let mut excess = line_width(&shown, |column| widths[column]).saturating_sub(limit);
+        for &column in self
+            .shortened
+            .iter()
+            .filter(|column| shown.contains(column))
+        {
+            let cut = (widths[column] - shortest(column, &widths)).min(excess);
             widths[column] -= cut;
             excess -= cut;
         }
-        widths
+        shown
+            .into_iter()
+            .map(|column| (column, widths[column]))
+            .collect()
     }
 }
 
-fn line(row: &[Cell], widths: &[usize]) -> String {
-    let last = row.len() - 1;
-    let cells: Vec<String> = row
+/// The width of a line with the columns `shown`.
+fn line_width(shown: &[usize], width: impl Fn(usize) -> usize) -> usize {
+    let separators = SEPARATOR.len() * shown.len().saturating_sub(1);
+    shown.iter().map(|&column| width(column)).sum::<usize>() + separators
+}
+
+/// One line with the cells of `columns`: the shown columns and their widths.
+fn line(row: &[Cell], columns: &[(usize, usize)]) -> String {
+    let last = columns.len().saturating_sub(1);
+    let cells: Vec<String> = columns
         .iter()
-        .zip(widths)
         .enumerate()
-        .map(|(column, (cell, &width))| {
+        .map(|(position, &(column, width))| {
+            let cell = &row[column];
             let mut text = shortened(&cell.text, width);
-            if column != last {
+            if position != last {
                 let padding = width.saturating_sub(text.width());
                 text.extend(std::iter::repeat_n(' ', padding));
             }
@@ -156,6 +197,17 @@ fn shortened(text: &str, width: usize) -> String {
         .collect();
     kept.push(ELLIPSIS);
     kept
+}
+
+/// Fails if a line of `text` is wider than `width` columns.
+#[cfg(test)]
+pub(super) fn assert_fits(text: &str, width: usize) {
+    for line in text.lines() {
+        assert!(
+            line.width() <= width,
+            "{line:?} is wider than {width} columns:\n{text}"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -213,6 +265,35 @@ mod tests {
              ls           done\n"
         );
         assert!(text.lines().all(|line| line.width() <= 18), "{text}");
+    }
+
+    #[test]
+    fn a_column_is_left_out_only_when_the_shortened_columns_are_not_enough() {
+        let table = || {
+            let mut table = Table::new(&["ID", "COMMAND", "STATE", "SIZE"])
+                .shorten(&[1])
+                .omit(&[3]);
+            table.push(vec![
+                Cell::new("s1"),
+                Cell::new("a long command"),
+                Cell::new("running"),
+                Cell::new("12.0 MiB"),
+            ]);
+            table
+        };
+
+        assert_eq!(
+            table().render(Some(36)),
+            "ID  COMMAND        STATE    SIZE\n\
+             s1  a long comma\u{2026}  running  12.0 MiB\n"
+        );
+        // The command at the width of its header is not enough: the size
+        // goes, and the command gets the width back.
+        assert_eq!(
+            table().render(Some(27)),
+            "ID  COMMAND         STATE\n\
+             s1  a long command  running\n"
+        );
     }
 
     #[test]

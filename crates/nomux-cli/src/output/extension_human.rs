@@ -98,10 +98,13 @@ fn manifest_problems(problems: &[ManifestProblem]) -> String {
 /// One line for each extension. The last column says why an extension is
 /// disabled or how its process failed.
 fn extension_table(extensions: &[Extension], width: Option<usize>) -> String {
+    const NAME: usize = 1;
+    const VERSION: usize = 2;
     const PERMISSIONS: usize = 4;
     const REASON: usize = 5;
     let mut table = Table::new(&["ID", "NAME", "VERSION", "STATE", "PERMISSIONS", "REASON"])
-        .shorten(&[REASON, PERMISSIONS]);
+        .shorten(&[REASON, PERMISSIONS, NAME])
+        .omit(&[VERSION, NAME]);
     for extension in extensions {
         table.push(table_row(extension).into_iter().map(Cell::new).collect());
     }
@@ -127,6 +130,7 @@ fn table_row(extension: &Extension) -> [String; 6] {
 
 #[cfg(test)]
 mod tests {
+    use super::super::table::assert_fits;
     use super::*;
 
     fn extension(id: &str, state: ExtensionState, reason: Option<&str>) -> Extension {
@@ -160,6 +164,27 @@ mod tests {
              nomux.echo  Git   1.0.0    running   -\n\
              nomux.git   Git   1.0.0    disabled  process=git,scope=sessions:read  the extension failed: the process ended: exit status: 7\n"
         );
+    }
+
+    #[test]
+    fn a_terminal_of_60_columns_leaves_out_the_version_and_the_name() {
+        let adapter = Extension {
+            name: "Claude Code adapter".to_owned(),
+            ..extension(
+                "nomux.adapter-claude-code",
+                ExtensionState::Disabled,
+                Some("the extension failed: the process ended: exit status: 7"),
+            )
+        };
+
+        let text = extension_table(&[adapter], Some(60));
+
+        assert_eq!(
+            text,
+            "ID                         STATE     PERMISSIONS      REASON\n\
+             nomux.adapter-claude-code  disabled  process=git,sc\u{2026}  the e\u{2026}\n"
+        );
+        assert_fits(&text, 60);
     }
 
     #[test]
