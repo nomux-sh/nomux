@@ -8,20 +8,20 @@ Rules for coding agents and for people who work in this repository. `CLAUDE.md` 
 
 | Path | Responsibility |
 |---|---|
-| `crates/nomux-core` | Types that more than one crate uses. Now: the `--version` output of the three binaries, the lookup of a binary of the same installation, and the hosts of the global configuration file (`config.toml`). |
+| `crates/nomux-core` | Types that more than one crate uses. Now: the `--version` output of the three binaries, the lookup of a binary of the same installation, and the parts of the global configuration file (`config.toml`) that the core reads: the hosts, the default restore policy and the retention time of an ended session. |
 | `crates/nomux-term` | Abstraction over the VT library (`alacritty_terminal`): screen state, redraw sequence, OSC sequences. |
 | `crates/nomux-holder-protocol` | Contract between a holder and the daemon: control messages, ring buffer layout, discovery files. |
 | `crates/nomux-holder` | Binary `nomux-holder`: owns the PTY of one session. |
 | `crates/nomux-transport` | Unix socket, SSH channels, QUIC streams, credit windows. Now: the socket of the daemon on the local host, the SSH client (`~/.ssh/config`, known hosts, authentication, channels to the socket of a remote daemon), the framing of the control channel and the framing of the terminal channels of an attach. |
 | `crates/nomux-status` | Agent status resolver, rules, aggregation. |
 | `crates/nomux-ext-host` | Extension host of the daemon: the installed extensions, the process of each extension in use, calls, events and the isolation of failures. [docs/extensions.md](docs/extensions.md) describes it. |
-| `crates/nomuxd` | Binary `nomuxd`: the daemon. It embeds the extension host, serves the `Ext` service and supplies the host services of the extensions. [docs/daemon.md](docs/daemon.md) describes it. |
-| `crates/nomux-client` | Protocol client for the CLI, the desktop client and the mobile clients: the local host and remote hosts, the installation of the binaries on a remote host, the requests for sessions, for extensions and for the daemon, the checks of a host, and the terminal of an attach as a stream of output and a sink for input, with its reconnect. It has no terminal handling. [docs/remote.md](docs/remote.md) describes the remote hosts. |
-| `crates/nomux-cli` | Binary `nomux`: the CLI. [docs/cli.md](docs/cli.md) has the commands, also the `ext` commands for extensions, the `--host` option, the keys of an attach, the JSON schema and the exit codes. |
+| `crates/nomuxd` | Binary `nomuxd`: the daemon: the holders, the attach of a client, the journal and the state directory of each session, the dormant and the ended sessions and the restore. It embeds the extension host, serves the `Ext` service and supplies the host services of the extensions. [docs/daemon.md](docs/daemon.md) describes it. |
+| `crates/nomux-client` | Protocol client for the CLI, the desktop client and the mobile clients: the local host and remote hosts, the installation of the binaries on a remote host, the requests for sessions, for extensions and for the daemon, the checks of a host, the scrollback of a session, and the terminal of an attach as a stream of output and a sink for input, with its reconnect. It has no terminal handling. [docs/remote.md](docs/remote.md) describes the remote hosts. |
+| `crates/nomux-cli` | Binary `nomux`: the CLI, and the service files that start the daemon at login. [docs/cli.md](docs/cli.md) has the commands, also the `ext` commands for extensions, the `--host` option, the keys of an attach, the JSON schema and the exit codes. |
 | `xtask` | Developer tasks. `cargo xtask ci` runs the checks. `cargo xtask fuzz` runs one fuzz target. |
 | `bench` | Performance targets and the benchmarks. Each benchmark is a Cargo workspace of its own, which `cargo xtask ci` does not build. |
 | `fuzz` | Package `nomux-fuzz`: the `cargo-fuzz` targets for the terminal state, the redraw sequence, the OSC parsers, the holder messages, the program reports, the ring buffer reader and the journal reader. It is a Cargo workspace of its own with a nightly toolchain, which `cargo xtask ci` does not build. [fuzz/README.md](fuzz/README.md) describes the targets. |
-| `tests` | Package `nomux-end-to-end`: tests that run the real `nomux`, `nomuxd` and `nomux-holder` together, also in a pseudoterminal, against an SSH server that a test starts and with a test extension, and the programs that measure the attach path and a remote host. |
+| `tests` | Package `nomux-end-to-end`: tests that run the real `nomux`, `nomuxd` and `nomux-holder` together, also in a pseudoterminal, against an SSH server that a test starts, with a test extension and after a stop of each process as a restart of the host does it, and the programs that measure the attach path, a remote host and the start of the daemon with dormant sessions. |
 | `docs` | Developer notes of the core. |
 | `Cargo.toml` | Workspace members, shared package fields, lint policy, release profile. |
 | `deny.toml`, `clippy.toml`, `rust-toolchain.toml` | License and source policy, clippy settings, pinned toolchain. |

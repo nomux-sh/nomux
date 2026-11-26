@@ -284,7 +284,7 @@ The daemon implements `HostServices` in `crates/nomuxd/src/extensions/host_servi
 
 | Method | Scope | Payload of the call | Payload of the result |
 |---|---|---|---|
-| `sessions.list` | `sessions:read` | Not read | A `SessionListResponse` message of the control protocol: the sessions of the host with their identifier, their state and the process ID of their command |
+| `sessions.list` | `sessions:read` | Not read | A `SessionListResponse` message of the control protocol: the sessions of the host with their identifier, their state, the process ID of their command and their description (the command, the working directory, the window size, the start time, the epoch and the restore policy). The list has the dormant sessions and no ended session. It has no environment variable |
 
 This is the only host service. The daemon gets a new service together with the official extension that needs it, and each service gets a scope of its own in this table.
 

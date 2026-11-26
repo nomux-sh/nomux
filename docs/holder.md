@@ -313,6 +313,7 @@ Each session has one directory in the state directory of the user. The name of t
   sessions/                mode 0700
     <session identifier>/  mode 0700
       session              the session metadata, mode 0600
+      restore-policy       the restore policy, mode 0600. The daemon writes it
       journal/             mode 0700
         <epoch>-<start position>.journal   one segment, mode 0600
 ```
@@ -323,7 +324,9 @@ Each session has one directory in the state directory of the user. The name of t
 | macOS | `~/Library/Application Support/nomux` |
 
 The state directory is not the runtime directory. A runtime directory can be on a file system that is empty after a restart of the host, and its files have a meaning only while their holder runs.
-The path comes from `HOME` only, as the path of the runtime directory does. `nomux_holder_protocol::session_state` has the paths and the format of the metadata, and `nomux_holder_protocol::journal` has the format of the journal and its reader. The daemon reads the directory with these two modules, also when no holder runs.
+The path comes from `HOME` only, as the path of the runtime directory does. `nomux_holder_protocol::session_state` has the paths and the format of the metadata, and `nomux_holder_protocol::journal` has the format of the journal and its reader. The daemon reads the directory with these two modules, also when no holder runs, and it gives the holder the directory with `--state-directory`.
+
+The holder writes the `session` file and the journal. The daemon writes one file, `restore-policy`, and the holder does not read or change it: [daemon.md](daemon.md) describes it.
 
 If the holder cannot make the directory or the first segment, it does not start. After the start, an error of the disk does not stop the session: see "When a write fails".
 
@@ -352,7 +355,7 @@ status running
 | `epoch` | The epoch of the holder that wrote the file |
 | `started` | When that holder started: seconds after the Unix epoch |
 | `rows`, `columns` | The size of the window now |
-| `restore` | The restore policy. This version writes `on-focus` |
+| `restore` | This version always writes `on-focus`. **The daemon does not read this key**: the restore policy of a session is in the file `restore-policy`, which the daemon owns. See the note below the table |
 | `profile` | The name of the environment profile. This version writes no name |
 | `directory` | The working directory of the command |
 | `command` | The program of the command |
@@ -364,10 +367,11 @@ status running
 - A reader ignores a key that it does not know. A later version adds keys, and the format version stays 1. `restore`, `profile`, `status` and each `argument` line are optional for a reader.
 - **The file has no environment variable.** The environment of a command can have secrets, and they must not reach the disk. A later version stores the name of an environment profile in `profile`. The arguments of the command are in the file: they are visible to other users in the process list, thus the starter puts no secret there.
 - The holder writes the file at its start, after each `Resize`, and at the end of the command. It writes a new file and renames it, thus a reader always gets a complete file.
+- **The `restore` key is not the restore policy of the session.** The holder writes the file again from its memory, thus a value that a different process puts into the key does not stay, and the parser refuses each value but `on-focus`. The restore policy is a decision of the daemon, and the daemon keeps it in its own file. The key is a candidate for removal in a later format version.
 
 ### Cleanup rule
 
-**The holder never removes the session state directory.** The directory stays when the command ends, when the holder ends and when the holder is killed. The daemon removes it when it forgets the session.
+**The holder never removes the session state directory.** The directory stays when the command ends, when the holder ends and when the holder is killed. The daemon removes it when it forgets the session: after the retention time of an ended session, and when a client ends a session that has no holder. [daemon.md](daemon.md) has the rules.
 
 Thus the daemon can tell two cases from the files and the discovery scan:
 
@@ -375,9 +379,9 @@ Thus the daemon can tell two cases from the files and the discovery scan:
 |---|---|---|
 | `exited` or `signaled` | Not important | The command ended. The journal is its full output |
 | `running` | Live | The session runs |
-| `running` | None | The holder was stopped while the command ran: for example, the host started again. The restore starts a new holder for the session |
+| `running` | None | The holder was stopped while the command ran: for example, the host started again. The session is dormant, and the restore starts a new holder for it |
 
-A holder that fails after step 6 of its start (for example, the command does not exist) leaves a directory with one empty segment.
+A holder that fails after step 6 of its start (for example, the command does not exist) leaves a directory with one empty segment. The daemon removes the directory of a new session whose holder did not start.
 
 ## Journal
 
@@ -877,7 +881,8 @@ These parts are not in the holder yet:
 
 - **Parts of the terminal state that the redraw sequence does not make.** The scroll region, the tab stops, the saved cursor, the character sets, the hyperlinks and the changed palette colors. The VT library gives no read access to most of them.
 - **Journal.** The size limit is a constant: the holder has no option for it, and the daemon has no configuration. After a write failed, the journal stops for the rest of the life of the holder: it does not try again when the disk has space. The holder has no request for a checkpoint: the daemon reads the checkpoints from the files. The journal has no checkpoint for the screen at the end of the command.
-- **Restore after a restart of the host.** The holder writes what the restore needs: the session metadata and the journal. The daemon does not read them yet, it does not remove a session state directory, and it gives the holder no option for the state directory. The `restore` key has one value, and the `profile` key is always empty.
+- **Restore after a restart of the host.** The `profile` key is always empty: a restore gives the command the environment of the daemon.
+- **The `restore` key of the session metadata.** The holder always writes `on-focus`, and the daemon does not read the key: the restore policy is in the file `restore-policy` of the daemon. A later format version removes the key.
 - **Program reports.** The holder does not see RIS, thus a full reset does not remove the program status records. The forgery guard reads only the name of the leader of the foreground process group: it ignores the reports of a tool that runs in an interpreter, behind a pipe or on a remote host. The holder does not read OSC 99, and it does not read the text of the input line from the screen.
 - **Fuzz target.** The parsers of `nomux_term::osc` have no fuzz target yet.
 - **Warm pool.** There is no message that gives a session to a holder that already runs.
