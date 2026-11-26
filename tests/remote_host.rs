@@ -338,9 +338,12 @@ fn host_doctor_passes_for_a_good_host_and_names_a_wrong_permission() {
     eprintln!("{}", remote.nomux(&["host", "doctor"]).stdout);
     assert_eq!(bad.code, 1, "{bad:?}");
     let document = bad.json();
-    assert_eq!(document["doctor"][0]["host"], "vps");
-    assert_eq!(document["doctor"][0]["ok"], false);
-    let checks = document["doctor"][0]["checks"].as_array().unwrap();
+    // Without a name, the local host comes first.
+    assert_eq!(document["doctor"][0]["host"], "local");
+    let vps = &document["doctor"][1];
+    assert_eq!(vps["host"], "vps");
+    assert_eq!(vps["ok"], false);
+    let checks = vps["checks"].as_array().unwrap();
     let failed: Vec<_> = checks.iter().filter(|check| check["ok"] == false).collect();
     assert_eq!(failed.len(), 1, "{document}");
     assert_eq!(failed[0]["name"], "permissions");

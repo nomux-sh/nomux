@@ -24,6 +24,7 @@ use crate::settings::Settings;
 use crate::shutdown::Shutdown;
 use crate::status::StatusRegistry;
 use crate::workspace::Workspace;
+use crate::worktrees::Worktrees;
 
 /// Runs the daemon until a stop is requested.
 pub(crate) async fn run(running_daemon: RunningDaemon) -> io::Result<()> {
@@ -65,6 +66,7 @@ pub(crate) async fn run(running_daemon: RunningDaemon) -> io::Result<()> {
         sessions,
         status,
         workspace,
+        worktrees: Worktrees::default(),
         events,
         hooks: Arc::new(HookDelivery::new(extensions.clone())),
         extensions,

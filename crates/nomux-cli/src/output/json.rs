@@ -7,6 +7,7 @@ use nomux_client::{
     AttachEnd, ClientError, ExitStatus, Hibernation, HostEvent, HostInfo, RestorePolicy, Session,
     SessionExit,
 };
+use nomux_core::configuration::HostEntry;
 use serde::Serialize;
 
 use super::extension_json::ExtensionBody;
@@ -16,6 +17,7 @@ use super::memory_human::measure_name;
 use super::memory_json::SessionsMemoryBody;
 use super::status_json::StatusBody;
 use super::workspace_json::{ProjectDocument, WorkspaceBody};
+use super::worktree_json::WorktreesDocument;
 use crate::exit_code;
 use crate::report::{AddedHost, HostDiagnosis, Report, ServiceFileAction, ServiceFileReport};
 
@@ -53,6 +55,7 @@ enum Body<'a> {
     Hosts(Vec<HostDocument<'a>>),
     Removed(&'a str),
     Doctor(Vec<DiagnosisDocument<'a>>),
+    Worktrees(WorktreesDocument<'a>),
     Version(&'a str),
     Error(ErrorDocument<'a>),
     /// The field of the document is the field of the body of the extension.
@@ -87,6 +90,15 @@ struct ListedSessionDocument<'a> {
 struct HostDocument<'a> {
     name: &'a str,
     ssh: &'a str,
+}
+
+impl<'a> From<&'a HostEntry> for HostDocument<'a> {
+    fn from(host: &'a HostEntry) -> Self {
+        Self {
+            name: &host.name,
+            ssh: &host.ssh,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -438,6 +450,7 @@ pub(super) fn report(report: &Report) -> String {
                 .collect(),
         ),
         Report::Workspace(report) => Body::Workspace(WorkspaceBody::of(report)),
+        Report::Worktrees(listing) => Body::Worktrees(WorktreesDocument::of(listing)),
         Report::SessionsMeasured { sessions, memory } => {
             Body::SessionsMemory(SessionsMemoryBody::new(sessions, memory))
         }
@@ -484,15 +497,7 @@ pub(super) fn report(report: &Report) -> String {
         }),
         Report::DaemonStopped { was_running } => Body::Stopped(*was_running),
         Report::HostAdded(added) => Body::Host(added.into()),
-        Report::Hosts(hosts) => Body::Hosts(
-            hosts
-                .iter()
-                .map(|host| HostDocument {
-                    name: &host.name,
-                    ssh: &host.ssh,
-                })
-                .collect(),
-        ),
+        Report::Hosts(hosts) => Body::Hosts(hosts.iter().map(HostDocument::from).collect()),
         Report::HostRemoved { name } => Body::Removed(name),
         Report::HostsChecked(hosts) => {
             Body::Doctor(hosts.iter().map(DiagnosisDocument::from).collect())

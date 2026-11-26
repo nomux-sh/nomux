@@ -47,6 +47,8 @@
 //!   session, without an attach.
 //! - [`Client::session_memory`]: the memory that the processes of each
 //!   session use, as [`SessionMemory`] values.
+//! - [`Client::worktrees`]: the worktrees of the Projects, as
+//!   [`ProjectWorktrees`] values.
 //! - [`ClientKind`], [`Session`], [`SessionState`], [`SessionExit`],
 //!   [`RestorePolicy`], [`NewSession`], [`WindowSize`] and [`HostInfo`]: the
 //!   data of the requests and the responses.
@@ -94,6 +96,7 @@ mod terminal;
 mod window_size;
 mod workspace;
 mod workspace_requests;
+mod worktree;
 
 pub use agent::{
     AgentDetails, AgentExplanation, AgentRun, AgentState, AgentStatus, AgentTree, ChildWork,
@@ -102,7 +105,7 @@ pub use agent::{
 pub use bootstrap::{BinarySource, BootstrapStep, Installation};
 pub use client::Client;
 pub use client_kind::ClientKind;
-pub use doctor::{HostCheck, check_host};
+pub use doctor::{HostCheck, check_host, check_local_host};
 pub use error::ClientError;
 pub use events::{EventBody, EventStream, EventType, HibernatedEvent, HostEvent};
 pub use extension::{
@@ -134,3 +137,7 @@ pub use terminal::{
 };
 pub use window_size::WindowSize;
 pub use workspace::{Applied, Workspace, WorkspaceChange};
+pub use worktree::{
+    BuildOutput, MergedBy, ProjectWorktrees, Refusal, Worktree, WorktreeFlag, WorktreeSize,
+    WorktreeState,
+};

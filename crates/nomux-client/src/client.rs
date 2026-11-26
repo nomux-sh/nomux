@@ -160,6 +160,7 @@ impl Client {
             working_directory,
             name: session.name.unwrap_or_default(),
             reuse_existing: session.reuse_existing,
+            sandbox: String::new(),
         };
         match self.call(request::Body::SessionCreate(request)).await? {
             // A session without a name is always new.

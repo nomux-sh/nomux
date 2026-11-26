@@ -10,6 +10,7 @@ mod session;
 mod session_memory;
 mod session_message;
 mod workspace;
+mod worktree;
 
 use std::sync::Arc;
 
@@ -25,12 +26,14 @@ use crate::sessions::Sessions;
 use crate::shutdown::Shutdown;
 use crate::status::StatusRegistry;
 use crate::workspace::Workspace;
+use crate::worktrees::Worktrees;
 
 /// What the handlers of all connections share.
 pub(crate) struct Context {
     pub(crate) sessions: Arc<Sessions>,
     pub(crate) status: Arc<StatusRegistry>,
     pub(crate) workspace: Workspace,
+    pub(crate) worktrees: Worktrees,
     pub(crate) events: Arc<EventLog>,
     pub(crate) extensions: ExtensionHost,
     pub(crate) hooks: Arc<HookDelivery>,
@@ -112,6 +115,7 @@ pub(crate) async fn handle(
         request::Body::WorkspaceRemoveGroup(request) => workspace::remove_group(&request, context),
         request::Body::WorkspaceRename(request) => workspace::rename(&request, context),
         request::Body::WorkspaceMove(request) => workspace::move_node(&request, context),
+        request::Body::WorktreeList(request) => worktree::list(&request, context).await,
     };
     Outcome::Respond(result.unwrap_or_else(response::Result::Error))
 }

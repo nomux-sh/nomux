@@ -14,6 +14,7 @@ use crate::session_commands::{
 };
 use crate::status_commands::{AgentCommand, EventTypeArgument, StatusCommand};
 use crate::workspace_commands::{GroupCommand, ProjectCommand};
+use crate::worktree_commands::WorktreeCommand;
 
 /// Sessions that stay alive on the host when the client disconnects.
 #[derive(Debug, Parser)]
@@ -211,6 +212,12 @@ pub(crate) enum Command {
     Group {
         #[command(subcommand)]
         command: GroupCommand,
+    },
+    /// List the git worktrees of the Projects with their state, size and why each one can or
+    /// cannot be removed
+    Worktree {
+        #[command(subcommand)]
+        command: WorktreeCommand,
     },
     /// Show or stop the daemon, and start it at login
     Daemon {
