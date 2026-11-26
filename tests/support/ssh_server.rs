@@ -6,11 +6,11 @@ use std::fmt::Write as _;
 use std::fs;
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 
 use tempfile::TempDir;
 
-use crate::wait_for;
+use crate::{ProcessGuard, wait_for};
 
 const LOCALHOST: &str = "127.0.0.1";
 /// `sshd` is not in the `PATH` of a user on each computer.
@@ -60,10 +60,11 @@ pub fn public_key(path: &Path) -> String {
     format!("{key_type} {key}")
 }
 
-/// A running `sshd`. The server is stopped when the value is dropped.
+/// A running `sshd`. The server and the processes of its connections are
+/// stopped when the value is dropped.
 #[derive(Debug)]
 pub struct SshServer {
-    process: Child,
+    _process: ProcessGuard,
     port: u16,
     directory: TempDir,
 }
@@ -113,18 +114,18 @@ impl SshServer {
         fs::write(&configuration_file, configuration).expect("the configuration can be written");
 
         let log = fs::File::create(directory.path().join("sshd.log")).expect("a log file");
-        let process = Command::new(sshd)
-            .arg("-D")
-            .arg("-e")
-            .arg("-f")
-            .arg(&configuration_file)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(log)
-            .spawn()
-            .expect("sshd starts");
+        let process = ProcessGuard::spawn(
+            Command::new(sshd)
+                .arg("-D")
+                .arg("-e")
+                .arg("-f")
+                .arg(&configuration_file)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(log),
+        );
         let server = Self {
-            process,
+            _process: process,
             port,
             directory,
         };
@@ -150,13 +151,6 @@ impl SshServer {
     #[must_use]
     pub fn log(&self) -> String {
         fs::read_to_string(self.directory.path().join("sshd.log")).unwrap_or_default()
-    }
-}
-
-impl Drop for SshServer {
-    fn drop(&mut self) {
-        let _ = self.process.kill();
-        let _ = self.process.wait();
     }
 }
 

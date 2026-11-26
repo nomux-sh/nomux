@@ -7,6 +7,8 @@
 
 mod extension_package;
 mod key_latency;
+mod leftover_processes;
+mod process_guard;
 mod remote_host;
 mod ssh_server;
 mod tcp_relay;
@@ -28,6 +30,7 @@ use tempfile::TempDir;
 
 pub use crate::extension_package::extension_package;
 pub use crate::key_latency::{key_to_echo, latency_row};
+pub use crate::process_guard::ProcessGuard;
 pub use crate::remote_host::RemoteHost;
 pub use crate::ssh_server::{SshServer, generate_key, public_key, sshd_path};
 pub use crate::tcp_relay::{Impairment, TcpRelay};
@@ -170,7 +173,8 @@ impl From<Output> for CliRun {
 /// the test have their runtime directory in it.
 ///
 /// When the value is dropped, it stops the daemon and the holders that the
-/// test left.
+/// test left. Then it makes sure that no process of the sandbox runs: a
+/// process that is still there is stopped, and the test fails.
 #[derive(Debug)]
 pub struct Sandbox {
     home: TempDir,
@@ -414,6 +418,21 @@ impl Drop for Sandbox {
             }
             let holder_pid = self.holder_pid(holder.session_id.as_str());
             let _ = rustix::process::kill_process(raw_pid(holder_pid), Signal::KILL);
+        }
+        let problem = match leftover_processes::stop_leftover_processes(self.home.path()) {
+            Ok(leftover) if leftover.is_empty() => return,
+            Ok(leftover) => format!(
+                "the test left processes behind, which are stopped now:\n{}",
+                leftover.join("\n")
+            ),
+            Err(error) => format!("the processes of the sandbox cannot be examined: {error}"),
+        };
+        // A second panic during a panic ends the test process without the
+        // cleanup of the other values.
+        if thread::panicking() {
+            eprintln!("{problem}");
+        } else {
+            panic!("{problem}");
         }
     }
 }
