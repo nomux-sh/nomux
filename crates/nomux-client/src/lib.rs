@@ -129,12 +129,14 @@ pub use hooks::{
     HookAdapter, HookEvent, HookInstallPlan, HookPlatform, SettingsEntry, SettingsPath,
 };
 pub use host::{Host, StagedPackage};
-pub use host_info::{HostInfo, MemoryLimitSupport};
+pub use host_info::{HostInfo, MemoryLimitSupport, SandboxSupport};
 pub use nomux_core::configuration::RestorePolicy;
 pub use nomux_core::workspace_tree::{Node, NodeKind, TreeError, WorkspaceTree};
 pub use nomux_term::QueryFilter;
 pub use scrollback::{CaptureRange, CapturedOutput};
-pub use session::{ExitStatus, NewSession, Session, SessionExit, SessionState};
+pub use session::{
+    ExitStatus, NewSession, SandboxState, Session, SessionExit, SessionSandbox, SessionState,
+};
 pub use session_memory::{MemoryMeasure, SessionMemory};
 pub use session_target::{most_recent_session, resolve_session};
 pub use terminal::{

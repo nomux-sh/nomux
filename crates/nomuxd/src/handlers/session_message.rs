@@ -3,15 +3,16 @@
 use std::ffi::OsStr;
 
 use nomux_core::configuration::RestorePolicy;
+use nomux_holder_protocol::sandbox::FeatureSet;
 use nomux_proto::wire::v1::{
-    RestorePolicy as WireRestorePolicy, Session, SessionExit, SessionHibernation,
-    SessionState as WireSessionState, session_exit,
+    RestorePolicy as WireRestorePolicy, SandboxState, Session, SessionExit, SessionHibernation,
+    SessionSandbox, SessionState as WireSessionState, session_exit,
 };
 
 use crate::holder::SessionEnd;
 use crate::session_registry::{EndedSession, SessionState};
 use crate::session_store::HibernationRecord;
-use crate::sessions::{ListedSession, wire_measure, wire_reason};
+use crate::sessions::{ListedSandbox, ListedSession, wire_measure, wire_reason};
 
 impl From<ListedSession> for Session {
     fn from(listed: ListedSession) -> Self {
@@ -36,6 +37,7 @@ impl From<ListedSession> for Session {
             attached_clients: u32::try_from(listed.attached_clients).unwrap_or(u32::MAX),
             hibernation: listed.hibernation.map(SessionHibernation::from),
             pinned: listed.pinned,
+            sandbox: listed.sandbox.map(|sandbox| Box::new(sandbox.into())),
             ..Self::default()
         };
         // The metadata has no environment variable, thus the description
@@ -56,6 +58,26 @@ impl From<ListedSession> for Session {
         }
         session
     }
+}
+
+impl From<ListedSandbox> for SessionSandbox {
+    fn from(sandbox: ListedSandbox) -> Self {
+        let state = match sandbox.enforced {
+            None => SandboxState::Inactive,
+            Some(_) if !sandbox.missing.is_empty() => SandboxState::Partial,
+            Some(_) => SandboxState::Enforced,
+        };
+        Self {
+            profile: sandbox.profile,
+            state: state.into(),
+            enforced: names(sandbox.enforced.unwrap_or_default()),
+            missing: names(sandbox.missing),
+        }
+    }
+}
+
+fn names(features: FeatureSet) -> Vec<String> {
+    features.names().into_iter().map(str::to_owned).collect()
 }
 
 impl From<HibernationRecord> for SessionHibernation {

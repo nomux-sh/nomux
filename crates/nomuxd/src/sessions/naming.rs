@@ -31,6 +31,7 @@ impl Sessions {
         self: &Arc<Self>,
         command: Vec<String>,
         working_directory: Option<PathBuf>,
+        sandbox: Option<&str>,
         name: SessionName,
         reuse_existing: bool,
     ) -> Result<NamedSession, SessionError> {
@@ -50,7 +51,7 @@ impl Sessions {
             };
         }
         self.refuse_identifier(&name, None)?;
-        let created = self.create(command, working_directory).await?;
+        let created = self.create(command, working_directory, sandbox).await?;
         let id = created.record.id.clone();
         if let Err(error) = self.store.set_name(&id, Some(&name)) {
             // A session without the name that the client asked for is not

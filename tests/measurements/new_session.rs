@@ -46,30 +46,37 @@ fn main() {
         .build()
         .expect("a runtime");
 
-    for (name, configuration, slow_shell) in [
-        ("no pool", "[pool]\nsize = 0\n", false),
-        ("warm pool", "", false),
-        ("no pool, shell start of 200 ms", "[pool]\nsize = 0\n", true),
-        ("warm pool, shell start of 200 ms", "", true),
+    for (name, configuration, slow_shell, profile) in [
+        ("no pool", "[pool]\nsize = 0\n", false, None),
+        ("warm pool", "", false, None),
+        ("sandbox project", "", false, Some("project")),
+        (
+            "no pool, shell start of 200 ms",
+            "[pool]\nsize = 0\n",
+            true,
+            None,
+        ),
+        ("warm pool, shell start of 200 ms", "", true, None),
     ] {
         let sandbox = sandbox(configuration, slow_shell);
         let project = project_directory(&sandbox);
-        let pooled = !configuration.contains("size = 0");
-        if !slow_shell {
+        // A sandboxed session never takes a pooled holder.
+        let pooled = !configuration.contains("size = 0") && profile.is_none();
+        if !slow_shell && profile.is_none() {
             memory_and_idle_cpu(&sandbox, name, pooled);
         }
         println!("| Measurement | Median | Slowest of {RUNS} |");
         println!("|---|---|---|");
         row(
             &format!("`nomux new`, {name}"),
-            &cli_new(&sandbox, &project, pooled),
+            &cli_new(&sandbox, &project, pooled, profile),
         );
-        let first_command = runtime.block_on(first_command(&sandbox, &project, pooled));
+        let first_command = runtime.block_on(first_command(&sandbox, &project, pooled, profile));
         row(
             &format!("Request to the first command, {name}"),
             &first_command,
         );
-        if !pooled && !slow_shell {
+        if !pooled && !slow_shell && profile.is_none() {
             breakdown(&sandbox, &project, &runtime);
         }
         println!();
@@ -94,14 +101,23 @@ fn project_directory(sandbox: &Sandbox) -> PathBuf {
 }
 
 /// The time of `nomux new` from the start of the CLI to its end.
-fn cli_new(sandbox: &Sandbox, project: &Path, pooled: bool) -> Vec<Duration> {
+fn cli_new(
+    sandbox: &Sandbox,
+    project: &Path,
+    pooled: bool,
+    profile: Option<&str>,
+) -> Vec<Duration> {
     let _ = sandbox.sessions();
     let mut times = Vec::new();
     for _ in 0..RUNS {
         if pooled {
             wait_for_full_pool(sandbox);
         }
-        let mut command = sandbox.nomux_command(&["new", "--quiet"]);
+        let mut arguments = vec!["new", "--quiet"];
+        if let Some(profile) = profile {
+            arguments.extend(["--sandbox", profile]);
+        }
+        let mut command = sandbox.nomux_command(&arguments);
         command.current_dir(project).stdout(Stdio::null());
         let start = Instant::now();
         let status = command.status().expect("the CLI starts");
@@ -116,7 +132,12 @@ fn cli_new(sandbox: &Sandbox, project: &Path, pooled: bool) -> Vec<Duration> {
 /// The time from the request of a client that is connected to the output of
 /// the first command that the shell of the new session runs: the session
 /// accepts input and its shell is in the working directory.
-async fn first_command(sandbox: &Sandbox, project: &Path, pooled: bool) -> Vec<Duration> {
+async fn first_command(
+    sandbox: &Sandbox,
+    project: &Path,
+    pooled: bool,
+    profile: Option<&str>,
+) -> Vec<Duration> {
     let mut times = Vec::new();
     for _ in 0..RUNS {
         if pooled {
@@ -128,6 +149,7 @@ async fn first_command(sandbox: &Sandbox, project: &Path, pooled: bool) -> Vec<D
             .create_session(NewSession {
                 command: Vec::new(),
                 working_directory: Some(project.to_owned()),
+                sandbox: profile.map(str::to_owned),
                 ..NewSession::default()
             })
             .await

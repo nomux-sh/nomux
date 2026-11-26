@@ -22,7 +22,7 @@
 //! - [`journal`](crate::journal) is the format of the `journal` directory.
 
 mod metadata;
-mod metadata_text;
+pub(crate) mod metadata_text;
 
 use std::env;
 use std::path::{Path, PathBuf};

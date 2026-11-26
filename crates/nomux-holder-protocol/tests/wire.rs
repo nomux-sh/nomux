@@ -1,5 +1,6 @@
 //! The encoding of the control messages and the compatibility rules.
 
+use nomux_holder_protocol::sandbox::FeatureSet;
 use nomux_holder_protocol::wire::{
     ChildSignal, ChildStatus, DecodeError, ErrorCode, Frame, FrameBuffer, Hello, HelloError,
     ProtocolVersion, Reply, Request, SessionToken, WindowSize,
@@ -26,6 +27,8 @@ fn hello() -> Hello {
         child_pid: 0x0102_0304,
         size: SIZE,
         epoch: 0x0506_0708,
+        sandbox: FeatureSet::EMPTY,
+        landlock_abi: 0,
     }
 }
 
@@ -68,11 +71,16 @@ fn the_bytes_of_a_request_frame_do_not_change() {
 #[test]
 fn the_bytes_of_the_hello_frame_do_not_change() {
     let mut encoded = Vec::new();
-    hello().encode(&mut encoded);
+    Hello {
+        sandbox: FeatureSet::from_bits(0b1_0101),
+        landlock_abi: 9,
+        ..hello()
+    }
+    .encode(&mut encoded);
     assert_eq!(
         encoded,
         [
-            27, 0, 0, 0, // length after this field
+            29, 0, 0, 0, // length after this field
             0x01, 0x00, // kind: Hello
             0, 0, // flags
             0, 0, 0, 0, // request identifier
@@ -80,7 +88,9 @@ fn the_bytes_of_the_hello_frame_do_not_change() {
             4, 3, 2, 1, // process ID of the child
             40, 0, 100, 0, // rows, columns
             2, b's', b'1', // session identifier
-            8, 7, 6, 5, // epoch
+            8, 7, 6, 5,        // epoch
+            0b1_0101, // sandbox: files, unix_sockets, abstract_sockets
+            9,        // Landlock interface
         ]
     );
 }
@@ -100,6 +110,28 @@ fn the_hello_of_a_holder_before_version_1_3_has_the_first_epoch() {
     let decoded = Hello::decode(frame).unwrap();
     assert_eq!(decoded.epoch, 1);
     assert_eq!(decoded.session_id, hello().session_id);
+    assert!(decoded.sandbox.is_empty());
+}
+
+#[test]
+fn the_hello_of_a_holder_before_version_1_7_has_no_sandbox() {
+    let mut encoded = Vec::new();
+    Hello {
+        protocol: ProtocolVersion { major: 1, minor: 6 },
+        sandbox: FeatureSet::from_bits(1),
+        landlock_abi: 9,
+        ..hello()
+    }
+    .encode(&mut encoded);
+    let mut buffer = FrameBuffer::new();
+    feed(&mut buffer, &encoded);
+    // The bytes after the epoch of a 1.6 hello are fields of a later
+    // version for that reader, thus they are not the sandbox.
+    let decoded = Hello::decode(buffer.next_frame().unwrap().unwrap()).unwrap();
+    assert_eq!(
+        (decoded.sandbox, decoded.landlock_abi),
+        (FeatureSet::EMPTY, 0)
+    );
 }
 
 #[test]

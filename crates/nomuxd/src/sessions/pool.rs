@@ -123,6 +123,7 @@ impl Sessions {
             size: None,
             pooled: true,
             shell_start: shell_start.as_ref(),
+            sandbox_plan: None,
         };
         let token = holder::new_token().map_err(start_failure)?;
         let state_directory = self.store.state_directory();

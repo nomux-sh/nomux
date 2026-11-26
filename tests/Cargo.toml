@@ -88,6 +88,10 @@ name = "attach"
 path = "attach.rs"
 
 [[test]]
+name = "sandbox"
+path = "sandbox.rs"
+
+[[test]]
 name = "adapters"
 path = "adapters.rs"
 

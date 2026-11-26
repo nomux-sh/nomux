@@ -341,7 +341,14 @@ impl Sandbox {
     /// test that starts the process itself.
     #[must_use]
     pub fn nomux_command(&self, arguments: &[&str]) -> Command {
-        let mut command = Command::new(binary("nomux"));
+        self.command_of(&binary("nomux"), arguments)
+    }
+
+    /// The command of the CLI binary `nomux` with `arguments` in this home
+    /// directory: for a test with an installation of its own.
+    #[must_use]
+    pub fn command_of(&self, nomux: &Path, arguments: &[&str]) -> Command {
+        let mut command = Command::new(nomux);
         command
             .args(arguments)
             .env("HOME", &self.home_directory)

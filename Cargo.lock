@@ -1236,6 +1236,7 @@ dependencies = [
  "libc",
  "nomux-core",
  "nomux-holder-protocol",
+ "nomux-sandbox",
  "nomux-term",
  "rustix",
  "signal-hook",
@@ -1259,6 +1260,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "70c8874a0feb18a54ea7255dfe458878bbe66d6beff40c8153bdc42667656a2c"
 dependencies = [
  "prost",
+]
+
+[[package]]
+name = "nomux-sandbox"
+version = "0.5.0"
+dependencies = [
+ "libc",
+ "nomux-holder-protocol",
+ "rustix",
+ "tempfile",
 ]
 
 [[package]]
@@ -1300,6 +1311,7 @@ dependencies = [
  "nomux-ext-host",
  "nomux-holder-protocol",
  "nomux-proto",
+ "nomux-sandbox",
  "nomux-status",
  "nomux-transport",
  "prost",

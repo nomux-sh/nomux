@@ -486,6 +486,7 @@ mod tests {
             resolved_working_directory: None,
             hibernation: None,
             pinned: false,
+            sandbox: None,
         }
     }
 

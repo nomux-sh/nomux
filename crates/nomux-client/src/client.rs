@@ -4,7 +4,7 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use nomux_proto::capabilities::{OUTPUT_HISTORY, SESSION_ACTIVITY, SESSION_NAMES};
+use nomux_proto::capabilities::{OUTPUT_HISTORY, SESSION_ACTIVITY, SESSION_NAMES, SESSION_SANDBOX};
 use nomux_proto::compatibility::{VersionRange, negotiate};
 use nomux_proto::wire::v1::{
     self as wire, Envelope, Hello, HostInfoRequest, HostStopRequest, Request, SessionAttachRequest,
@@ -85,9 +85,14 @@ impl Client {
             // This client reads the output of an earlier epoch and the
             // frames that come with it, and the names and the activity of
             // the sessions.
-            capabilities: [OUTPUT_HISTORY, SESSION_NAMES, SESSION_ACTIVITY]
-                .map(str::to_owned)
-                .to_vec(),
+            capabilities: [
+                OUTPUT_HISTORY,
+                SESSION_NAMES,
+                SESSION_ACTIVITY,
+                SESSION_SANDBOX,
+            ]
+            .map(str::to_owned)
+            .to_vec(),
             client_kind: wire::ClientKind::from(kind).into(),
             token: String::new(),
         };
@@ -148,6 +153,11 @@ impl Client {
         if session.name.is_some() {
             self.require(SESSION_NAMES, "session names")?;
         }
+        // An older daemon would ignore the profile and start the session
+        // without limits.
+        if session.sandbox.is_some() {
+            self.require(SESSION_SANDBOX, "the sandbox of a session")?;
+        }
         let working_directory = match session.working_directory {
             Some(path) => path.into_os_string().into_string().map_err(|_| {
                 ClientError::Failed("the working directory is not valid Unicode".to_owned())
@@ -160,7 +170,7 @@ impl Client {
             working_directory,
             name: session.name.unwrap_or_default(),
             reuse_existing: session.reuse_existing,
-            sandbox: String::new(),
+            sandbox: session.sandbox.unwrap_or_default(),
         };
         match self.call(request::Body::SessionCreate(request)).await? {
             // A session without a name is always new.

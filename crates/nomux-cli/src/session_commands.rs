@@ -43,6 +43,7 @@ pub(crate) async fn new(
         working_directory: working_directory(arguments.cwd.clone(), host_name.is_some())?,
         name: arguments.name.clone(),
         reuse_existing: arguments.attach_or_create,
+        sandbox: arguments.sandbox.clone(),
     };
     let mut client = host.client(KIND).await?;
     let (session, created) = client.open_session(session).await?;

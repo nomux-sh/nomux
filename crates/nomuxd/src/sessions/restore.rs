@@ -108,16 +108,32 @@ impl Sessions {
                 .collect(),
         };
         let launcher = self.launcher(id, metadata.epoch.saturating_add(1));
-        let start = HolderStart {
-            session_id: id,
-            command: &command,
-            launcher: &launcher,
-            working_directory: &metadata.working_directory,
-            size: Some(size.unwrap_or(metadata.size)),
-            pooled: false,
-            shell_start: None,
+        // A restore and a wake apply the profile of the session again, or
+        // the command does not start.
+        let profile = self.store.sandbox(id).map_err(|reason| {
+            SessionError::Failed(format!("session {id} cannot start again: {reason}"))
+        })?;
+        let started = match profile
+            .as_deref()
+            .map(|profile| self.sandbox_plan(id, profile, &command, &metadata.working_directory))
+            .transpose()
+        {
+            Ok(plan) => {
+                let start = HolderStart {
+                    session_id: id,
+                    command: &command,
+                    launcher: &launcher,
+                    working_directory: &metadata.working_directory,
+                    size: Some(size.unwrap_or(metadata.size)),
+                    pooled: false,
+                    shell_start: None,
+                    sandbox_plan: plan.as_ref().map(|plan| plan.path.as_path()),
+                };
+                self.start_holder(start).await
+            }
+            Err(error) => Err(error),
         };
-        let link = match (self.start_holder(start).await, hibernation) {
+        let link = match (started, hibernation) {
             (Ok(link), Some(record)) => {
                 self.woken(id, record);
                 link

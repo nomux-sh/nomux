@@ -14,6 +14,20 @@ pub struct HostInfo {
     /// What the operating system of the host gives for a memory limit of a
     /// session. `None` from an older daemon.
     pub memory_limit: Option<MemoryLimitSupport>,
+    /// What the operating system of the host applies of a sandbox. `None`
+    /// from an older daemon.
+    pub sandbox: Option<SandboxSupport>,
+}
+
+/// What the operating system of a host applies of a sandbox profile.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxSupport {
+    /// The features that it applies.
+    pub enforced: Vec<String>,
+    /// The features that it does not apply.
+    pub missing: Vec<String>,
+    /// The kernel and its interface, in English.
+    pub detail: String,
 }
 
 /// What the operating system of a host gives for a memory limit of a
@@ -35,6 +49,11 @@ impl From<wire::HostInfoResponse> for HostInfo {
             session_count: info.session_count,
             memory_limit: info.memory_limit.map(|support| MemoryLimitSupport {
                 applied: support.applied,
+                detail: support.detail,
+            }),
+            sandbox: info.sandbox.map(|support| SandboxSupport {
+                enforced: support.enforced,
+                missing: support.missing,
                 detail: support.detail,
             }),
         }

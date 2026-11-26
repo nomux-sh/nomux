@@ -18,6 +18,8 @@
 //!   metadata file.
 //! - [`journal`]: the format of the output of a session on disk, its reader
 //!   and the encoder of its records.
+//! - [`sandbox`]: the features of a sandbox and the plan that the daemon
+//!   gives a holder for its command.
 //!
 //! A holder that runs is never replaced. Thus each item here is a contract
 //! with all the holders that already run: a change must be an addition.
@@ -34,6 +36,7 @@ pub mod journal;
 pub mod program_reports;
 pub mod redraw;
 pub mod ring;
+pub mod sandbox;
 pub mod session_state;
 pub mod wire;
 

@@ -46,6 +46,14 @@ pub const POOLED_DIRECTORY_SUFFIX: &str = ".pool";
 /// The name of the socket of the daemon in the runtime directory. A holder
 /// gives its path to the command of its session.
 pub const DAEMON_SOCKET_FILE: &str = "nomuxd.sock";
+/// The directory of the agent socket of the daemon in the runtime
+/// directory: the socket that a sandboxed session can use. The name has a
+/// `.`, thus it is not a session identifier. A sandbox permits the
+/// directory, and not the socket file: the directory stays when the daemon
+/// starts again, and the socket file is new.
+pub const AGENT_SOCKET_DIRECTORY: &str = "nomuxd.agent";
+/// The name of the agent socket in its directory.
+pub const AGENT_SOCKET_FILE: &str = "sock";
 
 /// The directory of the holder of one session.
 #[must_use]

@@ -59,6 +59,21 @@ async fn converse(mut stream: EnvelopeStream, context: &Context) -> io::Result<(
     Ok(())
 }
 
+/// Answers the first request of a process of a sandboxed session with the
+/// reason, and closes the connection: such a process uses the agent socket.
+pub(crate) async fn refuse_sandboxed(mut stream: EnvelopeStream) {
+    let Ok(Some(request)) = next_request(&mut stream).await else {
+        return;
+    };
+    let error = Error {
+        code: ErrorCode::PermissionDenied.into(),
+        message: "a process of a sandboxed session cannot use the main socket of the daemon: \
+                  it can only report its status and its hook events, through NOMUX_SOCK"
+            .to_owned(),
+    };
+    let _ = respond(&mut stream, request.id, response::Result::Error(error)).await;
+}
+
 /// Answers the first request, which must be the `Hello`. Returns the
 /// features of the connection, or `None` if the connection must close: the
 /// client is not compatible, or it did not start with the handshake.

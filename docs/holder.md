@@ -38,7 +38,10 @@ nomux-holder --session <identifier> [options] -- <command> [argument...]
 | `--ring-capacity <bytes>` | 262144 | The size of the ring buffer: a power of two, 4096 or more |
 | `--exit-timeout <seconds>` | 30 | The time to keep the exit status for the daemon |
 | `--pooled` | off | Start as a pooled holder: the command runs, and the session comes later. See "Pooled holder" |
+| `--sandbox-plan <path>` | none | Apply the sandbox plan of the file to the command. The holder reads the file and removes it before the command starts. If the operating system cannot apply a feature that the plan requires, the holder does not start: [sandbox.md](sandbox.md) has the rules. Not with `--pooled` |
 | `--launcher <word>` | none | One word of a program that starts the command; the option is repeated for each word. The holder starts the launcher with the command after its words, and the session metadata has the command. The daemon uses it for the memory limit of a session: `systemd-run --user --scope ... --`, which starts the command in its place with `exec`. [memory.md](memory.md#memory-limit) has the rule |
+
+`nomux-holder --enter-sandbox <path> -- <command>` is not a holder: it applies the plan of the file to its own process, removes the file and starts the command in its place with `exec`. A holder with `--sandbox-plan` and `--launcher` puts it between the launcher and the command, thus the limits do not apply to the launcher: [sandbox.md](sandbox.md#what-it-is) says why.
 
 The command gets the environment of the holder with the changes of "Environment of the command". There is no option for environment variables, because the arguments of a process are visible to other users and the environment is not. The starter sets the environment of the holder.
 
@@ -56,17 +59,18 @@ The holder changes the environment of the command with the rule of [daemon.md](d
 - The daemon keeps the token before the holder starts. Thus the daemon accepts a request of the command from its first instruction, before the daemon has a connection to the holder. The command does not get `NOMUX_HOLDER_TOKEN`.
 - The token is only in the memory of the daemon and of the holder, and in the environment of the holder and of the command. No file has it: not the discovery files, not the session metadata and not the journal. Its `Debug` form does not show it.
 - The daemon gets the token with the `SessionToken` request on the private socket. It compares a token of a request in a time that does not depend on the first byte that is different.
+- In a sandbox, `NOMUX_SOCK` is the agent socket of the daemon, `nomuxd.agent/sock`, `TMPDIR` is the temporary directory of the session, and `SSH_AUTH_SOCK`, `GPG_AGENT_INFO`, `DBUS_SESSION_BUS_ADDRESS` and `DOCKER_HOST` are removed: [sandbox.md](sandbox.md#socket-guard).
 - The processes of the session inherit the variables. Thus each process of the session can prove that it is in the session. A process of the same user outside the session can read the environment of a process of the session: the token is not a defence against it, as the socket is not.
 
 At the start, the holder does these steps in this sequence:
 
-1. It calls `setsid`. Thus a signal for the terminal or for the process group of the starter does not reach the holder.
+1. It calls `setsid`. Thus a signal for the terminal or for the process group of the starter does not reach the holder. With `--sandbox-plan`, it then reads the plan, removes the file and builds the limits. If that fails, it writes `nomux-holder: sandbox: <reason>` to its standard error and ends with status 1: the daemon gives that line to the client.
 2. It installs a handler for `SIGCHLD` that writes one byte to a pipe.
 3. It makes the shared memory of the ring buffer.
 4. It makes the discovery directory and writes `pid`.
 5. It makes the control socket `sock`.
 6. It makes the session state directory, writes the session metadata and starts the first segment of the journal.
-7. It opens the PTY and starts the command. The command is the leader of a new session, and the PTY is its controlling terminal.
+7. It opens the PTY and starts the command. The command is the leader of a new session, and the PTY is its controlling terminal. With a sandbox, the child applies the limits after it took the terminal and before `exec`.
 8. It writes `ready`.
 
 A pooled holder does not do step 6, and its directory of step 4 is the directory of a pooled holder: see "Pooled holder".
@@ -586,7 +590,7 @@ The session is more important than its journal. If a write to a segment fails, o
 ## Control protocol
 
 The control socket is a Unix stream socket. The protocol has its own version, which is independent of the product version and of the protocol between the clients and the daemon.
-The current version is 1.6. "Protocol versions" shows what each version added.
+The current version is 1.7. "Protocol versions" shows what each version added.
 
 The encoding is written by hand: fixed little-endian fields with a length prefix. The holder decodes 12 small messages, thus a schema compiler and its runtime give no benefit, and the binary stays small.
 
@@ -608,7 +612,7 @@ If the length is smaller than 8 or the payload is longer than 65536 bytes, the r
 
 | Kind | Message | Payload |
 |---|---|---|
-| `0x0001` | `Hello` | Protocol major version (2), minor version (2), process ID of the command (4), rows (2), columns (2), length of the session identifier (1), session identifier, epoch (4, since version 1.3) |
+| `0x0001` | `Hello` | Protocol major version (2), minor version (2), process ID of the command (4), rows (2), columns (2), length of the session identifier (1), session identifier, epoch (4, since version 1.3), sandbox features that apply to the command (1, since version 1.7: bit 0 `files`, 1 `network_off`, 2 `unix_sockets`, 3 `signals`, 4 `abstract_sockets`), Landlock interface of the kernel (1, 0 without, since version 1.7) |
 | `0x0002` | `Done` | Empty |
 | `0x0003` | `Error` | Error code (2) |
 | `0x0004` | `Status` | State (1): 0 running, 1 exited, 2 killed by a signal. 3 bytes of zero. Exit code or signal number (4) |
@@ -803,6 +807,7 @@ An old daemon never sees a new reply kind or a new error code, because only a ne
 | 1.3 | Field `epoch` at the end of the hello, request `JournalRead`, reply `Journal` | The epoch is 1. The holder has no journal: a client that needs bytes that the ring buffer has no more gets a redraw, and the session has no scrollback and no state on disk |
 | 1.4 | The variables `NOMUX_SESSION_ID`, `NOMUX_SOCK` and `NOMUX_TOKEN` for the command, request `SessionToken`, reply `SessionToken` | It has no token of the session. The command of that holder has none of the three variables, and the daemon refuses each self-report for the session with a message that says why. The other status sources work |
 | 1.5 | Option `--pooled`, request `AssignSession`, epoch 0 in the hello of a pooled holder | Nothing changes for a holder of a session. The daemon sends `AssignSession` only to a pooled holder that it started, and only if the hello has version 1.5 or later. A pooled holder of an earlier version does not exist |
+| 1.7 | Option `--sandbox-plan`, the mode `--enter-sandbox`, the sandbox features and the Landlock interface at the end of the hello | A holder of an older version ends with its usage error for `--sandbox-plan` and starts no command: the session does not start, and the message says that the holder is too old for the sandbox. The daemon gives the option only to a holder that it starts, which is of its own version. The hello of an older holder has no sandbox |
 | 1.6 | Option `--launcher`, request `Checkpoint` | The daemon sends `Checkpoint` only if the hello has version 1.6 or later. A hibernation of a session of an older holder writes no checkpoint: a wake shows the last checkpoint of that holder and the output after it. The daemon gives `--launcher` only to a holder that it starts, which is of its own version |
 
 Release 0.1.0 has a holder of version 1.2. No release has a holder of version 1.0 or 1.1, thus each holder that runs has version 1.2 or later.
@@ -881,6 +886,7 @@ The workspace denies `unsafe`. These items permit it with `#[expect(unsafe_code)
 | `nomux-holder-protocol`, `discovery/process_record.rs` (macOS only) | `proc_pidinfo` has no safe interface |
 | `nomux-holder`, `child.rs`: `take_controlling_terminal` | `Command::pre_exec`: `setsid` and `TIOCSCTTY` between `fork` and `exec` |
 | `nomux-holder`, `control/peer.rs` (macOS only) | `getpeereid` has no safe interface |
+| `nomux-sandbox`, `linux/system_calls.rs`: `landlock_abi`, `seccomp_available`, `create_ruleset`, `add_path_rule`, `ChildLimits::enter`, `ChildLimits::install` | The three Landlock system calls, `SECCOMP_GET_ACTION_AVAIL`, `PR_SET_SECCOMP` with a program, and `Command::pre_exec` for the limits of the child. Issue [#109](https://github.com/nomux-sh/nomux/issues/109) is the agreement. 8 `unsafe` blocks, each with a `SAFETY` comment |
 
 ## Measurements
 

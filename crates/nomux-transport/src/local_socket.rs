@@ -51,23 +51,26 @@ impl LocalListener {
         Ok(Self { listener, owner })
     }
 
-    /// Waits for the next connection.
+    /// Waits for the next connection. Gives the process ID of the peer if
+    /// the operating system gives it.
     ///
     /// # Errors
     ///
     /// Returns the error of `accept`. Returns an error of the kind
     /// `PermissionDenied` if the peer is a different user: that connection
     /// is closed. The listener can accept again after each error.
-    pub async fn accept(&self) -> io::Result<EnvelopeStream> {
+    pub async fn accept(&self) -> io::Result<(EnvelopeStream, Option<u32>)> {
         let (stream, _) = self.listener.accept().await?;
-        let peer = stream.peer_cred()?.uid();
+        let credentials = stream.peer_cred()?;
+        let peer = credentials.uid();
         if peer != self.owner {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 format!("the peer is user {peer}, not the owner of the socket"),
             ));
         }
-        Ok(envelope_stream(stream))
+        let pid = credentials.pid().and_then(|pid| u32::try_from(pid).ok());
+        Ok((envelope_stream(stream), pid))
     }
 }
 

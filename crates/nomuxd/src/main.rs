@@ -79,6 +79,7 @@ mod listener;
 mod logging;
 mod memory_limit;
 mod runtime_directory;
+mod sandbox;
 mod session_error;
 mod session_handle;
 mod session_id;
