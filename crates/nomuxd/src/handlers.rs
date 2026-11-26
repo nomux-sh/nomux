@@ -4,6 +4,7 @@
 mod ext;
 mod host;
 mod session;
+mod session_memory;
 mod session_message;
 
 use std::sync::Arc;
@@ -64,6 +65,7 @@ pub(crate) async fn handle(
         request::Body::SessionSetRestorePolicy(request) => {
             session::set_restore_policy(&request, context)
         }
+        request::Body::SessionMemory(_) => session_memory::memory(context).await,
         request::Body::ExtList(_) => Ok(ext::list(context)),
         request::Body::ExtInspect(request) => ext::inspect(request).await,
         request::Body::ExtInstall(request) => ext::install(request, context).await,

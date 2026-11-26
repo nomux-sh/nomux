@@ -7,7 +7,7 @@ use std::io::{self, IsTerminal};
 use nomux_client::{AttachEnd, ExitStatus, HostInfo, Session, SessionState};
 use nomux_core::configuration::HostEntry;
 
-use super::extension_human;
+use super::{extension_human, memory_human};
 use crate::report::{AddedHost, HostDiagnosis, Report, ServiceFileAction, ServiceFileReport};
 
 const RED: &str = "\x1b[31m";
@@ -41,6 +41,12 @@ pub(super) fn report(report: &Report, style: Style) -> String {
         Report::SessionCreated(session) => format!("{}\n", session.id),
         Report::Sessions(sessions) if sessions.is_empty() => "no sessions\n".to_owned(),
         Report::Sessions(sessions) => session_table(sessions, style),
+        Report::SessionsMeasured { sessions, .. } if sessions.is_empty() => {
+            "no sessions\n".to_owned()
+        }
+        Report::SessionsMeasured { sessions, memory } => {
+            memory_human::session_table(sessions, memory)
+        }
         Report::SessionStarted(session) => format!("session {} runs\n", session.id),
         Report::OutputCaptured { output, .. } => String::from_utf8_lossy(output).into_owned(),
         Report::RestorePolicySet { id, policy } => {
@@ -76,7 +82,7 @@ pub(super) fn report(report: &Report, style: Style) -> String {
 pub(super) fn quiet_report(report: &Report) -> String {
     match report {
         Report::SessionCreated(session) => format!("{}\n", session.id),
-        Report::Sessions(sessions) => sessions
+        Report::Sessions(sessions) | Report::SessionsMeasured { sessions, .. } => sessions
             .iter()
             .flat_map(|session| [session.id.as_str(), "\n"])
             .collect(),
@@ -268,7 +274,7 @@ fn session_table(sessions: &[Session], style: Style) -> String {
     table
 }
 
-fn column_width<'a>(header: &str, values: impl Iterator<Item = &'a str>) -> usize {
+pub(super) fn column_width<'a>(header: &str, values: impl Iterator<Item = &'a str>) -> usize {
     values
         .map(|value| value.chars().count())
         .fold(header.len(), usize::max)

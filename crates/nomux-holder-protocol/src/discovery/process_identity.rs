@@ -40,10 +40,24 @@ impl ProcessIdentity {
     /// Returns an error if the operating system does not give the start
     /// time of a process that exists.
     pub fn of(pid: u32) -> io::Result<Option<Self>> {
+        Ok(Self::with_parent_of(pid)?.map(|(identity, _)| identity))
+    }
+
+    /// The identity of the process that has `pid` now, and the process ID
+    /// of its parent. Returns `None` if no such process runs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the operating system does not give the record of
+    /// a process that exists.
+    pub fn with_parent_of(pid: u32) -> io::Result<Option<(Self, u32)>> {
         let record = process_record::read(pid)?;
-        Ok(record.map(|record| Self {
-            pid,
-            start_time: record.start_time,
+        Ok(record.map(|record| {
+            let identity = Self {
+                pid,
+                start_time: record.start_time,
+            };
+            (identity, record.parent_pid)
         }))
     }
 }

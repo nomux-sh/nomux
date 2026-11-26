@@ -2,7 +2,9 @@
 
 use std::path::PathBuf;
 
-use nomux_client::{AttachEnd, HostCheck, HostInfo, Installation, RestorePolicy, Session};
+use nomux_client::{
+    AttachEnd, HostCheck, HostInfo, Installation, RestorePolicy, Session, SessionMemory,
+};
 use nomux_core::configuration::HostEntry;
 
 use crate::exit_code;
@@ -12,6 +14,12 @@ use crate::extension_commands::ExtensionReport;
 pub(crate) enum Report {
     SessionCreated(Session),
     Sessions(Vec<Session>),
+    /// The sessions of `ls --memory`.
+    SessionsMeasured {
+        sessions: Vec<Session>,
+        /// One entry for each session that has a process.
+        memory: Vec<SessionMemory>,
+    },
     SessionStarted(Session),
     OutputCaptured {
         id: String,

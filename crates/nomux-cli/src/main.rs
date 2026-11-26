@@ -18,6 +18,7 @@
 //!   and call the extensions of a host and check a manifest.
 //! - `attach`: the `attach` command, which uses the terminal of the user.
 //! - `service_files`: the file that starts the daemon at login.
+//! - `session_memory`: the memory of the sessions of `ls --memory`.
 //! - `report`: the result of a command.
 //! - `output`: the text and the JSON form of a result and of an error.
 //! - `exit_code`: the exit codes.
@@ -48,6 +49,7 @@ mod output;
 mod report;
 mod selected_host;
 mod service_files;
+mod session_memory;
 
 use std::io;
 use std::process::ExitCode;

@@ -23,6 +23,8 @@
 //! - [`ClientError`]: why a connection or a request failed.
 //! - [`Client::capture`] and [`Client::capture_lines`]: the scrollback of a
 //!   session, without an attach.
+//! - [`Client::session_memory`]: the memory that the processes of each
+//!   session use, as [`SessionMemory`] values.
 //! - [`ClientKind`], [`Session`], [`SessionState`], [`SessionExit`],
 //!   [`RestorePolicy`], [`NewSession`], [`WindowSize`] and [`HostInfo`]: the
 //!   data of the requests and the responses.
@@ -54,6 +56,7 @@ mod local_host;
 mod reconnect;
 mod scrollback;
 mod session;
+mod session_memory;
 mod ssh_host;
 mod terminal;
 mod window_size;
@@ -72,6 +75,7 @@ pub use host_info::HostInfo;
 pub use nomux_core::configuration::RestorePolicy;
 pub use scrollback::{CaptureRange, CapturedOutput};
 pub use session::{ExitStatus, NewSession, Session, SessionExit, SessionState};
+pub use session_memory::{MemoryMeasure, SessionMemory};
 pub use terminal::{
     AttachEnd, AttachOptions, OutputPosition, TerminalEvent, TerminalInput, TerminalOutput,
 };

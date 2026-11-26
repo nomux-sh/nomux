@@ -9,7 +9,7 @@ The code is in `crates/nomuxd`. The transport is in `crates/nomux-transport`, an
 
 One daemon runs for each user and each runtime directory. The runtime directory is `~/.nomux/run`.
 The daemon is one process with one thread. It uses a `tokio` runtime of the `current_thread` type, because it waits for I/O almost all the time.
-The installation and the removal of an extension read, copy and delete files. For this work the runtime starts a second thread, which ends 10 seconds after the work.
+The installation and the removal of an extension read, copy and delete files, and a request for the memory of the sessions reads the process table of the host. For this work the runtime starts a second thread, which ends 10 seconds after the work.
 
 ```
 nomux (CLI) --- Unix socket: envelopes ---> nomuxd --- Unix socket: holder protocol ---> nomux-holder
@@ -100,6 +100,7 @@ The daemon implements these requests:
 | `Session.Detach` | Detaches each client that is attached to a session and gives their number |
 | `Session.Input` | Writes bytes to the terminal of a session and answers when the holder has them |
 | `Session.Resize` | Changes the window size of a session |
+| `Session.Memory` | Measures the memory that the processes of each session use. The daemon measures only for this request: [memory.md](memory.md) |
 | `Ext.List` | Gives the installed extensions with their state and their approved permissions |
 | `Ext.Inspect` | Validates an extension package in a directory and gives the permissions that its manifest asks for. Installs nothing |
 | `Ext.Install` | Installs an extension package from a directory with the permissions that the user approved |
@@ -520,4 +521,5 @@ These parts are not in the daemon yet:
 - **Daemon update.** `nomuxd --replace` takes over from a daemon that runs, and the clients of that daemon lose their connection. An update that keeps the connections is not written.
 - **Service files.** The launchd agent was not loaded on a Mac. The commands do not give the file to the service manager, and they do not stop a daemon.
 - **Log rotation.** `nomuxd.log` has no size limit. With the default level it stays almost empty.
+- **Memory limit.** The daemon shows the memory of each session and applies no limit. [memory.md](memory.md) has the design of the limit.
 - **Host identity, authentication, warm pool, hibernation of agents, the QUIC transport.**

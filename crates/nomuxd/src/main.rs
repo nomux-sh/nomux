@@ -20,6 +20,8 @@
 //! - `session_store`, `session_journal`, `stopped_sessions`: what a session
 //!   keeps on disk, its output history, and the sessions without a holder:
 //!   dormant, ended and damaged.
+//! - `session_memory`: the memory of the processes of each session, measured
+//!   when a client asks.
 //! - `holder`: the holder side. One task owns the connection with the lease
 //!   to one holder. A second connection reads the terminal while a client
 //!   is attached.
@@ -63,6 +65,7 @@ mod session_error;
 mod session_handle;
 mod session_id;
 mod session_journal;
+mod session_memory;
 mod session_registry;
 mod session_store;
 mod sessions;

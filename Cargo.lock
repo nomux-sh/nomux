@@ -1195,9 +1195,9 @@ dependencies = [
 
 [[package]]
 name = "nomux-proto"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c34b4c4a5a845308db680ae8f2684cb39d27d97521e217234f3bca311e59e958"
+checksum = "9e0cb2b63d04a57773e71d2c897edac8d5c3f63a2fba243a27fb06feecc24b15"
 dependencies = [
  "prost",
 ]
@@ -1235,6 +1235,7 @@ name = "nomuxd"
 version = "0.3.0"
 dependencies = [
  "getrandom 0.4.3",
+ "libc",
  "nomux-core",
  "nomux-ext-host",
  "nomux-holder-protocol",
