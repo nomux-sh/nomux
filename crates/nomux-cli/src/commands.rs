@@ -28,9 +28,7 @@ pub(crate) async fn run(
     let host = selected_host::connect(host_name, format).await?;
     match command {
         Command::New(arguments) => session_commands::new(&host, host_name, arguments).await,
-        Command::Attach { target, prefix } => {
-            session_commands::attach(&host, host_name, &target, &prefix).await
-        }
+        Command::Attach(arguments) => session_commands::attach(&host, host_name, &arguments).await,
         Command::Detach { target } => session_commands::detach(&host, &target).await,
         Command::Ls { all, memory: false } => {
             let mut client = host.client(KIND).await?;
@@ -48,13 +46,12 @@ pub(crate) async fn run(
             Ok(Report::SessionsMeasured { sessions, memory })
         }
         Command::Start { target } => session_commands::start(&host, &target).await,
-        Command::Capture { target, lines } => {
-            session_commands::capture(&host, &target, lines).await
-        }
+        Command::Capture(arguments) => session_commands::capture(&host, &arguments, format).await,
         Command::RestorePolicy { target, policy } => {
             session_commands::set_restore_policy(&host, &target, policy).await
         }
-        Command::Kill { target } => session_commands::kill(&host, &target).await,
+        Command::Kill(arguments) => session_commands::kill(&host, &arguments).await,
+        Command::Send(arguments) => session_commands::send(&host, &arguments).await,
         Command::Rename(arguments) => session_commands::rename(&host, &arguments).await,
         Command::Daemon { command } => daemon(&host, host_name, command).await,
         Command::Host { .. }

@@ -1,19 +1,27 @@
 //! The session commands: `new`, `attach`, `start`, `capture`,
-//! `restore-policy`, `detach`, `kill` and `rename`. Each command that takes
-//! a session finds it by its target first: `Client::find_session` has the
-//! rule.
+//! `restore-policy`, `detach`, `kill`, `rename` and `send`. Each command
+//! that takes a session finds it by its target first:
+//! `Client::find_session` has the rule.
 
 mod arguments;
+mod follow;
+mod key_names;
+mod kill_all;
+mod send;
 
 use std::env;
 use std::path::{self, PathBuf};
 
 use nomux_client::{Client, ClientError, Host, NewSession, RestorePolicy, Session};
-use nomux_core::configuration::PrefixKeys;
 
-pub(crate) use self::arguments::{NewArguments, RenameArguments, Target};
-use crate::attach::{self, PrefixOption};
+pub(crate) use self::arguments::{
+    AttachArguments, CaptureArguments, KillArguments, NewArguments, RenameArguments, SendArguments,
+    Target,
+};
+pub(crate) use self::send::send;
+use crate::attach::{self, AttachMode};
 use crate::commands::KIND;
+use crate::output::Format;
 use crate::report::Report;
 
 /// `new`: starts a session, or with `-A` finds the session of the name, and
@@ -48,19 +56,44 @@ pub(crate) async fn new(
         return Ok(Report::SessionCreated(session));
     };
     let created = arguments.attach_or_create.then_some(created);
-    attach_to(host, host_name, client, session, prefixes, created).await
+    let mode = AttachMode {
+        prefixes,
+        read_only: false,
+    };
+    attach_to(host, host_name, client, session, mode, created).await
 }
 
+/// `attach`, and bare `nomux` on a terminal.
 pub(crate) async fn attach(
     host: &Host,
     host_name: Option<&str>,
-    target: &Target,
-    prefix: &PrefixOption,
+    arguments: &AttachArguments,
 ) -> Result<Report, ClientError> {
-    let prefixes = prefix.prefix_keys()?;
+    let prefixes = arguments.prefix.prefix_keys()?;
     let mut client = host.client(KIND).await?;
-    let session = client.find_session(target.text()).await?;
-    attach_to(host, host_name, client, session, prefixes, None).await
+    let session = match arguments.target.text() {
+        Some(target) => client.find_session(target).await?,
+        None => match client.most_recent_session().await? {
+            Some(session) => session,
+            None if arguments.start_if_none => {
+                client
+                    .create_session(NewSession {
+                        working_directory: working_directory(None, host_name.is_some())?,
+                        ..NewSession::default()
+                    })
+                    .await?
+            }
+            None => return Err(ClientError::NotFound("no sessions".to_owned())),
+        },
+    };
+    if arguments.detach_others {
+        client.detach_session(&session.id).await?;
+    }
+    let mode = AttachMode {
+        prefixes,
+        read_only: arguments.read_only,
+    };
+    attach_to(host, host_name, client, session, mode, None).await
 }
 
 pub(crate) async fn detach(host: &Host, target: &Target) -> Result<Report, ClientError> {
@@ -79,12 +112,21 @@ pub(crate) async fn start(host: &Host, target: &Target) -> Result<Report, Client
 
 pub(crate) async fn capture(
     host: &Host,
-    target: &Target,
-    lines: usize,
+    arguments: &CaptureArguments,
+    format: Format,
 ) -> Result<Report, ClientError> {
     let mut client = host.client(KIND).await?;
-    let id = client.find_session(target.text()).await?.id;
-    let output = client.capture_lines(&id, lines).await?;
+    let id = client.find_session(arguments.target.text()).await?.id;
+    if arguments.follow {
+        if format == Format::Json {
+            return Err(ClientError::Failed(
+                "capture --follow has no JSON form: its output is the bytes of the command"
+                    .to_owned(),
+            ));
+        }
+        return follow::follow(host, client, &id, arguments.lines).await;
+    }
+    let output = client.capture_lines(&id, arguments.lines).await?;
     Ok(Report::OutputCaptured { id, output })
 }
 
@@ -100,9 +142,17 @@ pub(crate) async fn set_restore_policy(
 }
 
 /// A session lives without a daemon, thus `kill` starts one too.
-pub(crate) async fn kill(host: &Host, target: &Target) -> Result<Report, ClientError> {
+pub(crate) async fn kill(host: &Host, arguments: &KillArguments) -> Result<Report, ClientError> {
     let mut client = host.client(KIND).await?;
-    let session = client.find_session(target.text()).await?;
+    if arguments.all {
+        return kill_all::kill_all(client, &arguments.all_options).await;
+    }
+    let Some(target) = arguments.target.text() else {
+        return Err(ClientError::Failed(
+            "kill needs a session, or --all: `nomux kill <target>`".to_owned(),
+        ));
+    };
+    let session = client.find_session(target).await?;
     client.kill_session(&session.id).await?;
     Ok(Report::SessionKilled { session })
 }
@@ -133,10 +183,10 @@ async fn attach_to(
     host_name: Option<&str>,
     client: Client,
     session: Session,
-    prefixes: PrefixKeys,
+    mode: AttachMode,
     created: Option<bool>,
 ) -> Result<Report, ClientError> {
-    let end = attach::run(host, host_name, client, &session, prefixes).await?;
+    let end = attach::run(host, host_name, client, &session, mode).await?;
     Ok(Report::AttachEnded {
         session,
         end,
