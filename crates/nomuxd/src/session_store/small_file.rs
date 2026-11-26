@@ -1,4 +1,4 @@
-//! Reads one small file of a session state directory.
+//! Reads one small file of the state directory.
 
 use std::fs::{self, File};
 use std::io::{self, Read};
@@ -13,7 +13,7 @@ use std::path::Path;
 ///
 /// Returns an error if the file cannot be read, is not a regular file or is
 /// longer than `limit`.
-pub(super) fn read(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
+pub(crate) fn read(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
     if !fs::symlink_metadata(path)?.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,

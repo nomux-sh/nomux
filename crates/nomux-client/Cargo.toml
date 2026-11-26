@@ -12,6 +12,7 @@ publish.workspace = true
 
 [dependencies]
 nomux-core.workspace = true
+nomux-status.workspace = true
 nomux-proto.workspace = true
 nomux-transport.workspace = true
 serde.workspace = true

@@ -44,7 +44,15 @@ nomux [--json | --quiet] [--host <name>] <command>
 | `ext disable <id>` | Disables an extension and stops its process |
 | `ext call <id> <method> [--payload <text> \| --payload @<file>]` | Calls a method of an extension and writes the payload of its result to the standard output |
 | `ext validate <directory>` | Checks the `extension.toml` of a directory on this computer. The command needs no daemon |
-| `status [--tree]` | Shows the status of each session: what works, what is done and what needs the user. With `--tree`, also the Child work |
+| `project add [<directory>] [--name <name>] [--group <node>]` | Adds a directory of the host as a Project of the workspace tree |
+| `project rm <node>` | Removes a Project from the workspace tree. No file and no session changes |
+| `project ls` | Lists the Projects |
+| `group new <name> [--in <node>]` | Makes an empty Group |
+| `group rename <node> <name>` | Gives a Group or a Project a new name |
+| `group move <node> [--to <node> \| --top] [--before <node> \| --after <node>]` | Puts a Group or a Project in a different Group, at the top level, or at a different position |
+| `group rm <node>` | Removes a Group. Its content takes its place |
+| `group ls [--tree]` | Lists the Groups. With `--tree`, the full tree with the Projects |
+| `status [--tree]` | Shows the status of each session: what works, what is done and what needs the user. With `--tree`, also the Child work and the sessions below their Groups and Projects |
 | `status set <state> [<message>]` | Reports the status of the session of this process: `working`, `done`, `blocked`, `error` or `idle`. Only inside a session |
 | `agent explain <id>` | Shows what each source says about the status of a session |
 | `events --follow [--filter <type>]...` | Prints the events of the host when they come, until a signal stops the command |
@@ -110,6 +118,8 @@ The session does not need the CLI or the daemon after that.
 ### `ls`
 
 `ls` lists the sessions that can run: the sessions whose command runs, the dormant sessions and the damaged sessions. `ls --all` (`-a`) also lists the ended sessions, which the daemon keeps for the retention time. "Output" has the states.
+
+If a session belongs to a Project of the workspace tree, the table has the column `PROJECT` with the path of the Project, and `-` for a session without a Project. [workspace.md](workspace.md#the-project-of-a-session) has the rule.
 
 `ls --memory` also shows the memory that the processes of each session use at the time of the command. The daemon measures the memory for this command only: without `--memory`, `ls` measures nothing.
 
@@ -355,6 +365,18 @@ $ nomux ext call nomux.echo echo --payload @request.bin > response.bin
 
 The command does not check the files of the package. `ext install` also makes sure that the package has the program of its daemon part.
 
+### `project` and `group`
+
+These commands change and list the workspace tree of the host: the Groups and the Projects. [workspace.md](workspace.md) has the model, the rules and examples.
+
+- A `<node>` is the identifier of a node, or its path: the names from the top level down to it with `/` between them, for example `Client work/Acme/acme-web`. The name alone is also accepted if one node has it. If more than one node has the name or the path, the command fails with exit code 1 and lists the identifier and the path of each one. A node that does not exist gives exit code 2.
+- `project add` without a directory adds the current directory. On the local host, a directory in a git repository adds the root of the repository. With `--host`, give the directory as an absolute path on the remote host. The daemon resolves the symbolic links of the directory and refuses a directory that a Project has already. The default name is the last part of the directory.
+- `group move` needs `--to`, `--top`, `--before` or `--after`. `--before <node>` and `--after <node>` put the node next to a sibling: without `--to` and `--top`, the node goes to the Group of that sibling. A move of a Group into itself or into a Group below it fails with exit code 1.
+- `group rm` removes only the Group: its Groups and Projects take its place in its parent.
+- A change prints one line: what changed, the identifier, the path after the change and the revision of the tree. `--quiet` prints the identifier.
+- The listings print a table: `project ls` the identifier, the path and the directory; `group ls` the identifier and the path; `group ls --tree` each node below its Group, indented two spaces for each level, with its kind, its identifier and the directory of a Project. `--quiet` prints the identifiers.
+- A daemon that is older than these commands answers with an error, and the exit code is 1.
+
 ### `status`
 
 `status` prints one row for each session that is not ended, and for each ended session that keeps its last Agent run ([status.md](status.md#ended-sessions)): a mark of the state, the session identifier, the command, the state, the time in the state and the message. [status.md](status.md) has the model and the sources of a status.
@@ -364,6 +386,17 @@ The command does not check the files of the package. `ext install` also makes su
 - A result that the user saw has `(seen)`. An attach to a session marks its results as seen.
 - The mark: `!` needs you, `x` error, `+` done, `*` working, and no mark for idle.
 - With `--tree`, each Child work is a row below its session, indented two spaces for each level. A Child work that no source reports has `-` as its state.
+- With `--tree`, the sessions without a Project come first. Then each Group (its name ends with `/`) and each Project of the workspace tree is a row, in the sequence of the tree and indented for each level, with the most urgent status of the sessions below it ([workspace.md](workspace.md#status)). The sessions of a Project are the rows below it. A Group or a Project without a session has `-` as its state. The first column has the header `NAME`.
+
+```console
+$ nomux status --tree
+  NAME            COMMAND    STATE                  FOR  MESSAGE
+* p2rs6tuv        make test  working (guess)        2m
+! Client work/                needs you: permission  1m   run tests?
+!   acme-web                  needs you: permission  1m   run tests?
+!     k3xq2abc    claude     needs you: permission  1m   run tests?
+    notes                     -                      -
+```
 
 ### `status set`
 
@@ -384,9 +417,9 @@ For an ended session, the command prints its kept run, with the resume command o
 
 `events --follow` subscribes to the events of the host and prints each event when it comes: with `--json`, one JSON document on each line (NDJSON). The command ends with the exit code 0 on `SIGINT` (Ctrl-C) or `SIGTERM`, when the daemon closes the connection, and when the reader of the standard output closes it.
 
-- `--filter <type>` prints only the events of a type: `agent-run-changed`, `agent-run-removed` or `extension-event`. Give the option more than one time for more types. A snapshot is always printed.
+- `--filter <type>` prints only the events of a type: `agent-run-changed`, `agent-run-removed`, `extension-event` or `workspace-changed`. Give the option more than one time for more types. A snapshot is always printed.
 - The command prints the events after its start. A snapshot comes when the daemon does not have the events that the command needs.
-- A text line is `<seq> <session> <state> <message>` for a change, `<seq> <session> removed` for a session that ended or was removed, `<seq> extension <id>: <name> (<n> bytes)` for an event of an extension, and `<seq> snapshot: ...` for a snapshot.
+- A text line is `<seq> <session> <state> <message>` for a change, `<seq> <session> removed` for a session that ended or was removed, `<seq> extension <id>: <name> (<n> bytes)` for an event of an extension, `<seq> workspace revision <revision>: <change>` for a change of the workspace tree, and `<seq> snapshot: ...` for a snapshot.
 
 ### `hook`
 
@@ -601,7 +634,7 @@ A field is `null`, or `command` is empty, when the daemon does not know the valu
 {"schema_version":1,"sessions":[{"id":"k3xq2abc","state":"ended","pid":null,"command":["make"],"cwd":"/home/user/project","rows":24,"columns":80,"started_at":1795651200,"epoch":1,"restore_policy":"on-focus","exit":{"ended_at":1795651260,"exit_code":2}}]}
 ```
 
-`sessions` is an array of the object that `new` gives, in the sequence of the identifiers. It is empty if there is no session. An ended session is in the array only with `--all`.
+`sessions` is an array of the object that `new` gives, in the sequence of the identifiers, with one more field: `project`, the Project of the session (`id` and `path`), or `null` if the session has no Project. It is empty if there is no session. An ended session is in the array only with `--all`.
 
 ### `ls --memory`
 
@@ -822,6 +855,38 @@ If the extension answered with an error, the standard error has the error docume
 
 The document goes to the standard output also when the manifest is not valid.
 
+### `project` and `group`
+
+A change:
+
+```json
+{"schema_version":1,"change":{"type":"project_added","revision":3,"node":{"id":"alpwrus76mfj","parent_id":"qyfketjcadky","name":"acme-web","kind":"project","path":"Client work/Acme/acme-web","directory":"/home/user/src/acme-web"}}}
+```
+
+A listing (`project ls`, `group ls`, `group ls --tree`):
+
+```json
+{"schema_version":1,"workspace":{"revision":7,"nodes":[{"id":"qyfketjcadky","parent_id":null,"name":"Acme","kind":"group","path":"Acme"},{"id":"alpwrus76mfj","parent_id":"qyfketjcadky","name":"acme-web","kind":"project","path":"Acme/acme-web","directory":"/home/user/src/acme-web"}]}}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `change.type` | string | `project_added`, `project_removed`, `group_created`, `group_removed`, `renamed` or `moved` |
+| `change.revision`, `workspace.revision` | number | The revision of the tree after the change, or of the listed tree |
+| `change.node` | node | The node after the change. A removed node has its last name and path |
+| `workspace.nodes[]` | list of nodes | The Projects (`project ls`), the Groups (`group ls`) or each node (`group ls --tree`), in the sequence of a depth-first walk |
+
+A node has these fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | string | The identifier |
+| `parent_id` | string or `null` | The Group of the node. `null` at the top level |
+| `name` | string | The name |
+| `kind` | string | `group` or `project` |
+| `path` | string | The names from the top level down to the node, with `/` between them. Not in an event |
+| `directory` | string | Only for a Project: its directory on the host |
+
 ### `status`
 
 ```json
@@ -837,6 +902,7 @@ The document goes to the standard output also when the manifest is not valid.
 | `.aggregate` | status | The most urgent status of the Agent run and of its Child work |
 | `.children[]` | list | Only with `--tree`. Each Child work: `name`, `status` (a status, or `null` if no source reports it), `aggregate` and `children` |
 | `.details` | object | Only if an adapter gave them: `model`, `provider_session_id` and `resume_command`, each a string or `null` |
+| `status.workspace[]` | list | Only with `--tree`. Each node of the workspace tree, with the fields of a node of `project ls`, and `aggregate`: the most urgent status of the sessions below it, or `null`; and `sessions`: the identifiers of the sessions of a Project, empty for a Group |
 
 A status has these fields:
 
@@ -879,10 +945,11 @@ Each line is one document:
 |---|---|---|
 | `event.seq` | number | The position of the event in the event log of the daemon. The numbers start again when the daemon starts again |
 | `event.at_ms` | number | When the event occurred: milliseconds after the Unix epoch |
-| `event.type` | string | `agent_run_changed`, `agent_run_removed`, `extension_event`, `snapshot`, or `unknown` for an event that the CLI does not know |
+| `event.type` | string | `agent_run_changed`, `agent_run_removed`, `extension_event`, `workspace_changed`, `snapshot`, or `unknown` for an event that the CLI does not know |
 | `event.session` | string | The session. Only in `agent_run_changed` and `agent_run_removed` |
 | `event.run` | object | Only in `agent_run_changed`: the Agent run after the change, with the fields of `explain.run` |
 | `event.extension` | object | Only in `extension_event`: `id` (the extension), `name` (the name of the event) and `payload_base64` (the payload in base64: the extension selects its encoding) |
+| `event.workspace` | object | Only in `workspace_changed`: `revision`, and `change`: `added` with `node` (a node without `path`) and `index`, `renamed` with `id` and `name`, `moved` with `id`, `parent_id` and `index`, `removed` with `id`, or `unknown` |
 
 After a `snapshot`, one `agent_run_changed` event for each session gives the state of the host now. A reader discards the state that it had.
 
@@ -942,7 +1009,7 @@ A wrong command line is not a JSON document: the argument parser writes its usag
 
 - `crates/nomux-cli/src/output/json.rs` and `crates/nomux-cli/src/output/extension_json.rs` have the full text of each document. A changed field fails these tests.
 - `crates/nomux-cli/src/arguments.rs` has the rule for the arguments after `--` and `--cmd`, and the usage error for the two forms in one command line. `crates/nomux-cli/src/output/memory_human.rs` has the full text of the table of `ls --memory`, `crates/nomux-cli/src/output/status_human.rs` has the table of `status`, and `tests/session_memory.rs` has its JSON document with real processes. `crates/nomux-cli/src/attach` has the detach keys and the mode of the terminal, also after a panic.
-- `tests/` has the end-to-end tests that run the real `nomux`, `nomuxd` and `nomux-holder` and examine the exit codes. `tests/attach.rs` runs `nomux attach` in a pseudoterminal and examines the screen. `tests/remote_host.rs` runs the `host` commands and the commands with `--host` against an SSH server that the test starts. `tests/extensions.rs` runs the `ext` commands with a test extension that uses the extension SDK. `tests/restore.rs` stops each process as a restart of the host does and runs `ls`, `attach`, `start` and `restore-policy` on the dormant sessions. `tests/journal.rs` has `capture`, and `tests/daemon_service.rs` has the service file. `tests/status.rs` has `status`, `status set`, `agent explain` and `events --follow` with a program that reports its status. `tests/adapters.rs` has `hook`, the `hooks` commands and the event of an extension with the test adapter extension.
+- `tests/` has the end-to-end tests that run the real `nomux`, `nomuxd` and `nomux-holder` and examine the exit codes. `tests/attach.rs` runs `nomux attach` in a pseudoterminal and examines the screen. `tests/remote_host.rs` runs the `host` commands and the commands with `--host` against an SSH server that the test starts. `tests/extensions.rs` runs the `ext` commands with a test extension that uses the extension SDK. `tests/restore.rs` stops each process as a restart of the host does and runs `ls`, `attach`, `start` and `restore-policy` on the dormant sessions. `tests/journal.rs` has `capture`, and `tests/daemon_service.rs` has the service file. `tests/status.rs` has `status`, `status set`, `agent explain` and `events --follow` with a program that reports its status. `tests/adapters.rs` has `hook`, the `hooks` commands and the event of an extension with the test adapter extension. `tests/workspace.rs` has the `project` and `group` commands, the tree after a restart of the daemon, two clients that keep the same tree with the events, and `status --tree` with Groups.
 - `crates/nomux-cli/src/service_files` has the content of the systemd unit and of the launchd agent, also for a path that needs quotes.
 
 ## Open points for the next versions

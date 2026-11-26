@@ -9,6 +9,7 @@ mod host;
 mod session;
 mod session_memory;
 mod session_message;
+mod workspace;
 
 use std::sync::Arc;
 
@@ -23,11 +24,13 @@ use crate::in_flight_requests::InFlightRequests;
 use crate::sessions::Sessions;
 use crate::shutdown::Shutdown;
 use crate::status::StatusRegistry;
+use crate::workspace::Workspace;
 
 /// What the handlers of all connections share.
 pub(crate) struct Context {
     pub(crate) sessions: Arc<Sessions>,
     pub(crate) status: Arc<StatusRegistry>,
+    pub(crate) workspace: Workspace,
     pub(crate) events: Arc<EventLog>,
     pub(crate) extensions: ExtensionHost,
     pub(crate) hooks: Arc<HookDelivery>,
@@ -97,6 +100,15 @@ pub(crate) async fn handle(
         request::Body::HookEvent(request) => hooks::event(request, context),
         request::Body::HooksPlan(request) => hooks::plan(request, context).await,
         request::Body::HooksAdapters(_) => Ok(hooks::adapters_of_tools(context)),
+        request::Body::WorkspaceTree(_) => Ok(workspace::tree(context)),
+        request::Body::WorkspaceAddProject(request) => workspace::add_project(request, context),
+        request::Body::WorkspaceCreateGroup(request) => workspace::create_group(request, context),
+        request::Body::WorkspaceRemoveProject(request) => {
+            workspace::remove_project(&request, context)
+        }
+        request::Body::WorkspaceRemoveGroup(request) => workspace::remove_group(&request, context),
+        request::Body::WorkspaceRename(request) => workspace::rename(&request, context),
+        request::Body::WorkspaceMove(request) => workspace::move_node(&request, context),
     };
     Outcome::Respond(result.unwrap_or_else(response::Result::Error))
 }

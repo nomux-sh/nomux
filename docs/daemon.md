@@ -1,6 +1,6 @@
 # Daemon
 
-This document describes the daemon (`nomuxd`): its process model, its socket, its lifecycle, how it finds and holds the holders, how it attaches clients to the terminal of a session, what it keeps of a session without a process, how it starts such a session again, how it keeps the status of each session and its events, and where it runs the extensions.
+This document describes the daemon (`nomuxd`): its process model, its socket, its lifecycle, how it finds and holds the holders, how it attaches clients to the terminal of a session, what it keeps of a session without a process, how it starts such a session again, how it keeps the status of each session and its events, how it keeps the workspace tree, and where it runs the extensions.
 The code is in `crates/nomuxd`. The transport is in `crates/nomux-transport`, and the client side is in `crates/nomux-client`.
 
 [architecture.md](architecture.md) shows where the daemon is in the core. [holder.md](holder.md) describes the holder and its contract with the daemon. [cli.md](cli.md) describes the commands that use the daemon. [remote.md](remote.md) describes how a client on a different computer reaches the daemon through SSH. [extensions.md](extensions.md) describes the extension host of the daemon.
@@ -483,6 +483,10 @@ The daemon keeps the last events in memory: 1024 events at most, and 16 MiB of e
 
 `Hooks.Event` checks the token of the session as `Agent.SetStatus` does, and puts the event into a queue for the adapter extension of the tool: 256 events and 4 MiB at most. The response comes at once. One task calls the method `hook` of the adapters, one event at a time, and ends when the queue is empty. The adapter reports with the host services `agent.report` and `agent.child`, and the status registry keeps the reports as the source "adapter". [adapters.md](adapters.md) has the path of an event and the rules. The code is in `crates/nomuxd/src/hooks`, `crates/nomuxd/src/handlers/hooks.rs` and `crates/nomuxd/src/extensions/agent_services.rs`.
 
+## Workspace tree
+
+The daemon owns the workspace tree of the host: the Groups and the Projects. It serves the Workspace service (`Workspace.Tree` and the six requests that change the tree) and sends a `WorkspaceChanged` event for each change, in the event log of "Events". It stores the tree with its revision in `workspace.json` in its state directory, with a write that replaces the file in one step, and reads the file only at its start. A file that it cannot use goes aside with a warning in the log, and the daemon starts with an empty tree. [workspace.md](workspace.md) has the model, the file, the rules and the Project of a session. The code is in `crates/nomuxd/src/workspace.rs`, `crates/nomuxd/src/workspace` and `crates/nomuxd/src/handlers/workspace.rs`.
+
 ## What survives the end of the daemon
 
 | Event | Sessions |
@@ -631,7 +635,7 @@ These parts are not in the daemon yet:
 - **Window size for each client.** The other clients are not told a new size, and a new session always starts with 24 rows and 80 columns.
 - **Input that the terminal does not take.** A holder reads no request while it keeps 64 KiB of input that the terminal of the session did not take. `Session.Kill` then waits until the command reads its input.
 - **Parallel requests.** The daemon answers the requests of one connection in their sequence. A long request delays the next request of the same connection, not of other connections.
-- **State.** The daemon keeps no database. What it knows about a session after a restart comes from the holder and from the session state directory. The status of a session comes from the holder again, but `since` and `seen` start again, and the self-report and the event log are gone.
+- **State.** The daemon keeps no database. The workspace tree is a file of its own: [workspace.md](workspace.md#storage). What it knows about a session after a restart comes from the holder and from the session state directory. The status of a session comes from the holder again, but `since` and `seen` start again, and the self-report and the event log are gone.
 - **Status.** The status sources of agent tools (hooks, ACP), `wait`, and notifications to the operating system.
 - **Session environment.** No part of the environment of a session comes from the client: a client with a different locale, or with variables such as `SSH_AUTH_SOCK` or `DISPLAY`, does not give them to its session. A list of variables that `Session.Create` carries from the client needs a field in the control protocol, and a rule for the holder pool: a pooled shell has the variables of no client.
 - **Daemon update.** `nomuxd --replace` takes over from a daemon that runs, and the clients of that daemon lose their connection. An update that keeps the connections is not written.

@@ -128,6 +128,7 @@ impl Subscription {
             Some(event::Body::AgentRunChanged(_)) => EventType::AgentRunChanged,
             Some(event::Body::AgentRunRemoved(_)) => EventType::AgentRunRemoved,
             Some(event::Body::ExtensionEvent(_)) => EventType::ExtensionEvent,
+            Some(event::Body::WorkspaceChanged(_)) => EventType::WorkspaceChanged,
             Some(event::Body::Snapshot(_)) | None => return true,
         };
         self.types.is_empty() || self.types.contains(&kind)

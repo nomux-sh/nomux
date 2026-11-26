@@ -150,6 +150,39 @@ pub struct AgentTree {
     pub attention: Option<(String, AgentStatus)>,
 }
 
+/// The most urgent of `statuses`, by the aggregation rule of the status
+/// engine: work that needs the user first, then an error and a result that
+/// the user did not see, then work that runs. With the same urgency, the
+/// status that waits longest wins, then the first one. `None` if there is
+/// no status.
+pub fn most_urgent<'status>(
+    statuses: impl IntoIterator<Item = &'status AgentStatus>,
+) -> Option<&'status AgentStatus> {
+    let ranked: Vec<(&AgentStatus, nomux_status::Status)> = statuses
+        .into_iter()
+        .map(|status| (status, engine_status(status)))
+        .collect();
+    nomux_status::most_urgent(ranked.iter().map(|(status, ranked)| (*status, ranked)))
+        .map(|(status, _)| status)
+}
+
+/// The parts of `status` that the aggregation rule compares, as the status
+/// engine has them.
+fn engine_status(status: &AgentStatus) -> nomux_status::Status {
+    let state = match status.state {
+        AgentState::Idle | AgentState::Unknown => nomux_status::State::Idle,
+        AgentState::Working => nomux_status::State::Working,
+        AgentState::Done => nomux_status::State::Done,
+        AgentState::NeedsYou(_) => nomux_status::State::NeedsYou(None),
+        AgentState::Error => nomux_status::State::Error,
+    };
+    nomux_status::Status {
+        state,
+        seen: status.seen,
+        ..nomux_status::Status::unreported(nomux_status::Timestamp(status.since_ms))
+    }
+}
+
 /// What one source says about a session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceExplanation {

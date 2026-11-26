@@ -11,6 +11,8 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use super::human::RESET;
 
 const SEPARATOR: &str = "  ";
+/// The indentation of one level of a tree in the first column of a table.
+pub(super) const INDENT: &str = "  ";
 const ELLIPSIS: char = '\u{2026}';
 
 /// The width of the terminal of the standard output in columns. `None` if

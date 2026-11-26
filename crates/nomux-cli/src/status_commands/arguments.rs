@@ -56,6 +56,8 @@ pub(crate) enum EventTypeArgument {
     AgentRunRemoved,
     /// The daemon part of an extension sent an event
     ExtensionEvent,
+    /// The workspace tree of the Groups and the Projects changed
+    WorkspaceChanged,
 }
 
 impl From<EventTypeArgument> for EventType {
@@ -64,6 +66,7 @@ impl From<EventTypeArgument> for EventType {
             EventTypeArgument::AgentRunChanged => Self::AgentRunChanged,
             EventTypeArgument::AgentRunRemoved => Self::AgentRunRemoved,
             EventTypeArgument::ExtensionEvent => Self::ExtensionEvent,
+            EventTypeArgument::WorkspaceChanged => Self::WorkspaceChanged,
         }
     }
 }

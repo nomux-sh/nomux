@@ -11,6 +11,7 @@ use nomux_client::RestorePolicy;
 use crate::extension_commands::ExtCommand;
 use crate::hook_commands::HooksCommand;
 use crate::status_commands::{AgentCommand, EventTypeArgument, StatusCommand};
+use crate::workspace_commands::{GroupCommand, ProjectCommand};
 
 /// Sessions that stay alive on the host when the client disconnects.
 #[derive(Debug, Parser)]
@@ -176,7 +177,8 @@ pub(crate) enum Command {
     /// Show the status of each session: what works, what is done, what needs you
     #[command(args_conflicts_with_subcommands = true)]
     Status {
-        /// Also show the Child work of each session
+        /// Also show the Child work of each session, and the sessions below their Groups and
+        /// Projects
         #[arg(long)]
         tree: bool,
 
@@ -198,6 +200,16 @@ pub(crate) enum Command {
         /// types
         #[arg(long, value_name = "TYPE")]
         filter: Vec<EventTypeArgument>,
+    },
+    /// Add, list and remove the Projects of the workspace tree
+    Project {
+        #[command(subcommand)]
+        command: ProjectCommand,
+    },
+    /// Make, rename, move, remove and list the Groups of the workspace tree
+    Group {
+        #[command(subcommand)]
+        command: GroupCommand,
     },
     /// Show or stop the daemon, and start it at login
     Daemon {

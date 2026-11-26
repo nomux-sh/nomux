@@ -1,6 +1,6 @@
 //! The result of a status command that did not fail.
 
-use nomux_client::{AgentExplanation, AgentTree, ReportedState, Session};
+use nomux_client::{AgentExplanation, AgentTree, ReportedState, Session, Workspace};
 
 use crate::report::Report;
 
@@ -13,6 +13,9 @@ pub(crate) enum StatusReport {
         sessions: Vec<Session>,
         /// `--tree`: show the Child work.
         with_children: bool,
+        /// `--tree`: the workspace tree, for the sessions below their Groups
+        /// and Projects.
+        workspace: Option<Workspace>,
     },
     Explained(AgentExplanation),
     Set {

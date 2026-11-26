@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use nomux_client::{
-    AttachEnd, HostCheck, HostInfo, Installation, RestorePolicy, Session, SessionMemory,
+    AttachEnd, HostCheck, HostInfo, Installation, RestorePolicy, Session, SessionMemory, Workspace,
 };
 use nomux_core::configuration::HostEntry;
 
@@ -11,11 +11,16 @@ use crate::exit_code;
 use crate::extension_commands::ExtensionReport;
 use crate::hook_commands::HooksReport;
 use crate::status_commands::StatusReport;
+use crate::workspace_commands::WorkspaceReport;
 
 #[derive(Debug)]
 pub(crate) enum Report {
     SessionCreated(Session),
-    Sessions(Vec<Session>),
+    Sessions {
+        sessions: Vec<Session>,
+        /// The workspace tree, for the Project of each session.
+        workspace: Workspace,
+    },
     /// The sessions of `ls --memory`.
     SessionsMeasured {
         sessions: Vec<Session>,
@@ -59,6 +64,7 @@ pub(crate) enum Report {
     Extension(ExtensionReport),
     Hooks(HooksReport),
     Status(StatusReport),
+    Workspace(WorkspaceReport),
     ServiceFile(ServiceFileReport),
     Version,
 }

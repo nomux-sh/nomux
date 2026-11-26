@@ -158,7 +158,7 @@ impl Client {
 }
 
 /// The text of a path on the host for a request.
-fn host_path(path: &Path) -> Result<String, ClientError> {
+pub(crate) fn host_path(path: &Path) -> Result<String, ClientError> {
     path.to_str().map(str::to_owned).ok_or_else(|| {
         ClientError::Failed(format!(
             "the directory {} is not valid Unicode",

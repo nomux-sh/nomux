@@ -4,27 +4,47 @@ use std::fmt::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use nomux_client::{
-    AgentExplanation, AgentState, AgentStatus, AgentTree, ChildWork, EventBody, HostEvent,
-    NeedsYouKind, ReportedState, Session, SourceExplanation, StatusSource,
+    AgentExplanation, AgentRun, AgentState, AgentStatus, AgentTree, ChildWork, EventBody,
+    HostEvent, NeedsYouKind, ReportedState, Session, SourceExplanation, StatusSource,
+    WorkspaceTree,
 };
 
 use super::human::{BLUE, GREEN, RED, Style, YELLOW, column_width};
-use super::table::{Cell, Table};
-use crate::status_commands::StatusReport;
+use super::table::{Cell, INDENT, Table};
+use super::workspace_human;
+use crate::status_commands::{StatusReport, WorkspaceStatus};
 
 /// The mark of an empty cell of a table.
 const NONE: &str = "-";
-/// The indentation of one level of Child work.
-const INDENT: &str = "  ";
 
 pub(super) fn report(report: &StatusReport, style: Style, width: Option<usize>) -> String {
     match report {
-        StatusReport::Tree { sessions, .. } if sessions.is_empty() => "no sessions\n".to_owned(),
+        StatusReport::Tree {
+            sessions,
+            workspace,
+            ..
+        } if sessions.is_empty()
+            && workspace
+                .as_ref()
+                .is_none_or(|workspace| workspace.tree.is_empty()) =>
+        {
+            "no sessions\n".to_owned()
+        }
         StatusReport::Tree {
             tree,
             sessions,
             with_children,
-        } => status_table(&rows(tree, sessions, *with_children), style, width),
+            workspace,
+        } => {
+            let workspace = workspace.as_ref().map(|workspace| &workspace.tree);
+            let header = if workspace.is_some() {
+                "NAME"
+            } else {
+                "SESSION"
+            };
+            let rows = rows(tree, sessions, *with_children, workspace);
+            status_table(header, &rows, style, width)
+        }
         StatusReport::Explained(explanation) => explained(explanation),
         StatusReport::Set { id, state } => format!("session {id}: {}\n", reported(*state)),
         StatusReport::EventsFollowed => String::new(),
@@ -67,6 +87,12 @@ pub(super) fn event_line(event: &HostEvent) -> String {
             "{seq} extension {extension_id}: {name} ({} bytes)\n",
             payload.len()
         ),
+        EventBody::WorkspaceChanged { revision, change } => {
+            format!(
+                "{seq} {}\n",
+                workspace_human::change_line(*revision, change)
+            )
+        }
         EventBody::Snapshot => format!("{seq} snapshot: the status of each session follows\n"),
         EventBody::Unknown => format!("{seq} an event that this client does not know\n"),
     }
@@ -81,22 +107,63 @@ struct Row<'a> {
     status: Option<&'a AgentStatus>,
 }
 
-fn rows<'a>(tree: &'a AgentTree, sessions: &'a [Session], with_children: bool) -> Vec<Row<'a>> {
+/// The rows of the sessions. With `workspace`, the sessions without a
+/// Project come first, then each Group and each Project with the most
+/// urgent status below it, and the sessions below their Project.
+fn rows<'a>(
+    tree: &'a AgentTree,
+    sessions: &'a [Session],
+    with_children: bool,
+    workspace: Option<&'a WorkspaceTree>,
+) -> Vec<Row<'a>> {
     let mut rows = Vec::new();
-    for session in sessions {
-        let Some(run) = tree.runs.iter().find(|run| run.session_id == session.id) else {
-            continue;
-        };
+    let Some(workspace) = workspace else {
+        for session in sessions {
+            if let Some(run) = tree.runs.iter().find(|run| run.session_id == session.id) {
+                session_rows(run, sessions, 0, with_children, &mut rows);
+            }
+        }
+        return rows;
+    };
+    let status = WorkspaceStatus::new(workspace, &tree.runs, sessions);
+    for run in status.outside {
+        session_rows(run, sessions, 0, with_children, &mut rows);
+    }
+    for node in status.nodes {
+        let mark = if node.node.is_group() { "/" } else { "" };
         rows.push(Row {
-            name: session.id.clone(),
-            command: session.command.join(" "),
-            status: Some(&run.aggregate),
+            name: format!("{}{}{mark}", INDENT.repeat(node.depth), node.node.name),
+            command: String::new(),
+            status: node.aggregate,
         });
-        if with_children {
-            child_rows(&run.children, 1, &mut rows);
+        for run in node.runs {
+            session_rows(run, sessions, node.depth + 1, with_children, &mut rows);
         }
     }
     rows
+}
+
+/// The row of the session of `run` at `depth`, and the rows of its Child
+/// work below it.
+fn session_rows<'a>(
+    run: &'a AgentRun,
+    sessions: &[Session],
+    depth: usize,
+    with_children: bool,
+    rows: &mut Vec<Row<'a>>,
+) {
+    let command = sessions
+        .iter()
+        .find(|session| session.id == run.session_id)
+        .map_or_else(String::new, |session| session.command.join(" "));
+    rows.push(Row {
+        name: format!("{}{}", INDENT.repeat(depth), run.session_id),
+        command,
+        status: Some(&run.aggregate),
+    });
+    if with_children {
+        child_rows(&run.children, depth + 1, rows);
+    }
 }
 
 fn child_rows<'a>(children: &'a [ChildWork], depth: usize, rows: &mut Vec<Row<'a>>) {
@@ -110,13 +177,15 @@ fn child_rows<'a>(children: &'a [ChildWork], depth: usize, rows: &mut Vec<Row<'a
     }
 }
 
-fn status_table(rows: &[Row<'_>], style: Style, width: Option<usize>) -> String {
+/// The table of `rows`. `header` is the header of the column of the names.
+fn status_table(header: &str, rows: &[Row<'_>], style: Style, width: Option<usize>) -> String {
     const COMMAND: usize = 1;
     const MESSAGE: usize = 4;
     let now = now_ms();
     // The mark of the state is before the name, in the column of the name.
-    let mut table = Table::new(&["  SESSION", "COMMAND", "STATE", "FOR", "MESSAGE"])
-        .shorten(&[COMMAND, MESSAGE]);
+    let header = format!("  {header}");
+    let mut table =
+        Table::new(&[&header, "COMMAND", "STATE", "FOR", "MESSAGE"]).shorten(&[COMMAND, MESSAGE]);
     for row in rows {
         let (mark, state, time, message) = match row.status {
             Some(status) => (
@@ -403,7 +472,12 @@ mod tests {
             attention: None,
         };
         let sessions = [session("a1", "claude"), session("b22", "make test")];
-        status_table(&rows(&tree, &sessions, with_children), style, None)
+        status_table(
+            "SESSION",
+            &rows(&tree, &sessions, with_children, None),
+            style,
+            None,
+        )
     }
 
     #[test]

@@ -5,11 +5,13 @@ mod arguments;
 mod events;
 mod report;
 mod self_report;
+mod workspace_status;
 
 use nomux_client::{ClientError, EventType};
 
 pub(crate) use arguments::{AgentCommand, EventTypeArgument, StatusCommand};
 pub(crate) use report::StatusReport;
+pub(crate) use workspace_status::WorkspaceStatus;
 
 use crate::commands::KIND;
 use crate::output::Format;
@@ -27,10 +29,16 @@ pub(crate) async fn tree(
     // An ended session can keep its last Agent run.
     let sessions = client.list_sessions(true).await?;
     let tree = client.agent_tree(with_children).await?;
+    let workspace = if with_children {
+        Some(client.workspace().await?)
+    } else {
+        None
+    };
     Ok(StatusReport::Tree {
         tree,
         sessions,
         with_children,
+        workspace,
     }
     .into())
 }
