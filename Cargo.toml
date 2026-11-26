@@ -33,7 +33,7 @@ libc = "0.2.191"
 # its own framing.
 lz4_flex = { version = "0.14.2", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
 nomux-extension = { version = "0.1.1", features = ["manifest"] }
-nomux-proto = "0.8.0"
+nomux-proto = "0.9.0"
 prost = "0.14.6"
 # The SSH client. The `ring` backend has a license that `deny.toml` permits;
 # the default backend (`aws-lc-rs`) does not. Without `flate2`: no compression.

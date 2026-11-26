@@ -4,12 +4,13 @@ use std::env;
 use std::fmt::Write;
 use std::io::{self, IsTerminal};
 
-use nomux_client::{AttachEnd, ExitStatus, HostInfo, Session, SessionState};
+use nomux_client::{AttachEnd, ExitStatus, HostInfo, Session, SessionState, WorkspaceTree};
 use nomux_core::configuration::HostEntry;
 
 use super::table::{Cell, Table};
-use super::{extension_human, hooks_human, memory_human, status_human};
+use super::{extension_human, hooks_human, memory_human, status_human, workspace_human};
 use crate::report::{AddedHost, HostDiagnosis, Report, ServiceFileAction, ServiceFileReport};
+use crate::workspace_commands::node_path::path_of;
 
 pub(super) const RED: &str = "\x1b[31m";
 pub(super) const GREEN: &str = "\x1b[32m";
@@ -42,8 +43,11 @@ impl Style {
 pub(super) fn report(report: &Report, style: Style, width: Option<usize>) -> String {
     match report {
         Report::SessionCreated(session) => format!("{}\n", session.id),
-        Report::Sessions(sessions) if sessions.is_empty() => "no sessions\n".to_owned(),
-        Report::Sessions(sessions) => session_table(sessions, style, width),
+        Report::Sessions { sessions, .. } if sessions.is_empty() => "no sessions\n".to_owned(),
+        Report::Sessions {
+            sessions,
+            workspace,
+        } => session_table(sessions, &workspace.tree, style, width),
         Report::SessionsMeasured { sessions, .. } if sessions.is_empty() => {
             "no sessions\n".to_owned()
         }
@@ -77,6 +81,7 @@ pub(super) fn report(report: &Report, style: Style, width: Option<usize>) -> Str
         Report::Extension(report) => extension_human::report(report, width),
         Report::Hooks(report) => hooks_human::report(report, width),
         Report::Status(report) => status_human::report(report, style, width),
+        Report::Workspace(report) => workspace_human::report(report, width),
         Report::ServiceFile(service) => service_file(service),
         Report::Version => format!("{}\n", nomux_core::version_line!()),
     }
@@ -87,7 +92,7 @@ pub(super) fn report(report: &Report, style: Style, width: Option<usize>) -> Str
 pub(super) fn quiet_report(report: &Report) -> String {
     match report {
         Report::SessionCreated(session) => format!("{}\n", session.id),
-        Report::Sessions(sessions) | Report::SessionsMeasured { sessions, .. } => sessions
+        Report::Sessions { sessions, .. } | Report::SessionsMeasured { sessions, .. } => sessions
             .iter()
             .flat_map(|session| [session.id.as_str(), "\n"])
             .collect(),
@@ -99,6 +104,7 @@ pub(super) fn quiet_report(report: &Report) -> String {
         Report::Extension(report) => extension_human::quiet_report(report),
         Report::Hooks(report) => hooks_human::quiet_report(report),
         Report::Status(report) => status_human::quiet_report(report),
+        Report::Workspace(report) => workspace_human::quiet_report(report),
         Report::OutputCaptured { output, .. } => String::from_utf8_lossy(output).into_owned(),
         Report::SessionStarted(_)
         | Report::RestorePolicySet { .. }
@@ -204,12 +210,14 @@ struct SessionRow<'a> {
     id: &'a str,
     state: SessionState,
     pid: String,
+    /// The path of the Project of the session.
+    project: Option<String>,
     command: String,
     note: String,
 }
 
 impl<'a> SessionRow<'a> {
-    fn of(session: &'a Session) -> Self {
+    fn of(session: &'a Session, workspace: &WorkspaceTree) -> Self {
         let or_dash = |text: String| {
             if text.is_empty() {
                 "-".to_owned()
@@ -221,6 +229,11 @@ impl<'a> SessionRow<'a> {
             id: &session.id,
             state: session.state,
             pid: or_dash(session.pid.map_or_default(|pid| pid.to_string())),
+            project: session
+                .working_directory
+                .as_deref()
+                .and_then(|directory| workspace.project_of(directory))
+                .map(|project| path_of(workspace, &project.id)),
             command: or_dash(session.command.join(" ")),
             note: note(session),
         }
@@ -243,23 +256,38 @@ fn note(session: &Session) -> String {
     parts.join("; ")
 }
 
-fn session_table(sessions: &[Session], style: Style, width: Option<usize>) -> String {
-    const COMMAND: usize = 3;
-    const NOTE: usize = 4;
-    let rows: Vec<SessionRow<'_>> = sessions.iter().map(SessionRow::of).collect();
-    // The table has the last column only if a session has a note.
+fn session_table(
+    sessions: &[Session],
+    workspace: &WorkspaceTree,
+    style: Style,
+    width: Option<usize>,
+) -> String {
+    let rows: Vec<SessionRow<'_>> = sessions
+        .iter()
+        .map(|session| SessionRow::of(session, workspace))
+        .collect();
+    // The table has the last column only if a session has a note, and the
+    // project column only if a session has a Project.
     let has_notes = rows.iter().any(|row| !row.note.is_empty());
-    let note_header = if has_notes { "NOTE" } else { "" };
-    let mut table =
-        Table::new(&["ID", "STATE", "PID", "COMMAND", note_header]).shorten(&[COMMAND, NOTE]);
+    let has_projects = rows.iter().any(|row| row.project.is_some());
+    let mut header = vec!["ID", "STATE", "PID"];
+    if has_projects {
+        header.push("PROJECT");
+    }
+    let command = header.len();
+    header.extend(["COMMAND", if has_notes { "NOTE" } else { "" }]);
+    let mut table = Table::new(&header).shorten(&[command, command + 1]);
     for row in rows {
-        table.push(vec![
+        let mut cells = vec![
             Cell::new(row.id),
             Cell::coloured(state_name(row.state), colour(row.state, style)),
             Cell::new(row.pid),
-            Cell::new(row.command),
-            Cell::new(row.note),
-        ]);
+        ];
+        if has_projects {
+            cells.push(Cell::new(row.project.unwrap_or_else(|| "-".to_owned())));
+        }
+        cells.extend([Cell::new(row.command), Cell::new(row.note)]);
+        table.push(cells);
     }
     table.render(width)
 }
@@ -325,7 +353,7 @@ mod tests {
 
     #[test]
     fn the_columns_are_aligned_to_the_longest_value() {
-        let table = session_table(&sessions(), Style::Plain, None);
+        let table = session_table(&sessions(), &WorkspaceTree::default(), Style::Plain, None);
 
         assert_eq!(
             table,
@@ -359,7 +387,7 @@ mod tests {
         ];
 
         assert_eq!(
-            session_table(&sessions, Style::Plain, None),
+            session_table(&sessions, &WorkspaceTree::default(), Style::Plain, None),
             "ID  STATE    PID  COMMAND  NOTE\n\
              ab  ended    -    make     exit status 2\n\
              cd  dormant  -    sh\n\
@@ -395,7 +423,7 @@ mod tests {
 
     #[test]
     fn colour_does_not_change_the_alignment() {
-        let coloured = session_table(&sessions(), Style::Colour, None);
+        let coloured = session_table(&sessions(), &WorkspaceTree::default(), Style::Colour, None);
 
         assert!(coloured.contains(GREEN));
         let without_colour = [GREEN, YELLOW, RESET]
@@ -403,7 +431,7 @@ mod tests {
             .fold(coloured, |text, code| text.replace(code, ""));
         assert_eq!(
             without_colour,
-            session_table(&sessions(), Style::Plain, None)
+            session_table(&sessions(), &WorkspaceTree::default(), Style::Plain, None)
         );
     }
 }

@@ -32,6 +32,12 @@
 //! - [`plan_hook_install`], [`plan_hook_uninstall`] and [`hooks_of_tool`]:
 //!   the hooks of a tool in its settings file on this computer, as a
 //!   [`SettingsChange`] with a diff that writes only when it is applied.
+//! - [`Client::workspace`] and the requests after it: the workspace tree of
+//!   the Groups and the Projects of a host ([`Workspace`], [`WorkspaceTree`],
+//!   [`Node`]). [`Workspace::apply`] keeps a copy current with the
+//!   [`WorkspaceChange`] of each event, and [`WorkspaceTree::project_of`]
+//!   gives the Project of a session. [`most_urgent`] gives the status of a
+//!   Group from the statuses of its sessions.
 //! - [`ClientError`]: why a connection or a request failed.
 //! - [`Client::capture`] and [`Client::capture_lines`]: the scrollback of a
 //!   session, without an attach.
@@ -54,7 +60,7 @@
 //! the daemon, the attach to a session with the output of its journal, the
 //! scrollback, the restore of a dormant session, and the two kinds of host:
 //! the local host and a remote host through SSH, the status of the
-//! sessions and the events of a host.
+//! sessions, the events of a host and its workspace tree.
 
 mod agent;
 mod agent_requests;
@@ -79,10 +85,12 @@ mod session_memory;
 mod ssh_host;
 mod terminal;
 mod window_size;
+mod workspace;
+mod workspace_requests;
 
 pub use agent::{
     AgentDetails, AgentExplanation, AgentRun, AgentState, AgentStatus, AgentTree, ChildWork,
-    NeedsYouKind, ReportedState, SourceExplanation, Sourced, StatusSource,
+    NeedsYouKind, ReportedState, SourceExplanation, Sourced, StatusSource, most_urgent,
 };
 pub use bootstrap::{BinarySource, BootstrapStep, Installation};
 pub use client::Client;
@@ -104,6 +112,7 @@ pub use hooks::{
 pub use host::Host;
 pub use host_info::HostInfo;
 pub use nomux_core::configuration::RestorePolicy;
+pub use nomux_core::workspace_tree::{Node, NodeKind, TreeError, WorkspaceTree};
 pub use scrollback::{CaptureRange, CapturedOutput};
 pub use session::{ExitStatus, NewSession, Session, SessionExit, SessionState};
 pub use session_memory::{MemoryMeasure, SessionMemory};
@@ -111,3 +120,4 @@ pub use terminal::{
     AttachEnd, AttachOptions, OutputPosition, TerminalEvent, TerminalInput, TerminalOutput,
 };
 pub use window_size::WindowSize;
+pub use workspace::{Applied, Workspace, WorkspaceChange};

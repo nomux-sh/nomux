@@ -13,11 +13,16 @@ const LENGTH: usize = 8;
 /// Makes a random session identifier. The caller makes sure that no session
 /// of the host has it.
 pub(crate) fn random() -> io::Result<SessionId> {
-    let mut bytes = [0u8; LENGTH];
+    random_text(LENGTH)?.parse().map_err(io::Error::other)
+}
+
+/// `length` random characters of the alphabet of the session identifiers.
+/// The nodes of the workspace tree use it too.
+pub(crate) fn random_text(length: usize) -> io::Result<String> {
+    let mut bytes = vec![0u8; length];
     getrandom::fill(&mut bytes).map_err(io::Error::other)?;
-    let text: String = bytes
+    Ok(bytes
         .iter()
         .map(|byte| char::from(ALPHABET[usize::from(byte & 0x1f)]))
-        .collect();
-    text.parse().map_err(io::Error::other)
+        .collect())
 }

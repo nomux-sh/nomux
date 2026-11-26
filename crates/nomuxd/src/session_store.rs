@@ -12,7 +12,7 @@
 
 mod journal_check;
 mod restore_policy_file;
-mod small_file;
+pub(crate) mod small_file;
 mod stored_metadata;
 
 use std::fs;

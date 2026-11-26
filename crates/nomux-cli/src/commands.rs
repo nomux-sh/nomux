@@ -11,7 +11,7 @@ use crate::output::Format;
 use crate::report::Report;
 use crate::{
     attach, extension_commands, hook_commands, host_commands, selected_host, service_files,
-    status_commands,
+    status_commands, workspace_commands,
 };
 
 pub(crate) const KIND: ClientKind = ClientKind::Cli;
@@ -53,8 +53,13 @@ pub(crate) async fn run(
             Ok(Report::ClientsDetached { id, clients })
         }
         Command::Ls { all, memory: false } => {
-            let sessions = host.client(KIND).await?.list_sessions(all).await?;
-            Ok(Report::Sessions(sessions))
+            let mut client = host.client(KIND).await?;
+            let sessions = client.list_sessions(all).await?;
+            let workspace = client.workspace().await?;
+            Ok(Report::Sessions {
+                sessions,
+                workspace,
+            })
         }
         Command::Ls { all, memory: true } => {
             let mut client = host.client(KIND).await?;
@@ -88,6 +93,8 @@ pub(crate) async fn run(
         | Command::Status { .. }
         | Command::Agent { .. }
         | Command::Events { .. }
+        | Command::Project { .. }
+        | Command::Group { .. }
         | Command::Version => {
             unreachable!("handled before the connection")
         }
@@ -121,6 +128,10 @@ async fn without_connection(
             command: None,
         } => status_commands::tree(host_name, tree, format).await,
         Command::Agent { command } => status_commands::agent(command, host_name, format).await,
+        Command::Project { command } => {
+            workspace_commands::project(command, host_name, format).await
+        }
+        Command::Group { command } => workspace_commands::group(command, host_name, format).await,
         Command::Events { filter, .. } => {
             status_commands::follow_events(&filter, host_name, format).await
         }

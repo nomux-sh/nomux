@@ -7,8 +7,11 @@ use nomux_proto::wire::v1::{
 };
 use nomux_transport::EnvelopeStream;
 
+#[cfg(doc)]
+use crate::Workspace;
 use crate::client::unexpected_result;
-use crate::{AgentRun, Client, ClientError};
+use crate::workspace::change_of;
+use crate::{AgentRun, Client, ClientError, WorkspaceChange};
 
 /// A type of event, for the filter of a subscription.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,6 +22,8 @@ pub enum EventType {
     AgentRunRemoved,
     /// [`EventBody::ExtensionEvent`].
     ExtensionEvent,
+    /// [`EventBody::WorkspaceChanged`].
+    WorkspaceChanged,
 }
 
 /// One event of a host.
@@ -51,6 +56,14 @@ pub enum EventBody {
         name: String,
         /// The payload. The extension selects its encoding.
         payload: Vec<u8>,
+    },
+    /// The workspace tree changed. [`Workspace::apply`] applies the change
+    /// to a copy of the tree.
+    WorkspaceChanged {
+        /// The revision of the tree after the change.
+        revision: u64,
+        /// The change.
+        change: WorkspaceChange,
     },
     /// The daemon does not have the events that the subscription asked
     /// for. The state of the host now follows: discard the state that you
@@ -133,6 +146,7 @@ impl From<EventType> for wire::EventType {
             EventType::AgentRunChanged => Self::AgentRunChanged,
             EventType::AgentRunRemoved => Self::AgentRunRemoved,
             EventType::ExtensionEvent => Self::ExtensionEvent,
+            EventType::WorkspaceChanged => Self::WorkspaceChanged,
         }
     }
 }
@@ -152,6 +166,10 @@ impl From<wire::Event> for HostEvent {
                 extension_id: extension_event.extension_id,
                 name: extension_event.name,
                 payload: extension_event.payload,
+            },
+            Some(event::Body::WorkspaceChanged(changed)) => EventBody::WorkspaceChanged {
+                revision: changed.revision,
+                change: change_of(changed.change),
             },
             Some(event::Body::Snapshot(_)) => EventBody::Snapshot,
             None => EventBody::Unknown,

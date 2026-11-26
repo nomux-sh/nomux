@@ -105,6 +105,7 @@ The most urgent status decides the aggregate of an item, of a session and of the
 - With the same priority, the oldest `since` wins: the one that waits longest.
 - With the same priority and the same `since`, the first item wins: the item itself before its Child work, and the session with the smaller identifier.
 - A parent aggregates its Child work: a Child work that needs the user makes its session need the user.
+- A Group or a Project of the workspace tree aggregates the sessions below it with the same rule. A client computes it: the tree has no status. [workspace.md](workspace.md#status) describes it.
 - An attach to a session marks each result of the session as seen: at the start of the attach and at its end, thus a result that came during the attach is seen too.
 
 ## Sessions without a process

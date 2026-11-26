@@ -129,6 +129,10 @@ path = "table_width.rs"
 name = "version_mismatch"
 path = "version_mismatch.rs"
 
+[[test]]
+name = "workspace"
+path = "workspace.rs"
+
 [dependencies]
 nomux-core.workspace = true
 nomux-extension.workspace = true

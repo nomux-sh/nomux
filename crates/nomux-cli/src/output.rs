@@ -13,6 +13,8 @@ mod memory_size;
 mod status_human;
 mod status_json;
 mod table;
+mod workspace_human;
+mod workspace_json;
 
 use std::io::{self, Write};
 

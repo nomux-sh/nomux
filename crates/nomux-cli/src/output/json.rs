@@ -13,6 +13,7 @@ use super::hooks_json::HooksBody;
 use super::human::state_name;
 use super::memory_json::SessionsMemoryBody;
 use super::status_json::StatusBody;
+use super::workspace_json::{ProjectDocument, WorkspaceBody};
 use crate::exit_code;
 use crate::report::{AddedHost, HostDiagnosis, Report, ServiceFileAction, ServiceFileReport};
 
@@ -32,7 +33,7 @@ struct Document<'a> {
 #[serde(rename_all = "snake_case")]
 enum Body<'a> {
     Session(SessionDocument<'a>),
-    Sessions(Vec<SessionDocument<'a>>),
+    Sessions(Vec<ListedSessionDocument<'a>>),
     Capture(CaptureDocument<'a>),
     RestorePolicy(RestorePolicyDocument<'a>),
     Service(ServiceDocument<'a>),
@@ -61,6 +62,18 @@ enum Body<'a> {
     /// command.
     #[serde(untagged)]
     Hooks(HooksBody<'a>),
+    /// The field of the document is the field of the body of the
+    /// `project` or `group` command.
+    #[serde(untagged)]
+    Workspace(WorkspaceBody<'a>),
+}
+
+/// A session of `ls`, with its Project.
+#[derive(Serialize)]
+struct ListedSessionDocument<'a> {
+    #[serde(flatten)]
+    session: SessionDocument<'a>,
+    project: Option<ProjectDocument<'a>>,
 }
 
 #[derive(Serialize)]
@@ -305,9 +318,19 @@ pub(super) fn report(report: &Report) -> String {
             policy: policy.as_str(),
         }),
         Report::ServiceFile(service) => Body::Service(service.into()),
-        Report::Sessions(sessions) => {
-            Body::Sessions(sessions.iter().map(SessionDocument::from).collect())
-        }
+        Report::Sessions {
+            sessions,
+            workspace,
+        } => Body::Sessions(
+            sessions
+                .iter()
+                .map(|session| ListedSessionDocument {
+                    session: session.into(),
+                    project: ProjectDocument::of_session(session, &workspace.tree),
+                })
+                .collect(),
+        ),
+        Report::Workspace(report) => Body::Workspace(WorkspaceBody::of(report)),
         Report::SessionsMeasured { sessions, memory } => {
             Body::SessionsMemory(SessionsMemoryBody::new(sessions, memory))
         }
@@ -378,7 +401,7 @@ fn line(body: Body<'_>) -> String {
 mod tests {
     use std::path::PathBuf;
 
-    use nomux_client::{SessionState, WindowSize};
+    use nomux_client::{SessionState, WindowSize, Workspace};
 
     use super::*;
 
@@ -418,8 +441,11 @@ mod tests {
             "{\"schema_version\":1,\"session\":{\"id\":\"ab\",\"state\":\"running\",\"pid\":7,\"command\":[\"vim\",\"a b\"],\"cwd\":\"/home/user\",\"rows\":24,\"columns\":80,\"started_at\":5,\"epoch\":2,\"restore_policy\":\"on-focus\"}}\n"
         );
         assert_eq!(
-            report(&Report::Sessions(vec![session(None)])),
-            "{\"schema_version\":1,\"sessions\":[{\"id\":\"ab\",\"state\":\"running\",\"pid\":null,\"command\":[],\"cwd\":null,\"rows\":null,\"columns\":null,\"started_at\":null,\"epoch\":null,\"restore_policy\":null}]}\n"
+            report(&Report::Sessions {
+                sessions: vec![session(None)],
+                workspace: Workspace::default(),
+            }),
+            "{\"schema_version\":1,\"sessions\":[{\"id\":\"ab\",\"state\":\"running\",\"pid\":null,\"command\":[],\"cwd\":null,\"rows\":null,\"columns\":null,\"started_at\":null,\"epoch\":null,\"restore_policy\":null,\"project\":null}]}\n"
         );
         let ended = Session {
             state: SessionState::Ended,
@@ -435,7 +461,10 @@ mod tests {
             "{\"schema_version\":1,\"session\":{\"id\":\"ab\",\"state\":\"ended\",\"pid\":null,\"command\":[],\"cwd\":null,\"rows\":null,\"columns\":null,\"started_at\":null,\"epoch\":null,\"restore_policy\":null,\"exit\":{\"ended_at\":9,\"signal\":15},\"damage\":\"a reason\"}}\n"
         );
         assert_eq!(
-            report(&Report::Sessions(Vec::new())),
+            report(&Report::Sessions {
+                sessions: Vec::new(),
+                workspace: Workspace::default(),
+            }),
             "{\"schema_version\":1,\"sessions\":[]}\n"
         );
         assert_eq!(

@@ -17,10 +17,12 @@ use crate::in_flight_requests::InFlightRequests;
 use crate::instance_lock::InstanceLock;
 use crate::listener;
 use crate::runtime_directory;
+use crate::session_store::SessionStore;
 use crate::sessions::Sessions;
 use crate::settings::Settings;
 use crate::shutdown::Shutdown;
 use crate::status::StatusRegistry;
+use crate::workspace::Workspace;
 
 /// Runs the daemon until a stop is requested.
 pub(crate) async fn run(running_daemon: RunningDaemon) -> io::Result<()> {
@@ -53,9 +55,14 @@ pub(crate) async fn run(running_daemon: RunningDaemon) -> io::Result<()> {
     )?;
     info!(socket = %socket_path.display(), "the daemon listens");
 
+    let workspace = Workspace::open(
+        SessionStore::locate()?.state_directory(),
+        Arc::clone(&events),
+    );
     let context = Arc::new(Context {
         sessions,
         status,
+        workspace,
         events,
         hooks: Arc::new(HookDelivery::new(extensions.clone())),
         extensions,

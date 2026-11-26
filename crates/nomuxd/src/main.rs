@@ -31,6 +31,8 @@
 //!   session from its sources, the event log and the subscriptions of the
 //!   clients. One status task for each session with a holder waits on the
 //!   holder for a change of its program reports.
+//! - `workspace`: the workspace tree of the Groups and the Projects of the
+//!   host, stored in the state directory.
 //! - `extensions`: the extension host of the daemon and the host services
 //!   that an extension can call. `nomux-ext-host` runs the extensions.
 //! - `shutdown`, `in_flight_requests`: the stop of the daemon.
@@ -48,8 +50,8 @@
 //! The daemon creates, lists and ends sessions, attaches clients to them,
 //! reads their journal, and starts a dormant session again. A client on a
 //! different host reaches the socket through SSH. It installs extensions
-//! from a directory and calls their methods. The daemon has no state
-//! database.
+//! from a directory and calls their methods. It keeps the workspace tree of
+//! the Groups and the Projects. The daemon has no state database.
 
 mod arguments;
 mod attachment;
@@ -81,6 +83,7 @@ mod settings;
 mod shutdown;
 mod status;
 mod stopped_sessions;
+mod workspace;
 
 use std::env;
 use std::io;

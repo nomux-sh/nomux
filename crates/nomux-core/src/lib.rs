@@ -22,8 +22,11 @@
 //! session. It also has the data directory of nomux ([`data_directory`])
 //! and the rules of a hook event that the CLI and the
 //! daemon share ([`hook_event`]), and the runtime directory with the rule
-//! for the paths of the sockets ([`runtime_directory`]). The glossary types, the error type and the other parts of the
-//! configuration model are not written yet.
+//! for the paths of the sockets ([`runtime_directory`]), and the workspace
+//! tree of the Groups and the Projects of a host with its rules, which the
+//! daemon and the clients share ([`workspace_tree`]). The glossary types,
+//! the error type and the other parts of the configuration model are not
+//! written yet.
 
 mod companion_binary;
 pub mod configuration;
@@ -31,6 +34,7 @@ mod data_directory;
 pub mod hook_event;
 pub mod runtime_directory;
 mod version;
+pub mod workspace_tree;
 
 pub use companion_binary::companion_binary;
 pub use data_directory::data_directory;

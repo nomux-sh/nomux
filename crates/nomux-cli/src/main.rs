@@ -19,6 +19,8 @@
 //! - `status_commands`: the `status`, `status set`, `agent explain` and
 //!   `events` commands: the status of the sessions and the events of a
 //!   host.
+//! - `workspace_commands`: the `project` and `group` commands, which change
+//!   and list the workspace tree of the Groups and the Projects of a host.
 //! - `attach`: the `attach` command, which uses the terminal of the user.
 //! - `service_files`: the file that starts the daemon at login.
 //! - `session_memory`: the memory of the sessions of `ls --memory`.
@@ -39,7 +41,9 @@
 //! `daemon install-service`, `daemon uninstall-service`, `host add`,
 //! `host ls`, `host rm`, `host doctor`, `ext ls`, `ext install`, `ext rm`,
 //! `ext enable`, `ext disable`, `ext call`, `ext validate`, `status`,
-//! `status set`, `agent explain`, `events --follow` and `version`,
+//! `status set`, `agent explain`, `events --follow`, `project add`,
+//! `project rm`, `project ls`, `group new`, `group rename`, `group move`,
+//! `group rm`, `group ls` and `version`,
 //! and the `--host`
 //! option. The other commands are not written yet.
 
@@ -57,6 +61,7 @@ mod service_files;
 mod session_environment;
 mod session_memory;
 mod status_commands;
+mod workspace_commands;
 
 use std::io;
 use std::process::ExitCode;

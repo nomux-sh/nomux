@@ -6,11 +6,12 @@ use base64::engine::general_purpose::STANDARD;
 use nomux_client::{
     AgentDetails, AgentExplanation, AgentRun, AgentState, AgentStatus, AgentTree, ChildWork,
     EventBody, HostEvent, NeedsYouKind, ReportedState, Session, SourceExplanation, Sourced,
-    StatusSource,
+    StatusSource, WorkspaceChange, WorkspaceTree,
 };
 use serde::Serialize;
 
-use crate::status_commands::StatusReport;
+use super::workspace_json::NodeDocument;
+use crate::status_commands::{StatusReport, WorkspaceStatus};
 
 /// Each variant is one top-level field of the document.
 #[derive(Serialize)]
@@ -31,7 +32,13 @@ impl<'a> StatusBody<'a> {
                 tree,
                 sessions,
                 with_children,
-            } => Self::Status(TreeDocument::new(tree, sessions, *with_children)),
+                workspace,
+            } => Self::Status(TreeDocument::new(
+                tree,
+                sessions,
+                *with_children,
+                workspace.as_ref().map(|workspace| &workspace.tree),
+            )),
             StatusReport::Explained(explanation) => Self::Explain(explanation.into()),
             StatusReport::Set { id, state } => Self::StatusSet(StatusSetDocument {
                 session: id,
@@ -51,10 +58,28 @@ pub(super) struct TreeDocument<'a> {
     /// The session with the most urgent status.
     attention: Option<AttentionDocument<'a>>,
     sessions: Vec<RunDocument<'a>>,
+    /// `--tree`: each node of the workspace tree with its status.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspace: Option<Vec<NodeStatusDocument<'a>>>,
+}
+
+/// A node of the workspace tree with the most urgent status of the sessions
+/// below it, and the sessions of a Project.
+#[derive(Serialize)]
+struct NodeStatusDocument<'a> {
+    #[serde(flatten)]
+    node: NodeDocument<'a>,
+    aggregate: Option<StatusDocument<'a>>,
+    sessions: Vec<&'a str>,
 }
 
 impl<'a> TreeDocument<'a> {
-    fn new(tree: &'a AgentTree, sessions: &'a [Session], with_children: bool) -> Self {
+    fn new(
+        tree: &'a AgentTree,
+        sessions: &'a [Session],
+        with_children: bool,
+        workspace: Option<&'a WorkspaceTree>,
+    ) -> Self {
         let command = |id: &str| {
             sessions
                 .iter()
@@ -74,6 +99,21 @@ impl<'a> TreeDocument<'a> {
                 .iter()
                 .map(|run| RunDocument::new(run, Some(command(&run.session_id)), with_children))
                 .collect(),
+            workspace: workspace.map(|workspace| {
+                WorkspaceStatus::new(workspace, &tree.runs, sessions)
+                    .nodes
+                    .into_iter()
+                    .map(|status| NodeStatusDocument {
+                        node: NodeDocument::of(status.node, workspace),
+                        aggregate: status.aggregate.map(StatusDocument::from),
+                        sessions: status
+                            .runs
+                            .iter()
+                            .map(|run| run.session_id.as_str())
+                            .collect(),
+                    })
+                    .collect()
+            }),
         }
     }
 }
@@ -266,6 +306,61 @@ pub(super) struct EventDocument<'a> {
     run: Option<RunDocument<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     extension: Option<ExtensionEventDocument<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspace: Option<Box<WorkspaceEventDocument<'a>>>,
+}
+
+/// A change of the workspace tree.
+#[derive(Serialize)]
+struct WorkspaceEventDocument<'a> {
+    revision: u64,
+    #[serde(flatten)]
+    change: ChangeDocument<'a>,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "change", rename_all = "snake_case")]
+enum ChangeDocument<'a> {
+    Added {
+        node: NodeDocument<'a>,
+        index: usize,
+    },
+    Renamed {
+        id: &'a str,
+        name: &'a str,
+    },
+    Moved {
+        id: &'a str,
+        parent_id: Option<&'a str>,
+        index: usize,
+    },
+    Removed {
+        id: &'a str,
+    },
+    Unknown,
+}
+
+impl<'a> From<&'a WorkspaceChange> for ChangeDocument<'a> {
+    fn from(change: &'a WorkspaceChange) -> Self {
+        match change {
+            WorkspaceChange::Added { node, index } => Self::Added {
+                node: NodeDocument::without_path(node),
+                index: *index,
+            },
+            WorkspaceChange::Renamed { id, name } => Self::Renamed { id, name },
+            WorkspaceChange::Moved {
+                id,
+                parent_id,
+                index,
+            } => Self::Moved {
+                id,
+                parent_id: parent_id.as_deref(),
+                index: *index,
+            },
+            WorkspaceChange::Removed { id } => Self::Removed { id },
+            WorkspaceChange::Unknown => Self::Unknown,
+        }
+    }
 }
 
 /// An event of an extension. The payload is base64: the extension selects
@@ -280,6 +375,7 @@ struct ExtensionEventDocument<'a> {
 impl<'a> From<&'a HostEvent> for EventDocument<'a> {
     fn from(event: &'a HostEvent) -> Self {
         let mut extension = None;
+        let mut workspace = None;
         let (kind, session, run) = match &event.body {
             EventBody::AgentRunChanged(run) => (
                 "agent_run_changed",
@@ -301,6 +397,13 @@ impl<'a> From<&'a HostEvent> for EventDocument<'a> {
                 });
                 ("extension_event", None, None)
             }
+            EventBody::WorkspaceChanged { revision, change } => {
+                workspace = Some(Box::new(WorkspaceEventDocument {
+                    revision: *revision,
+                    change: change.into(),
+                }));
+                ("workspace_changed", None, None)
+            }
             EventBody::Snapshot => ("snapshot", None, None),
             EventBody::Unknown => ("unknown", None, None),
         };
@@ -311,6 +414,7 @@ impl<'a> From<&'a HostEvent> for EventDocument<'a> {
             session,
             run,
             extension,
+            workspace,
         }
     }
 }
