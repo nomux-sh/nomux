@@ -59,7 +59,10 @@ pub(super) async fn attach(
         (0, 0) => None,
         (rows, columns) => Some(window_size(rows, columns)?),
     };
-    Ok(Attachment::prepare(request, size, features, &context.sessions).await?)
+    let attachment = Attachment::prepare(request, size, features, &context.sessions).await?;
+    // The user looks at the session now.
+    context.status.mark_seen(attachment.session_id());
+    Ok(attachment)
 }
 
 pub(super) fn detach(

@@ -12,6 +12,7 @@ mod output_pump;
 
 use std::sync::Arc;
 
+use nomux_holder_protocol::SessionId;
 use nomux_holder_protocol::ring::RingReader;
 use nomux_holder_protocol::wire::WindowSize;
 use nomux_proto::frame::{EndReason, FrameKind};
@@ -74,6 +75,10 @@ impl Attachment {
             start,
             features,
         })
+    }
+
+    pub(crate) fn session_id(&self) -> &SessionId {
+        self.session.id()
     }
 
     pub(crate) fn response(&self) -> SessionAttachResponse {

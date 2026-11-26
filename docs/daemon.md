@@ -1,6 +1,6 @@
 # Daemon
 
-This document describes the daemon (`nomuxd`): its process model, its socket, its lifecycle, how it finds and holds the holders, how it attaches clients to the terminal of a session, what it keeps of a session without a process, how it starts such a session again, and where it runs the extensions.
+This document describes the daemon (`nomuxd`): its process model, its socket, its lifecycle, how it finds and holds the holders, how it attaches clients to the terminal of a session, what it keeps of a session without a process, how it starts such a session again, how it keeps the status of each session and its events, and where it runs the extensions.
 The code is in `crates/nomuxd`. The transport is in `crates/nomux-transport`, and the client side is in `crates/nomux-client`.
 
 [architecture.md](architecture.md) shows where the daemon is in the core. [holder.md](holder.md) describes the holder and its contract with the daemon. [cli.md](cli.md) describes the commands that use the daemon. [remote.md](remote.md) describes how a client on a different computer reaches the daemon through SSH. [extensions.md](extensions.md) describes the extension host of the daemon.
@@ -307,7 +307,7 @@ The connection of the task of the session waits for the end of the command with 
 - The feed exists only while a client is attached to the session or reads its scrollback. A session without a client costs the daemon nothing when its command writes: the daemon is not told.
 - The feed keeps one `WaitOutput` request with the position that the holder reported last. Each answer wakes the attachments that wait for output. An answer without new output means that the command has ended.
 - The feed sends `Redraw` for an attachment that needs the screen and `JournalRead` for a client that needs output of the journal. The two replies come with shared memory, thus the feed sends one of these requests at a time and copies the bytes out of the memory of the reply.
-- All the attachments of one session share one feed. A holder accepts 4 connections, and a daemon uses 2 of them at most.
+- All the attachments of one session share one feed. A holder accepts 4 connections, and a daemon uses 3 of them at most: the task of the session, the output feed and the status task.
 
 ### From the ring buffer to the client
 
@@ -385,6 +385,27 @@ When the last attachment of a session ends, the output feed closes its connectio
 ### Unsafe code and threads
 
 The daemon has no `unsafe` code. A reader of a ring buffer is a mapping of shared memory, which stays on the thread that made it. Thus the tasks of the client connections are local tasks of the one thread of the daemon (`tokio::task::LocalSet`).
+
+## Status of the sessions
+
+The daemon knows what runs in each session: [status.md](status.md) has the model, the sources and the rules, and the `nomux-status` crate has the rules as code. The daemon collects what the sources report.
+
+- **One status task for each session with a holder.** The task opens its own connection to the holder, without the lease. It asks for the token of the session with `SessionToken` (holder protocol 1.4), reads the program reports with `ProgramReports`, and then keeps one `WaitProgramReports` request with the holder. The holder answers it only when a program report changes. Thus the daemon has no timer and does not poll: a session whose programs report nothing costs no CPU time.
+- If the connection fails, the task connects again with the pause of "Lost connection". When the session ends, the task stops. An exit of the command removes the status of the session. A session that is dormant after the end keeps what [status.md](status.md#sessions-without-a-process) says.
+- **The status registry.** The status of each session is in a registry of its own, outside the session registry and its lock. An entry has the last report of each source and the Agent run that the resolver made from them. Each change of a source resolves the Agent run again. If the Agent run changed, the registry writes an `AgentRunChanged` event.
+- **The foreground program** is read when the daemon resolves: when a different source changes, and for `Agent.Tree` and `Agent.Explain`. The daemon reads the foreground process group of the terminal of the command (field 8 of `/proc/<pid>/stat` on Linux, `e_tpgid` of `proc_pidinfo` on macOS) and the name of the program of that group.
+- **Seen.** An attach marks each result of its session as seen, at the start of the attach and at its end.
+- **Self-report.** `Agent.SetStatus` must have the token of the current holder of the session. The daemon refuses a wrong token, a session without a process and a holder without a token with the code 4. It compares the token in a time that does not depend on its content, and it writes the token to no log.
+- **Limits.** Only a session of the session list has an entry. The holder keeps 64 program status records at most, the resolver keeps 64 Child work items at most with 8 levels, and a message has 512 bytes at most. Thus a program cannot make the registry grow without a limit.
+- A dormant session after a start of the daemon has no entry until a client asks: it is `idle` with no source.
+
+### Events
+
+The daemon keeps the last events in memory: 1024 events at most, and 16 MiB of encoded events at most. An event has the Agent run of a session, which a program of that session makes large, thus the number alone does not limit the memory. The log starts empty at each start of the daemon.
+
+- `Events.Subscribe` makes the connection a stream of events, as `Session.Attach` makes it a stream of frames. The subscription reads the log from its own position and waits for the next event. The log keeps no queue for one client.
+- A client that is too far behind, or that asks for a position that the log does not have, gets a snapshot: an `EventsSnapshot` event and the Agent run of each session that is not ended. Then the events after the snapshot follow.
+- A subscription ends when the client closes its connection.
 
 ## What survives the end of the daemon
 
@@ -481,6 +502,10 @@ Measured on Linux x86-64 with the release profile. The targets are in [bench/REA
 | CPU time and context switches in 30 s, idle daemon with 2 sessions | 0 and 0 | 0 |
 | CPU time and context switches in 30 s, idle daemon with 1 attached client | 0 and 0 | 0 |
 | Resident memory, idle daemon with 3 dormant sessions and 1 ended session (glibc) | 4.3 MB | < 10 MB |
+| Resident memory with the status engine, idle daemon without a session (glibc) | 4.4 MB | < 10 MB |
+| Resident memory with the status engine, idle daemon with 20 sessions, each with a status task (glibc) | 7.1 MB to 7.2 MB | < 10 MB |
+| CPU time and context switches in 60 s, idle daemon with 20 sessions, each with a status task | 0 and 0 | 0 |
+| The same, and 10 of the sessions reported a status with a Child work before the 60 s | 0 and 0 | 0 |
 | CPU time and context switches in 30 s, idle daemon with 3 dormant sessions and 1 ended session | 0 and 0 | 0 |
 | Start of the daemon to a complete `nomux ls --json`, 50 dormant sessions with a journal of 32 MiB each: median, slowest of 11 runs | 25.3 ms, 31.4 ms | < 1 s |
 | Key to echo on the screen of `nomux attach`, local session: median, 99th percentile | 0.2 ms to 0.5 ms, 0.5 ms to 5.4 ms | < 10 ms |
@@ -516,7 +541,8 @@ These parts are not in the daemon yet:
 - **Window size for each client.** The other clients are not told a new size, and a new session always starts with 24 rows and 80 columns.
 - **Input that the terminal does not take.** A holder reads no request while it keeps 64 KiB of input that the terminal of the session did not take. `Session.Kill` then waits until the command reads its input.
 - **Parallel requests.** The daemon answers the requests of one connection in their sequence. A long request delays the next request of the same connection, not of other connections.
-- **State.** The daemon keeps no database. What it knows about a session after a restart comes from the holder and from the session state directory.
+- **State.** The daemon keeps no database. What it knows about a session after a restart comes from the holder and from the session state directory. The status of a session comes from the holder again, but `since` and `seen` start again, and the self-report and the event log are gone.
+- **Status.** The status sources of agent tools (hooks, ACP), `wait`, and notifications to the operating system.
 - **Session environment.** A session gets the environment of the daemon, thus of the client that started the daemon.
 - **Daemon update.** `nomuxd --replace` takes over from a daemon that runs, and the clients of that daemon lose their connection. An update that keeps the connections is not written.
 - **Service files.** The launchd agent was not loaded on a Mac. The commands do not give the file to the service manager, and they do not stop a daemon.

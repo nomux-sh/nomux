@@ -1,6 +1,8 @@
 //! The request handlers: each one changes a request of the protocol into a
 //! call of the daemon and the result into a response of the protocol.
 
+mod agent;
+mod events;
 mod ext;
 mod host;
 mod session;
@@ -13,14 +15,18 @@ use nomux_ext_host::ExtensionHost;
 use nomux_proto::wire::v1::{Error, ErrorCode, request, response};
 
 use crate::attachment::Attachment;
+use crate::events::{EventLog, Subscription};
 use crate::handshake::ClientFeatures;
 use crate::in_flight_requests::InFlightRequests;
 use crate::sessions::Sessions;
 use crate::shutdown::Shutdown;
+use crate::status::StatusRegistry;
 
 /// What the handlers of all connections share.
 pub(crate) struct Context {
     pub(crate) sessions: Arc<Sessions>,
+    pub(crate) status: Arc<StatusRegistry>,
+    pub(crate) events: Arc<EventLog>,
     pub(crate) extensions: ExtensionHost,
     pub(crate) shutdown: Shutdown,
     pub(crate) in_flight_requests: InFlightRequests,
@@ -33,6 +39,9 @@ pub(crate) enum Outcome {
     /// Send the response of the attach. Then the connection carries the
     /// terminal frames of the attach.
     Attach(Attachment),
+    /// Send the response of the subscription. Then the connection carries
+    /// the events of the host.
+    Subscribe(Subscription),
 }
 
 /// Does one request of a connection that has `features`.
@@ -72,6 +81,12 @@ pub(crate) async fn handle(
         request::Body::ExtRemove(request) => ext::remove(&request, context).await,
         request::Body::ExtSetEnabled(request) => ext::set_enabled(&request, context).await,
         request::Body::ExtCall(request) => ext::call(request, context).await,
+        request::Body::AgentTree(request) => Ok(agent::tree(request, context)),
+        request::Body::AgentExplain(request) => agent::explain(&request, context),
+        request::Body::AgentSetStatus(request) => agent::set_status(&request, context),
+        request::Body::EventsSubscribe(request) => {
+            return Outcome::Subscribe(events::subscribe(&request, context));
+        }
     };
     Outcome::Respond(result.unwrap_or_else(response::Result::Error))
 }

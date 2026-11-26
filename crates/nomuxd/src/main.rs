@@ -27,6 +27,10 @@
 //!   is attached.
 //! - `attachment`: one attached client: the screen and the output go to the
 //!   client, and the input comes from it.
+//! - `status`, `events`, `clock`: the status of the Agent run of each
+//!   session from its sources, the event log and the subscriptions of the
+//!   clients. One status task for each session with a holder waits on the
+//!   holder for a change of its program reports.
 //! - `extensions`: the extension host of the daemon and the host services
 //!   that an extension can call. `nomux-ext-host` runs the extensions.
 //! - `shutdown`, `in_flight_requests`: the stop of the daemon.
@@ -50,8 +54,10 @@
 mod arguments;
 mod attachment;
 mod client_connection;
+mod clock;
 mod daemon;
 mod detach;
+mod events;
 mod extensions;
 mod handlers;
 mod handshake;
@@ -71,6 +77,7 @@ mod session_store;
 mod sessions;
 mod settings;
 mod shutdown;
+mod status;
 mod stopped_sessions;
 
 use std::env;
