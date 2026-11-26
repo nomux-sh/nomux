@@ -65,8 +65,9 @@ pub(super) fn quiet_report(report: &HooksReport) -> String {
 }
 
 fn status_table(statuses: &[HookToolStatus], width: Option<usize>) -> String {
+    const ADAPTER: usize = 1;
     const HOOKS: usize = 2;
-    let mut table = Table::new(&["TOOL", "ADAPTER", "HOOKS"]).shorten(&[HOOKS]);
+    let mut table = Table::new(&["TOOL", "ADAPTER", "HOOKS"]).shorten(&[HOOKS, ADAPTER]);
     for status in statuses {
         let hooks = match &status.hooks {
             Ok(hooks) => format!("{} in {}", state_name(hooks.state), hooks.path.display()),
@@ -86,5 +87,33 @@ pub(super) fn state_name(state: HooksState) -> &'static str {
         HooksState::Installed => "installed",
         HooksState::Missing => "missing",
         HooksState::Different => "different",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use nomux_client::ToolHooks;
+
+    use super::super::table::assert_fits;
+    use super::*;
+
+    #[test]
+    fn the_table_fits_a_terminal_of_60_columns() {
+        let statuses = [HookToolStatus {
+            tool: "claude-code".to_owned(),
+            adapter: Some("nomux.adapter-claude-code-with-a-long-name".to_owned()),
+            hooks: Ok(ToolHooks {
+                path: PathBuf::from("/home/user/.claude/settings.json"),
+                state: HooksState::Installed,
+                recorded: true,
+            }),
+        }];
+
+        let text = status_table(&statuses, Some(60));
+
+        assert_fits(&text, 60);
+        assert!(text.contains("claude-code"), "{text}");
     }
 }

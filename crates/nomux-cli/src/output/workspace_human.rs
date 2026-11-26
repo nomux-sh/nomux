@@ -82,7 +82,7 @@ fn listed(workspace: &Workspace, listing: Listing, width: Option<usize>) -> Stri
     let (header, shortened): (&[&str], &[usize]) = match listing {
         Listing::Projects => (&["ID", "PROJECT", "DIRECTORY"], &[2, 1]),
         Listing::Groups => (&["ID", "GROUP"], &[1]),
-        Listing::Tree => (&["NAME", "KIND", "ID", "DIRECTORY"], &[3]),
+        Listing::Tree => (&["NAME", "KIND", "ID", "DIRECTORY"], &[3, 0]),
     };
     let mut table = Table::new(header).shorten(shortened);
     for node in nodes {
@@ -119,5 +119,46 @@ pub(super) fn listed_nodes(workspace: &Workspace, listing: Listing) -> Vec<&Node
         Listing::Projects => nodes.filter(|node| !node.is_group()).collect(),
         Listing::Groups => nodes.filter(|node| node.is_group()).collect(),
         Listing::Tree => nodes.collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use nomux_client::{NodeKind, WorkspaceTree};
+
+    use super::super::table::assert_fits;
+    use super::*;
+
+    fn node(id: &str, parent_id: Option<&str>, name: &str, directory: Option<&str>) -> Node {
+        Node {
+            id: id.to_owned(),
+            parent_id: parent_id.map(str::to_owned),
+            name: name.to_owned(),
+            kind: directory.map_or(NodeKind::Group, |directory| NodeKind::Project {
+                directory: directory.into(),
+            }),
+        }
+    }
+
+    #[test]
+    fn each_listing_fits_a_terminal_of_60_columns() {
+        let tree = WorkspaceTree::from_nodes([
+            node("g1", None, "customer-projects-of-the-year", None),
+            node("g2", Some("g1"), "infrastructure-and-deployment", None),
+            node(
+                "p1",
+                Some("g2"),
+                "kubernetes-cluster-configuration",
+                Some("/home/user/work/customers/infrastructure/kubernetes-cluster"),
+            ),
+        ])
+        .expect("a valid tree");
+        let workspace = Workspace { revision: 3, tree };
+
+        for listing in [Listing::Projects, Listing::Groups, Listing::Tree] {
+            let text = listed(&workspace, listing, Some(60));
+            assert_fits(&text, 60);
+            assert!(text.contains('\u{2026}'), "{text}");
+        }
     }
 }

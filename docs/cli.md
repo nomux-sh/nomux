@@ -11,7 +11,9 @@ The code is in `crates/nomux-cli`. The CLI is a thin client: it reads the comman
 - Without `--host`, a command uses the daemon of the local host. With `--host <name>`, it uses the daemon of the remote host `<name>` of `nomux host ls`, through SSH: see "`--host`".
 - A command that needs the daemon starts it when no daemon answers. The CLI runs `nomuxd --detach` and waits for 5 seconds at most until the socket answers. The `daemon` commands start no daemon.
 - The text output has colour only for the state of a session or of its status, only when the standard output is a terminal, and only when the `NO_COLOR` variable is not set. The JSON output and the quiet output never have colour.
-- On a terminal, a table of the text output fits the width of the terminal. The command column is shortened first, and then the column of the note, the message or the reason; an ellipsis (`…`) marks the cut, and a shortened column keeps the width of its header. Thus the state and the message stay visible. The width is the display width of the text: a wide character has two columns and is not cut. When the standard output is not a terminal, and in the JSON output, nothing is shortened.
+- On a terminal, the text output fits the width of the terminal. A table shortens its columns first: the command column, then the column of the note, the message or the reason, and then a column of a path or a name. An ellipsis (`…`) marks the cut, and a shortened column keeps the width of its header. Thus the state and the message stay visible.
+- If the shortened columns are not enough, a table leaves out columns in a fixed sequence: `ls` leaves out `PID` and then `PROJECT`, `ls --memory` leaves out `MEASURE`, then `PROCESSES` and then `HOLDER`, `status` leaves out `FOR` and then `COMMAND`, and `ext ls` leaves out `VERSION` and then `NAME`. A table leaves out a column only when the table does not fit with each shortened column at the width of its header. A line that is not a table, for example the total line of `ls --memory`, breaks at a space. With usual values, each table fits a terminal of 60 columns.
+- The width is the display width of the text: a wide character has two columns and is not cut. When the standard output is not a terminal, and in the JSON output, nothing is shortened, left out or broken.
 
 ## Commands
 
@@ -139,6 +141,7 @@ total: 512.4 MiB in 7 processes of 1 session, and 607.0 KiB in the holders (pss)
 | `MEASURE` | `pss`: the proportional set size, which counts a page that more than one process uses one time. `rss`: the resident set size, which counts such a page for each process. Linux gives `pss`, macOS gives `rss` |
 
 - A session without a process has `-` in the four columns and is not in the total line.
+- On a narrow terminal, the table leaves out `MEASURE` first: the total line names the measure. See "Rules".
 - The table has no `PID` column and no `NOTE` column. `ls` without `--memory` has them.
 - A size has the unit `KiB`, `MiB` or `GiB` (1024 bytes, 1024 KiB, 1024 MiB) and one decimal place. The JSON output has the bytes.
 - If the sessions do not have the same measure, the total line says `pss and rss`: the sum then has values of the two kinds.

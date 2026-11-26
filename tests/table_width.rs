@@ -1,4 +1,5 @@
-//! The tables of `nomux ls` and `nomux status` on a terminal and in a pipe:
+//! The tables of `nomux ls`, `nomux ls --memory` and `nomux status` on a
+//! terminal and in a pipe:
 //! on a terminal, a long command is shortened and the state and the message
 //! stay visible; in a pipe and with `--json`, the command is complete.
 
@@ -43,7 +44,11 @@ fn a_terminal_gets_a_table_that_fits_and_a_pipe_gets_the_full_command() {
     sandbox.set_variable("NO_COLOR", "1");
     let id = new_long_session(&sandbox);
 
-    for (arguments, state) in [(&["ls"][..], "running"), (&["status"], "idle")] {
+    for (arguments, state) in [
+        (&["ls"][..], "running"),
+        (&["ls", "--memory"], "running"),
+        (&["status"], "idle"),
+    ] {
         let lines = lines_on_terminal(&sandbox, arguments);
         let row = lines
             .iter()

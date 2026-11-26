@@ -270,6 +270,8 @@ fn session_table(
     style: Style,
     width: Option<usize>,
 ) -> String {
+    const PID: usize = 2;
+    const PROJECT: usize = 3;
     let rows: Vec<SessionRow<'_>> = sessions
         .iter()
         .map(|session| SessionRow::of(session, workspace))
@@ -284,7 +286,12 @@ fn session_table(
     }
     let command = header.len();
     header.extend(["COMMAND", if has_notes { "NOTE" } else { "" }]);
-    let mut table = Table::new(&header).shorten(&[command, command + 1]);
+    let (shortened, omitted): (&[usize], &[usize]) = if has_projects {
+        (&[command, command + 1, PROJECT], &[PID, PROJECT])
+    } else {
+        (&[command, command + 1], &[PID])
+    };
+    let mut table = Table::new(&header).shorten(shortened).omit(omitted);
     for row in rows {
         let mut cells = vec![
             Cell::new(row.id),
@@ -330,6 +337,7 @@ fn colour(state: SessionState, style: Style) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::table::assert_fits;
     use super::*;
 
     fn session(id: &str, state: SessionState) -> Session {
@@ -370,6 +378,53 @@ mod tests {
              ab                 running      7    vim notes.txt\n\
              a-long-identifier  unreachable  -    -\n"
         );
+    }
+
+    #[test]
+    fn a_terminal_of_60_columns_shortens_the_command_and_the_note_and_keeps_the_state() {
+        use nomux_client::SessionExit;
+
+        let sessions = vec![
+            Session {
+                pid: Some(4_187_312),
+                command: ["claude", "--dangerously-skip-permissions", "--continue"]
+                    .map(str::to_owned)
+                    .to_vec(),
+                ..session("k3xq2abc", SessionState::Running)
+            },
+            Session {
+                command: vec!["make".to_owned()],
+                exit: Some(SessionExit {
+                    ended_at: 5,
+                    status: ExitStatus::Exited { code: 2 },
+                }),
+                ..session("p2rs6tuv", SessionState::Ended)
+            },
+            Session {
+                damage: Some("line 3 of the session metadata is not valid".to_owned()),
+                ..session("u7wq4kda", SessionState::Unreachable)
+            },
+        ];
+
+        let text = session_table(&sessions, &WorkspaceTree::default(), Style::Plain, Some(60));
+
+        assert_fits(&text, 60);
+        assert!(text.contains("4187312  claude"), "{text}");
+        assert!(text.contains("unreachable"), "{text}");
+        assert!(text.contains('\u{2026}'), "{text}");
+    }
+
+    #[test]
+    fn the_host_table_fits_a_terminal_of_60_columns() {
+        let hosts = [HostEntry {
+            name: "build-server".to_owned(),
+            ssh: "ssh://deploy@build-server.internal.example.com:2222".to_owned(),
+        }];
+
+        let text = host_table(&hosts, Some(60));
+
+        assert_fits(&text, 60);
+        assert!(text.contains("build-server  ssh://"), "{text}");
     }
 
     #[test]
