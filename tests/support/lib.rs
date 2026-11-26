@@ -313,7 +313,10 @@ impl Sandbox {
         TerminalClient::start(self.nomux_command(arguments), rows, columns)
     }
 
-    fn nomux_command(&self, arguments: &[&str]) -> Command {
+    /// The `nomux` command with `arguments` in this home directory, for a
+    /// test that starts the process itself.
+    #[must_use]
+    pub fn nomux_command(&self, arguments: &[&str]) -> Command {
         let mut command = Command::new(binary("nomux"));
         command
             .args(arguments)

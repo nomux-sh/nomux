@@ -390,6 +390,12 @@ impl Client {
             .map_err(|_| request_timeout())
     }
 
+    /// The connection, for a request after which it carries no more
+    /// responses.
+    pub(crate) fn into_stream(self) -> EnvelopeStream {
+        self.stream
+    }
+
     /// Sends one request and waits for its result. A failure result of the
     /// daemon becomes an error.
     pub(crate) async fn call(
@@ -426,8 +432,8 @@ impl Client {
                         "the daemon closed the connection",
                     ))
                 })?;
-            // This client subscribes to no events and has one request at a
-            // time. It ignores each other envelope.
+            // A connection with requests has no subscription, and it has one
+            // request at a time. The client ignores each other envelope.
             let Some(envelope::Kind::Response(response)) = envelope.kind else {
                 continue;
             };

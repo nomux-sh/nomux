@@ -9,7 +9,9 @@ use nomux_client::{ClientError, ClientKind, Host, NewSession};
 use crate::arguments::{Command, DaemonCommand};
 use crate::output::Format;
 use crate::report::Report;
-use crate::{attach, extension_commands, host_commands, selected_host, service_files};
+use crate::{
+    attach, extension_commands, host_commands, selected_host, service_files, status_commands,
+};
 
 pub(crate) const KIND: ClientKind = ClientKind::Cli;
 
@@ -31,6 +33,20 @@ pub(crate) async fn run(
         Command::Host { command } => return host_commands::run(command, format).await,
         Command::Ext { command } => {
             return extension_commands::run(command, host_name, format).await;
+        }
+        Command::Status {
+            command: Some(command),
+            ..
+        } => return status_commands::set(command, host_name).await,
+        Command::Status {
+            tree,
+            command: None,
+        } => return status_commands::tree(host_name, tree, format).await,
+        Command::Agent { command } => {
+            return status_commands::agent(command, host_name, format).await;
+        }
+        Command::Events { filter, .. } => {
+            return status_commands::follow_events(&filter, host_name, format).await;
         }
         Command::Daemon {
             command: DaemonCommand::InstallService { dry_run },
@@ -99,7 +115,12 @@ pub(crate) async fn run(
             Ok(Report::SessionKilled { id })
         }
         Command::Daemon { command } => daemon(&host, command).await,
-        Command::Host { .. } | Command::Ext { .. } | Command::Version => {
+        Command::Host { .. }
+        | Command::Ext { .. }
+        | Command::Status { .. }
+        | Command::Agent { .. }
+        | Command::Events { .. }
+        | Command::Version => {
             unreachable!("handled before the connection")
         }
     }

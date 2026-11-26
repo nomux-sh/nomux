@@ -9,6 +9,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use nomux_client::RestorePolicy;
 
 use crate::extension_commands::ExtCommand;
+use crate::status_commands::{AgentCommand, EventTypeArgument, StatusCommand};
 
 /// Sessions that stay alive on the host when the client disconnects.
 #[derive(Debug, Parser)]
@@ -170,6 +171,32 @@ pub(crate) enum Command {
     Kill {
         /// The session identifier
         id: String,
+    },
+    /// Show the status of each session: what works, what is done, what needs you
+    #[command(args_conflicts_with_subcommands = true)]
+    Status {
+        /// Also show the Child work of each session
+        #[arg(long)]
+        tree: bool,
+
+        #[command(subcommand)]
+        command: Option<StatusCommand>,
+    },
+    /// Explain the status of the sessions
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommand,
+    },
+    /// Print the events of the host when they come, until a signal stops the command
+    Events {
+        /// Wait for the events. This is the only mode now
+        #[arg(long, required = true)]
+        follow: bool,
+
+        /// Print only the events of this type. Give the option more than one time for more
+        /// types
+        #[arg(long, value_name = "TYPE")]
+        filter: Vec<EventTypeArgument>,
     },
     /// Show or stop the daemon, and start it at login
     Daemon {

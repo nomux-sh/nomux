@@ -8,10 +8,12 @@ mod json;
 mod memory_human;
 mod memory_json;
 mod memory_size;
+mod status_human;
+mod status_json;
 
 use std::io::{self, Write};
 
-use nomux_client::ClientError;
+use nomux_client::{ClientError, HostEvent};
 
 use crate::arguments::Arguments;
 use crate::report::Report;
@@ -52,6 +54,14 @@ pub(crate) fn print_report(report: &Report, format: Format) -> io::Result<()> {
         (Format::Json, _) => json::report(report),
     };
     io::stdout().lock().write_all(text.as_bytes())
+}
+
+/// The line of one event of `events --follow`.
+pub(crate) fn event_line(event: &HostEvent, format: Format) -> String {
+    match format {
+        Format::Human | Format::Quiet => status_human::event_line(event),
+        Format::Json => json::event(event),
+    }
 }
 
 pub(crate) fn print_error(error: &ClientError, code: u8, format: Format) -> io::Result<()> {

@@ -20,6 +20,12 @@
 //! - [`Extension`], [`ExtensionPackage`] and [`ExtensionPermissions`]: the
 //!   extensions of a host. [`Client::install_extension`] installs one in two
 //!   steps, and [`Client::call_extension`] calls a method of one.
+//! - [`Client::agent_tree`], [`Client::explain_agent`] and
+//!   [`Client::set_agent_status`]: the status of the Agent run of each
+//!   session ([`AgentTree`], [`AgentRun`], [`AgentStatus`]) and where it
+//!   comes from ([`StatusSource`]).
+//! - [`Client::subscribe_events`]: the events of a host as an
+//!   [`EventStream`] of [`HostEvent`] values.
 //! - [`ClientError`]: why a connection or a request failed.
 //! - [`Client::capture`] and [`Client::capture_lines`]: the scrollback of a
 //!   session, without an attach.
@@ -41,13 +47,17 @@
 //! The crate has the control requests for sessions, for extensions and for
 //! the daemon, the attach to a session with the output of its journal, the
 //! scrollback, the restore of a dormant session, and the two kinds of host:
-//! the local host and a remote host through SSH. Events are not written yet.
+//! the local host and a remote host through SSH, the status of the
+//! sessions and the events of a host.
 
+mod agent;
+mod agent_requests;
 mod bootstrap;
 mod client;
 mod client_kind;
 mod doctor;
 mod error;
+mod events;
 mod extension;
 mod extension_requests;
 mod host;
@@ -61,11 +71,16 @@ mod ssh_host;
 mod terminal;
 mod window_size;
 
+pub use agent::{
+    AgentExplanation, AgentRun, AgentState, AgentStatus, AgentTree, ChildWork, NeedsYouKind,
+    ReportedState, SourceExplanation, Sourced, StatusSource,
+};
 pub use bootstrap::{BinarySource, BootstrapStep, Installation};
 pub use client::Client;
 pub use client_kind::ClientKind;
 pub use doctor::{HostCheck, check_host};
 pub use error::ClientError;
+pub use events::{EventBody, EventStream, EventType, HostEvent};
 pub use extension::{
     Extension, ExtensionCallError, ExtensionErrorCode, ExtensionPackage, ExtensionPermissions,
     ExtensionState,
