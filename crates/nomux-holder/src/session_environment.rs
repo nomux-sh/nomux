@@ -12,7 +12,10 @@ use std::path::Path;
 use std::process::Command;
 
 use nomux_holder_protocol::SessionId;
-use nomux_holder_protocol::discovery::DAEMON_SOCKET_FILE;
+use nomux_holder_protocol::discovery::{
+    AGENT_SOCKET_DIRECTORY, AGENT_SOCKET_FILE, DAEMON_SOCKET_FILE,
+};
+use nomux_holder_protocol::sandbox::SandboxPlan;
 use nomux_holder_protocol::wire::SessionToken;
 
 /// The variable with the session identifier.
@@ -40,9 +43,20 @@ const UTF8_CHARACTER_TYPE: &str = "C.UTF-8";
 const STARTER_TERMINAL_VARIABLES: [&str; 4] =
     ["COLUMNS", "LINES", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"];
 
+/// The variables of sockets of the user outside nomux: a sandboxed command
+/// must not find them. The sandbox refuses the sockets too, where the
+/// kernel can.
+const SANDBOX_REMOVED_VARIABLES: [&str; 4] = [
+    "SSH_AUTH_SOCK",
+    "GPG_AGENT_INFO",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "DOCKER_HOST",
+];
+
 /// The changes to the environment of the holder for the command.
 pub(crate) struct CommandEnvironment {
     set: Vec<(&'static str, OsString)>,
+    remove: &'static [&'static str],
 }
 
 impl CommandEnvironment {
@@ -66,11 +80,29 @@ impl CommandEnvironment {
         if !has_locale() {
             set.push(("LC_CTYPE", UTF8_CHARACTER_TYPE.into()));
         }
-        Self { set }
+        Self { set, remove: &[] }
+    }
+
+    /// The changes for a command in the sandbox of `plan`: `NOMUX_SOCK` is
+    /// the agent socket of the daemon, `TMPDIR` is the temporary directory
+    /// of the session, and the variables of other sockets are removed.
+    pub(crate) fn sandboxed(&mut self, runtime_directory: &Path, plan: &SandboxPlan) {
+        let agent_socket = runtime_directory
+            .join(AGENT_SOCKET_DIRECTORY)
+            .join(AGENT_SOCKET_FILE);
+        for (name, value) in &mut self.set {
+            if *name == DAEMON_SOCKET {
+                *value = agent_socket.clone().into();
+            }
+        }
+        if let Some(temporary) = &plan.temporary {
+            self.set.push(("TMPDIR", temporary.into()));
+        }
+        self.remove = &SANDBOX_REMOVED_VARIABLES;
     }
 
     pub(crate) fn apply(self, command: &mut Command) {
-        for name in STARTER_TERMINAL_VARIABLES {
+        for name in STARTER_TERMINAL_VARIABLES.iter().chain(self.remove) {
             command.env_remove(name);
         }
         command.env_remove(SessionToken::HOLDER_VARIABLE);

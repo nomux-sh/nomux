@@ -112,6 +112,54 @@ pub struct Session {
     pub hibernation: Option<Hibernation>,
     /// The user excluded the session from automatic hibernation.
     pub pinned: bool,
+    /// The sandbox of the session. `None` without a sandbox, and from an
+    /// older daemon.
+    pub sandbox: Option<SessionSandbox>,
+}
+
+/// If the limits of a sandbox apply to the processes of a session now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SandboxState {
+    /// Each feature that the profile wants applies.
+    Enforced,
+    /// The features that the profile requires apply, but not each one that
+    /// it wants: [`SessionSandbox::missing`] has them.
+    Partial,
+    /// The session has no process. The next start applies the profile.
+    Inactive,
+    /// A state from a later protocol version.
+    Unknown,
+}
+
+/// The sandbox of a session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionSandbox {
+    /// The name of the profile.
+    pub profile: String,
+    /// If the limits apply now.
+    pub state: SandboxState,
+    /// The features that apply: `files`, `network_off`, `unix_sockets`,
+    /// `signals` and `abstract_sockets`.
+    pub enforced: Vec<String>,
+    /// The features that the profile wants and that do not apply.
+    pub missing: Vec<String>,
+}
+
+impl From<wire::SessionSandbox> for SessionSandbox {
+    fn from(sandbox: wire::SessionSandbox) -> Self {
+        let state = match wire::SandboxState::try_from(sandbox.state) {
+            Ok(wire::SandboxState::Enforced) => SandboxState::Enforced,
+            Ok(wire::SandboxState::Partial) => SandboxState::Partial,
+            Ok(wire::SandboxState::Inactive) => SandboxState::Inactive,
+            Ok(wire::SandboxState::Unspecified) | Err(_) => SandboxState::Unknown,
+        };
+        Self {
+            profile: sandbox.profile,
+            state,
+            enforced: sandbox.enforced,
+            missing: sandbox.missing,
+        }
+    }
 }
 
 impl Session {
@@ -169,6 +217,9 @@ impl From<wire::Session> for Session {
             attached_clients: session.attached_clients,
             hibernation: session.hibernation.map(Hibernation::from),
             pinned: session.pinned,
+            sandbox: session
+                .sandbox
+                .map(|sandbox| SessionSandbox::from(*sandbox)),
         }
     }
 }
@@ -218,4 +269,7 @@ pub struct NewSession {
     /// If a session that is not ended has `name`, the result is that
     /// session and no session starts.
     pub reuse_existing: bool,
+    /// The sandbox profile of the session. `None` is the default of the
+    /// daemon. The daemon of the host resolves the profile.
+    pub sandbox: Option<String>,
 }

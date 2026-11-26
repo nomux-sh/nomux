@@ -1,0 +1,24 @@
+[package]
+name = "nomux-sandbox"
+description = "Sandbox of a nomux session: what the host can apply, and the limits that a holder applies to its command."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+nomux-holder-protocol.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
+rustix = { workspace = true, features = ["fs", "system", "thread"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

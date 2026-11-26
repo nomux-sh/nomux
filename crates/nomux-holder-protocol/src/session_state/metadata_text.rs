@@ -14,7 +14,7 @@
 
 use std::fmt::Write;
 
-pub(super) fn escape(bytes: &[u8]) -> String {
+pub(crate) fn escape(bytes: &[u8]) -> String {
     let mut text = String::with_capacity(bytes.len());
     for chunk in bytes.utf8_chunks() {
         for character in chunk.valid().chars() {
@@ -39,7 +39,7 @@ fn push_byte(text: &mut String, byte: u8) {
 }
 
 /// Returns `None` if `text` has a `\` that starts no known sequence.
-pub(super) fn unescape(text: &str) -> Option<Vec<u8>> {
+pub(crate) fn unescape(text: &str) -> Option<Vec<u8>> {
     let mut bytes = Vec::with_capacity(text.len());
     let mut rest = text.as_bytes();
     while let Some((&byte, after)) = rest.split_first() {

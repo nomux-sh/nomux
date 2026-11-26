@@ -78,6 +78,7 @@ The daemon listens on the Unix stream socket `~/.nomux/run/nomuxd.sock`.
 | Runtime directory | Mode 0700. The daemon does not start if the mode permits access for other users |
 | Socket | Mode 0600 |
 | Peer | The daemon reads the user ID of the peer and closes a connection from a different user |
+| Sandbox | The daemon closes a connection from a process of a sandboxed session: such a process uses the agent socket `nomuxd.agent/sock`, which takes only `Agent.SetStatus` and `Hooks.Event`. [sandbox.md](sandbox.md#socket-guard) has the rule |
 
 ### Length of the socket paths
 
@@ -100,7 +101,7 @@ The daemon implements these requests:
 |---|---|
 | `Host.Info` | Gives the version of the daemon, its process ID and the number of sessions |
 | `Host.Stop` | Stops the daemon. No session ends |
-| `Session.Create` | Starts a holder for a new session |
+| `Session.Create` | Starts a holder for a new session, with its sandbox profile: [sandbox.md](sandbox.md) |
 | `Session.List` | Gives the sessions, their state and their description. The ended sessions are in the response only if the request asks for them |
 | `Session.Kill` | Ends a session and answers when its command has ended. Removes a dormant or a damaged session with its state |
 | `Session.Attach` | Connects the client to the terminal of a session, and starts a dormant session again. After the response, the connection carries terminal frames: see "Attach" |
@@ -122,7 +123,7 @@ The daemon implements these requests:
 
 [extensions.md](extensions.md) describes the requests of the `Ext` service, the directory of the extensions and the host services that an extension can call.
 
-The daemon sends the capability flag `output_history` in its `Welcome`. If the `Hello` of a client has the flag too, an attach of that connection can get the output of an earlier epoch and the frames `HistoryGap` and `Restored`: see "Attach". The daemon sends an empty `host_id`, because it has no host identity yet.
+The daemon sends the capability flags `output_history`, `session_names`, `session_activity` and `session_sandbox` in its `Welcome`. With `session_sandbox`, a client can send a sandbox profile in `Session.Create`. If the `Hello` of a client has the flag `output_history` too, an attach of that connection can get the output of an earlier epoch and the frames `HistoryGap` and `Restored`: see "Attach". The daemon sends an empty `host_id`, because it has no host identity yet.
 
 ### Configuration
 
@@ -160,6 +161,7 @@ The memory limits (`memory_limit` and `total_memory_limit` in `[sessions]`) and 
 | `pool.shell_start_files` | `true` | A pooled `bash`, `zsh` or `fish` starts with a start file of nomux, which changes to the directory of the session before the first prompt. With `false`, the pool takes only sessions in the home directory: see "Holder pool" |
 | `sessions.memory_limit`, `sessions.total_memory_limit` | none | The memory limit of one session and of all sessions: [memory.md](memory.md#memory-limit). With `memory_limit`, the pool is off |
 | `agents.*` | see [memory.md](memory.md#settings) | When the daemon hibernates an idle agent session |
+| `sandbox.*` | no sandbox | The default sandbox profile of a session, of an agent tool and of a project, and the profiles of the user: [sandbox.md](sandbox.md#how-to-write-a-profile) |
 
 The daemon does not read the `[attach]` table: the CLI reads it for the prefix keys of an attach on the computer of the CLI ([cli.md](cli.md#attach)).
 
@@ -190,12 +192,14 @@ If two clients start a daemon at the same time, one daemon gets the lock, the ot
 
 ### Start of a session
 
-For `Session.Create` of a session with the shell of the user, the daemon first takes a holder of the pool: see "Holder pool". If the pool has no holder that can take the session, and for a session with a different command, the daemon does these steps:
+For `Session.Create` of a session with the shell of the user and without a sandbox, the daemon first takes a holder of the pool: see "Holder pool". If the pool has no holder that can take the session, for a session with a different command, and for a sandboxed session, the daemon does these steps:
 
 1. It makes a random session identifier of 8 characters from `a` to `z` and `2` to `7`. It makes a new one if a session, a holder directory or a pooled holder already has the identifier.
 2. It starts `nomux-holder --session <identifier> --runtime-directory <directory> --state-directory <directory> --working-directory <directory> -- <command>`. It finds `nomux-holder` in the directory of its own binary, and then in `PATH`. The state directory is the state directory of the user: [holder.md](holder.md) has its path.
 3. It waits until the holder writes its `ready` file. If the holder ends before that, the request fails with the last line of the standard error of the holder, or with the message and the location of its panic. If a signal ended the holder, the error also names the signal, says when the standard error is empty, and goes to the log with the level `warn`. If the holder is not ready after 5 seconds, the daemon stops it and the request fails with the code 3 (timeout).
 4. It connects to the holder and takes the lease.
+
+For a sandboxed session, the daemon stores the profile in the file `sandbox` of the session state directory before step 2, resolves it into a plan, writes the plan to `<session identifier>.sandbox-plan` in the runtime directory with mode 0600, and gives the holder `--sandbox-plan <path>`. A profile that does not exist, or that the host cannot apply, fails the request before a holder starts. [sandbox.md](sandbox.md) has the rules. A restore and a wake resolve the profile of the `sandbox` file again.
 
 A holder that this daemon started and that ends later by a signal or with an exit code that is not 0 gives one line with the level `warn` in the log, with the exit status. After a panic, the file `holder-panic` of the session state directory has the message and the location: [holder.md](holder.md#session-state-directory).
 
@@ -648,6 +652,8 @@ Measured on Linux x86-64 with the release profile. The targets are in [bench/REA
 | Growth of the resident memory during a flood of 32 MiB to a client that takes no output | less than 8 MiB (the limit of the test) | no growth with the length of the output |
 | `Session.Create` from the holder pool, connected client, debug build: median of 11 (the test `a_session_from_the_pool_opens_in_less_than_10_ms`) | 1.2 ms to 2.0 ms | < 10 ms |
 | `Session.Create` without the pool, connected client: median, slowest of 50 | 2.31 ms, 2.43 ms | |
+| `nomux new --sandbox project`, `bash` with an empty start file: median, slowest of 50. A sandboxed session never takes the pool: [sandbox.md](sandbox.md#measurements) | 3.65 ms to 3.82 ms, 4.32 ms to 5.12 ms | < 10 ms |
+| The same, request to the first command of the shell | 3.03 ms to 3.15 ms, 3.37 ms to 3.52 ms | < 10 ms |
 | The same, the part in the daemon: start of the holder process, wait for `ready`, lease, response | 0.12 ms to 0.19 ms, 2.2 ms, 0.08 ms, 0.03 ms | |
 | Request to the first command of the shell in a directory that is not the home directory, `bash` with start files of 200 ms: without the pool, from the pool (median of 50) | 205.9 ms, 1.1 ms | < 10 ms |
 | The same, `bash` with an empty start file | 2.7 ms, 1.1 ms | < 10 ms |

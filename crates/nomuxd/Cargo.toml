@@ -16,6 +16,7 @@ nomux-core.workspace = true
 nomux-ext-host.workspace = true
 nomux-holder-protocol.workspace = true
 nomux-proto.workspace = true
+nomux-sandbox.workspace = true
 nomux-status.workspace = true
 nomux-transport.workspace = true
 # `mkfifo`: rustix has no call for it on macOS.

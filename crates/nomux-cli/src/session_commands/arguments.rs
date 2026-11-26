@@ -47,6 +47,11 @@ pub(crate) struct NewArguments {
     #[arg(long, short = 'c', value_name = "DIR")]
     pub(crate) cwd: Option<PathBuf>,
 
+    /// The sandbox profile of the session: project, project-offline, read-only, off, or a
+    /// profile of the configuration [default: the default of the host]
+    #[arg(long, value_name = "PROFILE")]
+    pub(crate) sandbox: Option<String>,
+
     /// Attach to the new session
     #[arg(long, short, conflicts_with = "attach_or_create")]
     pub(crate) attach: bool,

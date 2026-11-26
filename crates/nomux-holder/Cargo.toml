@@ -14,6 +14,7 @@ publish.workspace = true
 getrandom.workspace = true
 nomux-core.workspace = true
 nomux-holder-protocol.workspace = true
+nomux-sandbox.workspace = true
 nomux-term.workspace = true
 rustix = { workspace = true, features = ["event", "fs", "net", "process", "pty", "shm", "stdio", "termios"] }
 signal-hook.workspace = true

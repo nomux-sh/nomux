@@ -2,7 +2,10 @@
 
 use std::process;
 
-use nomux_proto::wire::v1::{HostInfoResponse, HostStopResponse, MemoryLimitSupport, response};
+use nomux_holder_protocol::sandbox::{FeatureSet, SandboxFeature};
+use nomux_proto::wire::v1::{
+    HostInfoResponse, HostStopResponse, MemoryLimitSupport, SandboxSupport, response,
+};
 
 use super::Context;
 
@@ -12,8 +15,25 @@ pub(super) fn info(context: &Context) -> response::Result {
         daemon_pid: process::id(),
         session_count: u32::try_from(context.sessions.list(false).len()).unwrap_or(u32::MAX),
         memory_limit: Some(memory_limit_support(context)),
-        sandbox: None,
+        sandbox: Some(sandbox_support(context)),
     })
+}
+
+fn sandbox_support(context: &Context) -> SandboxSupport {
+    let support = context.sessions.sandbox_support();
+    let enforced = support.features();
+    let names = |features: FeatureSet| {
+        features
+            .names()
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    SandboxSupport {
+        enforced: names(enforced),
+        missing: names(FeatureSet::from_iter(SandboxFeature::ALL).without(enforced)),
+        detail: support.detail(),
+    }
 }
 
 fn memory_limit_support(context: &Context) -> MemoryLimitSupport {

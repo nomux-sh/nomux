@@ -3,8 +3,8 @@
 //!
 //! The holder of a session writes its directory: the session metadata and
 //! the journal. The daemon reads the two, also when no holder runs, and it
-//! owns four files of its own in the directory: the restore policy, the
-//! name, the last hibernation and the pin. Only the daemon removes a
+//! owns five files of its own in the directory: the restore policy, the
+//! name, the last hibernation, the pin and the sandbox profile. Only the daemon removes a
 //! directory.
 //!
 //! The daemon trusts no file of a directory. A file that is damaged, too
@@ -16,11 +16,13 @@ mod journal_check;
 mod name_file;
 mod pin_file;
 mod restore_policy_file;
+mod sandbox_file;
 pub(crate) mod small_file;
 mod stored_metadata;
 
 use std::fs;
 use std::io;
+use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 
 use crate::session_name::SessionName;
@@ -37,6 +39,9 @@ pub(crate) use self::hibernation_file::{HibernationReason, HibernationRecord};
 /// the directory with one directory for each session. A test compares the
 /// two.
 const SESSIONS_DIRECTORY: &str = "sessions";
+/// The temporary directory of a sandboxed session in its state directory.
+const TEMPORARY_DIRECTORY: &str = "tmp";
+const OWNER_ONLY: u32 = 0o700;
 
 pub(crate) struct SessionStore {
     state_directory: PathBuf,
@@ -146,6 +151,32 @@ impl SessionStore {
 
     pub(crate) fn set_pinned(&self, id: &SessionId, pinned: bool) -> io::Result<()> {
         pin_file::set(&self.session_directory(id), pinned)
+    }
+
+    /// The sandbox profile of `id`. `None` if the session has none.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason if the file cannot be read.
+    pub(crate) fn sandbox(&self, id: &SessionId) -> Result<Option<String>, String> {
+        sandbox_file::read(&self.session_directory(id))
+    }
+
+    /// Stores the sandbox profile of `id`. The state directory must exist.
+    pub(crate) fn set_sandbox(&self, id: &SessionId, profile: &str) -> io::Result<()> {
+        let directory = self.session_directory(id);
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(OWNER_ONLY)
+            .create(&directory)?;
+        sandbox_file::write(&directory, profile)
+    }
+
+    /// The temporary directory of a sandboxed session: the only temporary
+    /// directory that its command can change. It goes with the state
+    /// directory.
+    pub(crate) fn temporary_directory(&self, id: &SessionId) -> PathBuf {
+        self.session_directory(id).join(TEMPORARY_DIRECTORY)
     }
 
     /// Removes the state directory of `id`: the daemon forgets the session.

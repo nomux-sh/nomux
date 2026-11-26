@@ -189,6 +189,9 @@ impl Supervisor {
             };
             self.registry.set_state(&self.session_id, state);
             self.protocol = current.hello.protocol;
+            if let Some((_, Some(handle))) = self.registry.find(&self.session_id) {
+                handle.set_sandbox_features(current.hello.sandbox);
+            }
             match self.serve(current.connection).await {
                 Served::SessionEnded(end) => break end,
                 Served::LeaseLost => return self.give_way_to_new_daemon(),

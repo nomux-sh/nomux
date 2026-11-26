@@ -25,6 +25,7 @@ use nomux_core::configuration::RestorePolicy;
 use nomux_holder_protocol::SessionId;
 use nomux_holder_protocol::discovery::{SOCKET_FILE, holder_directory, pooled_holder_directory};
 use nomux_holder_protocol::journal::FIRST_EPOCH;
+use nomux_holder_protocol::sandbox::FeatureSet;
 use nomux_holder_protocol::session_state::SessionMetadata;
 use tokio::sync::{Mutex, Notify, mpsc, watch};
 use tracing::warn;
@@ -35,6 +36,7 @@ use crate::holder::{
 };
 use crate::holder_pool::HolderPool;
 use crate::memory_limit::LimitSupport;
+use crate::sandbox::{PlanFile, SandboxPolicy};
 use crate::session_error::SessionError;
 use crate::session_handle::SessionHandle;
 use crate::session_id;
@@ -56,6 +58,8 @@ use self::resolved_directories::ResolvedDirectories;
 /// thus input that the holder does not take uses no more memory.
 const COMMAND_QUEUE: usize = 64;
 const FALLBACK_SHELL: &str = "/bin/sh";
+/// The exit status of a holder that does not know an option.
+const HOLDER_USAGE_ERROR: i32 = 2;
 
 /// One session with its description, for a client.
 pub(crate) struct ListedSession {
@@ -74,6 +78,18 @@ pub(crate) struct ListedSession {
     /// The last hibernation. `None` if the session never hibernated.
     pub(crate) hibernation: Option<HibernationRecord>,
     pub(crate) pinned: bool,
+    /// The sandbox of the session. `None` without a sandbox.
+    pub(crate) sandbox: Option<ListedSandbox>,
+}
+
+/// The sandbox of a session, as a client sees it.
+pub(crate) struct ListedSandbox {
+    pub(crate) profile: String,
+    /// The features that apply to the command. `None` if the session has
+    /// no process.
+    pub(crate) enforced: Option<FeatureSet>,
+    /// The features that the profile wants and that do not apply.
+    pub(crate) missing: FeatureSet,
 }
 
 /// The sessions of the host.
@@ -106,6 +122,7 @@ pub(crate) struct Sessions {
     limit_support: LimitSupport,
     hibernation: HibernationSettings,
     hibernation_check: Arc<Notify>,
+    sandbox: SandboxPolicy,
 }
 
 impl Sessions {
@@ -136,6 +153,11 @@ impl Sessions {
             .map(PathBuf::from)
             .ok_or_else(|| io::Error::other("the HOME variable of the daemon is not set"))?;
         let limit_support = LimitSupport::detect();
+        let sandbox = SandboxPolicy::new(
+            settings.sandbox.clone(),
+            runtime_directory.clone(),
+            home.clone(),
+        );
         if let (Some(limit), LimitSupport::Threshold { reason }) =
             (settings.session_memory_limit, &limit_support)
         {
@@ -176,7 +198,30 @@ impl Sessions {
             limit_support,
             hibernation: settings.hibernation,
             hibernation_check: Arc::default(),
+            sandbox,
         })
+    }
+
+    /// What the host can apply of a sandbox.
+    pub(crate) fn sandbox_support(&self) -> &nomux_sandbox::HostSupport {
+        self.sandbox.support()
+    }
+
+    /// `true` if the peer `pid` of the main socket is a process of a
+    /// sandboxed session: see `sandbox::refuses`.
+    pub(crate) fn refuses_peer(&self, pid: Option<u32>) -> bool {
+        let roots = self
+            .registry
+            .records()
+            .into_iter()
+            .filter_map(|record| match record.state {
+                SessionState::Running { pid } if self.store.sandbox(&record.id) != Ok(None) => {
+                    Some(pid)
+                }
+                _ => None,
+            })
+            .collect();
+        crate::sandbox::refuses(&roots, pid)
     }
 
     /// Starts a session with `command`: an empty command is the shell of the
@@ -187,12 +232,13 @@ impl Sessions {
         self: &Arc<Self>,
         command: Vec<String>,
         working_directory: Option<PathBuf>,
+        sandbox: Option<&str>,
     ) -> Result<ListedSession, SessionError> {
         let working_directory = self.working_directory_of_session(working_directory)?;
         // The pool keeps its holders for the idle time from now, and fills
         // again after this session. Its task runs after the response: the
         // start of a holder does not delay this session.
-        let created = self.create_with(command, working_directory).await;
+        let created = self.create_with(command, working_directory, sandbox).await;
         self.start_pool();
         created
     }
@@ -201,35 +247,92 @@ impl Sessions {
         &self,
         command: Vec<String>,
         working_directory: PathBuf,
+        sandbox: Option<&str>,
     ) -> Result<ListedSession, SessionError> {
-        if command.is_empty()
-            && let Some(pooled) = self.take_pooled(&working_directory).await
-        {
-            return Ok(self.describe(self.supervise(pooled.session_id, Some(pooled.link))));
-        }
         let command: Vec<OsString> = if command.is_empty() {
             vec![self.shell.clone()]
         } else {
             command.into_iter().map(OsString::from).collect()
         };
+        let profile = self.sandbox.profile_of_new_session(
+            sandbox,
+            &working_directory,
+            Path::new(&command[0]),
+        );
+        // A sandbox cannot limit a pooled shell, which runs already.
+        if profile.is_none()
+            && command == [self.shell.clone()]
+            && let Some(pooled) = self.take_pooled(&working_directory).await
+        {
+            return Ok(self.describe(self.supervise(pooled.session_id, Some(pooled.link))));
+        }
         let session_id = self.unused_session_id().map_err(start_failure)?;
-        let launcher = self.launcher(&session_id, FIRST_EPOCH);
-        let start = HolderStart {
-            session_id: &session_id,
-            command: &command,
-            launcher: &launcher,
-            working_directory: &working_directory,
-            size: None,
-            pooled: false,
-            shell_start: None,
-        };
-        let link = self.start_holder(start).await.inspect_err(|_| {
+        let started = self
+            .start_new(
+                &session_id,
+                &command,
+                &working_directory,
+                profile.as_deref(),
+            )
+            .await;
+        let link = started.inspect_err(|_| {
             // A holder that did not start leaves the state directory of a
             // session that never ran.
             let _ = self.store.remove(&session_id);
             self.status.remove(&session_id);
         })?;
         Ok(self.describe(self.supervise(session_id, Some(link))))
+    }
+
+    async fn start_new(
+        &self,
+        session_id: &SessionId,
+        command: &[OsString],
+        working_directory: &Path,
+        profile: Option<&str>,
+    ) -> Result<HolderLink, SessionError> {
+        let plan = match profile {
+            Some(profile) => {
+                self.store
+                    .set_sandbox(session_id, profile)
+                    .map_err(|error| {
+                        start_failure(format!("the sandbox profile cannot be stored: {error}"))
+                    })?;
+                Some(self.sandbox_plan(session_id, profile, command, working_directory)?)
+            }
+            None => None,
+        };
+        let launcher = self.launcher(session_id, FIRST_EPOCH);
+        let start = HolderStart {
+            session_id,
+            command,
+            launcher: &launcher,
+            working_directory,
+            size: None,
+            pooled: false,
+            shell_start: None,
+            sandbox_plan: plan.as_ref().map(|plan| plan.path.as_path()),
+        };
+        self.start_holder(start).await
+    }
+
+    /// The plan file of one start of the session `id` with `profile`.
+    pub(super) fn sandbox_plan(
+        &self,
+        id: &SessionId,
+        profile: &str,
+        command: &[OsString],
+        working_directory: &Path,
+    ) -> Result<PlanFile, SessionError> {
+        self.sandbox
+            .write_plan(
+                id,
+                profile,
+                working_directory,
+                Path::new(&command[0]),
+                &self.store.temporary_directory(id),
+            )
+            .map_err(start_failure)
     }
 
     /// The sessions in the sequence of their identifiers. The ended
@@ -362,8 +465,28 @@ impl Sessions {
             attached_clients,
             hibernation: self.store.hibernation(&record.id),
             pinned: self.store.is_pinned(&record.id),
+            sandbox: self.listed_sandbox(&record),
             record,
         }
+    }
+
+    fn listed_sandbox(&self, record: &SessionRecord) -> Option<ListedSandbox> {
+        let profile = self.store.sandbox(&record.id).ok().flatten()?;
+        let enforced = match record.state {
+            SessionState::Running { .. } | SessionState::Unreachable => self
+                .registry
+                .find(&record.id)
+                .and_then(|(_, handle)| handle)
+                .map(|handle| handle.sandbox_features()),
+            _ => None,
+        };
+        Some(ListedSandbox {
+            profile,
+            missing: enforced.map_or(FeatureSet::EMPTY, |enforced| {
+                SandboxPolicy::missing_wanted(enforced)
+            }),
+            enforced,
+        })
     }
 
     /// The session `id`, if it is not an ended session. An ended session
@@ -394,6 +517,7 @@ impl Sessions {
     /// first instruction of the command comes from the session.
     async fn start_holder(&self, start: HolderStart<'_>) -> Result<HolderLink, SessionError> {
         let session_id = start.session_id;
+        let sandboxed = start.sandbox_plan.is_some();
         let token = holder::new_token().map_err(start_failure)?;
         self.status.starting(session_id, token);
         let state_directory = self.store.state_directory();
@@ -403,6 +527,18 @@ impl Sessions {
                 self.status.not_started(session_id);
                 match error {
                     LaunchError::NotReady => SessionError::Timeout(error.to_string()),
+                    // A holder of an earlier version does not know the
+                    // option: it ends with its usage error and starts no
+                    // command.
+                    LaunchError::Exited { status, .. }
+                        if sandboxed && status.code() == Some(HOLDER_USAGE_ERROR) =>
+                    {
+                        start_failure(
+                            "the nomux-holder of this host is older than the sandbox: it does \
+                             not apply a sandbox profile, thus the session does not start. \
+                             Install the nomux-holder of the version of the daemon",
+                        )
+                    }
                     _ => start_failure(error),
                 }
             })?;

@@ -50,7 +50,7 @@ Bare `nomux` on a terminal attaches to the most recent session (see `attach` wit
 | `host add <ssh-target> [--name <name>]` | Connects to a host through SSH, installs nomux there, starts the daemon and saves the host |
 | `host ls` | Lists the saved hosts |
 | `host rm <name>` | Removes a saved host. Nothing changes on the host |
-| `host doctor [<name>]` | Checks the connection, the platform, the binaries, the permissions and the daemon of a host, shows if its operating system applies a memory limit, and checks the free space and the build output of the worktrees. Without a name, also the local host |
+| `host doctor [<name>]` | Checks the connection, the platform, the binaries, the permissions and the daemon of a host, shows if its operating system applies a memory limit and what it applies of a sandbox, and checks the free space and the build output of the worktrees. Without a name, also the local host |
 | `ext ls` | Lists the installed extensions |
 | `ext install <source> [--grant <permission>]... [--grant-all] [--yes]` | Installs an extension from a directory on the host, a release archive, an `https` address of one, or the short form of an extension of `nomux-sh/extensions` (`git`, `git@0.1.0`), with the permissions that the options approve |
 | `ext rm <id>` | Stops an extension and removes its package, its state and its data |
@@ -136,6 +136,7 @@ The CLI finds the session of a target with one `Session.List` request before the
 - `-a, --attach` attaches the terminal to the new session, as `attach` does. The command then prints the result of the attach and not the session identifier. Without a terminal, the command fails and starts no session.
 - `-A, --attach-or-create` needs `-n`: if a session that is not ended has the name, the command attaches to it, else it starts the session and attaches to it. The daemon decides it in one step, thus two `nomux new -A -n work` at the same time start one session. For a session that exists, the command and `--cwd` are not used, and one line on the standard error says so. A dormant session starts again, as `attach` does.
 - `-c, --cwd <dir>` is the working directory of the command. The default is the current directory of the CLI. A relative path is relative to that directory.
+- `--sandbox <profile>` is the sandbox profile of the session: `project`, `project-offline`, `read-only`, `off`, or a profile of the configuration file of the host. Without it, the host uses its default: [sandbox.md](sandbox.md) has the profiles and their rules. A profile that does not exist or that the host cannot apply starts no session, and the exit code is 1. A daemon that is older than the sandbox gives the exit code 1 too: it would start the session without limits.
 - `--attach` attaches the terminal to the new session, as `attach` does. The command then prints the result of the attach and not the session identifier. Without a terminal, the command fails and starts no session.
 - `-- <command> [argument...]` is the command of the session. The default is the shell of the user.
 - `--cmd <command> [argument...]` is a second form of the same.
@@ -151,6 +152,7 @@ nomux new --attach -- htop
 nomux new -n api -c ~/src/api -- cargo watch -x test
 nomux new -n api -a                      # start the session "api" and attach to it
 nomux new -A -n work                     # attach to "work", or start it and attach
+nomux new --sandbox project -- claude    # the agent can change only the project
 ```
 
 **The two forms cannot be used together.** A command line that has `--cmd` and then `--` is a usage error with the exit code 1, and no session starts: `nomux` cannot know if the `--` is an argument of the command or the start of the second form.
@@ -178,6 +180,8 @@ The session does not need the CLI or the daemon after that.
 
 If a session has a name, the table has the column `NAME` after `ID`, and `-` for a session without a name.
 If a session belongs to a Project of the workspace tree, the table has the column `PROJECT` with the path of the Project, and `-` for a session without a Project. [workspace.md](workspace.md#the-project-of-a-session) has the rule.
+
+If a session has a sandbox, the table has the column `SANDBOX` after `PID` with the profile, `*` after a profile in the state `partial`, and `-` for a session without a sandbox. The note of a partial session names the features that do not apply. [sandbox.md](sandbox.md#how-to-see-that-a-session-is-sandboxed) has the states.
 
 A hibernated session has the state `hibernated`, and its note has the reason of the hibernation (`count`, `session-memory`, `total-memory`, `memory-pressure` or `request`) and the reason of a wake that failed. A pinned session has the note `pinned`.
 
@@ -389,7 +393,7 @@ On the local host, `daemon status` also shows the path of the global configurati
 
 ### `host doctor`
 
-`host doctor <name>` checks one host, and `host doctor` checks the local host (with the name `local`: only `daemon` and the checks of the worktrees) and each host of the configuration file. The command changes nothing on a host: it installs nothing and starts no daemon.
+`host doctor <name>` checks one host, and `host doctor` checks the local host (with the name `local`: only `daemon`, `sandbox` and the checks of the worktrees) and each host of the configuration file. The command changes nothing on a host: it installs nothing and starts no daemon.
 
 | Check | Passes if |
 |---|---|
@@ -399,6 +403,7 @@ On the local host, `daemon status` also shows the path of the global configurati
 | `permissions` | `~/.nomux`, `~/.nomux/bin`, `~/.nomux/run` and the socket belong to the user, other users cannot write to the first two, and other users have no access to the last two |
 | `daemon` | A daemon answers, or no daemon runs. It fails if the SSH server refuses connections to Unix sockets |
 | `versions` | The CLI and the daemon have a common protocol version. Only if a daemon answers |
+| `sandbox` | Always passes, as `memory-limit` does: a host without a sandbox runs sessions. The detail has the operating system, the version of the Landlock interface, the features that it applies and the ones that it does not, and says when a session with a sandbox profile does not start on the host: [sandbox.md](sandbox.md#features). Only if a daemon of this version answers |
 | `free-space` | The file systems of the Projects have 3 GiB free or more. Below 10 GiB the detail starts with `warning:`. Only if a daemon answers and the host has a Project |
 | `shared-build-output` | Always passes. The detail has the advice of [worktrees.md](worktrees.md#commands) when two or more worktrees have their own cargo target directory or their own `node_modules`, with the measured numbers. Only if a daemon answers and the host has a Project |
 
@@ -859,6 +864,7 @@ With `--json`, a command prints one JSON document on one line.
 | `session.damage` | string | Only if a state file of the session is damaged: the reason, in English for a person. The text is not stable |
 | `session.hibernation` | object | Only if the session hibernated: `hibernated_at` (seconds after the Unix epoch), `reason` (`count`, `session-memory`, `total-memory`, `memory-pressure`, `request` or `unknown`), `freed_bytes` and `measure` (`null` if the daemon did not measure), `resume_command`, `woken_at` (`null` while the session is hibernated; else the time of the wake of the current run) and `wake_error` (`null`, or why the last wake failed). A hibernated session has the `state` `dormant` |
 | `session.pinned` | boolean | Only if it is `true`: the session is excluded from automatic hibernation |
+| `session.sandbox` | object | Only for a session with a sandbox: `profile`, `state` (`enforced`, `partial`, `inactive` for a session without a process, or `unknown`), `enforced` and `missing` (arrays of the feature names `files`, `network_off`, `unix_sockets`, `signals` and `abstract_sockets`) |
 
 A field is `null`, or `command` is empty, when the daemon does not know the value: for a damaged session, and for a session of a holder that is too old to write the description. The document never has the environment of the command.
 
@@ -991,6 +997,7 @@ The command prints the document after the attach ended.
 | `daemon.pid` | number | The process ID of the daemon |
 | `daemon.sessions` | number | The number of sessions |
 | `daemon.memory_limit` | object | `applied` (`true` if the operating system ends the processes of a session at its limit) and `detail` (how, or why not, in English). Not in the document from an older daemon |
+| `daemon.sandbox` | object | What the host applies of a sandbox: `enforced` and `missing` (feature names) and `detail` (the kernel and its interface, in English). Not in the document from an older daemon |
 | `daemon.configuration` | string | The path of the global configuration file of the local host, also if no daemon runs. Not in the document with `--host`, in the `daemon` object of `host add`, or if `HOME` is not set |
 
 ### `daemon stop`

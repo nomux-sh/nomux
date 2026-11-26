@@ -5,7 +5,8 @@ use std::fmt::Write;
 use std::io::{self, IsTerminal};
 
 use nomux_client::{
-    AttachEnd, ExitStatus, HibernationReason, HostInfo, Session, SessionState, WorkspaceTree,
+    AttachEnd, ExitStatus, HibernationReason, HostInfo, SandboxState, Session, SessionState,
+    WorkspaceTree,
 };
 use nomux_core::configuration::HostEntry;
 
@@ -304,6 +305,9 @@ fn daemon_status(info: &HostInfo) -> String {
     if let Some(limit) = &info.memory_limit {
         let _ = writeln!(text, "memory limit: {}", limit.detail);
     }
+    if let Some(sandbox) = &info.sandbox {
+        let _ = writeln!(text, "sandbox: {}", sandbox.detail);
+    }
     text
 }
 
@@ -318,6 +322,9 @@ struct SessionRow<'a> {
     project: Option<String>,
     command: String,
     note: String,
+    /// The sandbox profile, with `*` if a feature that it wants does not
+    /// apply.
+    sandbox: Option<String>,
 }
 
 impl<'a> SessionRow<'a> {
@@ -340,6 +347,13 @@ impl<'a> SessionRow<'a> {
                 .map(|project| path_of(workspace, &project.id)),
             command: or_dash(session.command.join(" ")),
             note: note(session),
+            sandbox: session.sandbox.as_ref().map(|sandbox| {
+                if sandbox.state == SandboxState::Partial {
+                    format!("{}*", sandbox.profile)
+                } else {
+                    sandbox.profile.clone()
+                }
+            }),
         }
     }
 }
@@ -361,11 +375,17 @@ fn note(session: &Session) -> String {
     let wake_error = hibernation
         .and_then(|hibernation| hibernation.wake_error.as_deref())
         .map(|error| format!("wake failed: {error}"));
+    let sandbox_gap = session
+        .sandbox
+        .as_ref()
+        .filter(|sandbox| sandbox.state == SandboxState::Partial)
+        .map(|sandbox| format!("sandbox without {}", sandbox.missing.join(", ")));
     let parts: Vec<&str> = exit
         .as_deref()
         .into_iter()
         .chain(reason.as_deref())
         .chain(wake_error.as_deref())
+        .chain(sandbox_gap.as_deref())
         .chain(session.pinned.then_some("pinned"))
         .chain(session.damage.as_deref())
         .collect();
@@ -381,6 +401,16 @@ pub(super) fn reason_name(reason: HibernationReason) -> &'static str {
         HibernationReason::MemoryPressure => "memory-pressure",
         HibernationReason::Request => "request",
         HibernationReason::Unknown => "unknown",
+    }
+}
+
+/// The name of the state of a sandbox in the output of the CLI.
+pub(super) fn sandbox_state_name(state: SandboxState) -> &'static str {
+    match state {
+        SandboxState::Enforced => "enforced",
+        SandboxState::Partial => "partial",
+        SandboxState::Inactive => "inactive",
+        SandboxState::Unknown => "unknown",
     }
 }
 
@@ -410,11 +440,15 @@ fn session_table(
     let has_notes = rows.iter().any(|row| !row.note.is_empty());
     let has_names = rows.iter().any(|row| row.name.is_some());
     let has_projects = rows.iter().any(|row| row.project.is_some());
+    let has_sandboxes = rows.iter().any(|row| row.sandbox.is_some());
     let mut header = vec!["ID"];
     if has_names {
         header.push("NAME");
     }
     header.extend(["STATE", "PID"]);
+    if has_sandboxes {
+        header.push("SANDBOX");
+    }
     if has_projects {
         header.push("PROJECT");
     }
@@ -428,8 +462,13 @@ fn session_table(
         .unwrap_or_default();
     let mut shortened = vec![command, command + 1];
     let mut omitted = vec![pid];
+    // The sandbox column goes last: it says if limits apply.
+    let after_pid = pid + 1 + usize::from(has_sandboxes);
     if has_projects {
-        shortened.push(pid + 1);
+        shortened.push(after_pid);
+        omitted.push(after_pid);
+    }
+    if has_sandboxes {
         omitted.push(pid + 1);
     }
     if has_names {
@@ -452,6 +491,9 @@ fn session_table(
             ),
             Cell::new(row.pid),
         ]);
+        if has_sandboxes {
+            cells.push(Cell::new(row.sandbox.unwrap_or_else(|| "-".to_owned())));
+        }
         if has_projects {
             cells.push(Cell::new(row.project.unwrap_or_else(|| "-".to_owned())));
         }
@@ -513,6 +555,7 @@ mod tests {
             attached_clients: 0,
             hibernation: None,
             pinned: false,
+            sandbox: None,
         }
     }
 

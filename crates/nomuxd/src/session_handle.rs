@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use nomux_holder_protocol::SessionId;
+use nomux_holder_protocol::sandbox::FeatureSet;
 use nomux_holder_protocol::wire::{ChildSignal, WindowSize};
 use nomux_status::Timestamp;
 use tokio::sync::{Notify, mpsc, oneshot, watch};
@@ -35,6 +36,9 @@ pub(crate) struct SessionHandle {
     /// Tells the hibernation that a fact of its rules changed without an
     /// event: a client detached.
     hibernation_check: Arc<Notify>,
+    /// The sandbox features that the holder applies to the command, from
+    /// its last hello.
+    sandbox: Mutex<FeatureSet>,
 }
 
 /// What clients did with the session.
@@ -62,7 +66,17 @@ impl SessionHandle {
             clients: AttachedClients::default(),
             activity: Mutex::default(),
             hibernation_check,
+            sandbox: Mutex::default(),
         }
+    }
+
+    /// The sandbox features that apply to the command now.
+    pub(crate) fn sandbox_features(&self) -> FeatureSet {
+        *self.sandbox.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub(crate) fn set_sandbox_features(&self, features: FeatureSet) {
+        *self.sandbox.lock().unwrap_or_else(PoisonError::into_inner) = features;
     }
 
     pub(crate) fn activity(&self) -> Activity {

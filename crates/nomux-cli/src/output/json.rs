@@ -5,14 +5,14 @@ use std::path::Path;
 
 use nomux_client::{
     AttachEnd, ClientError, ExitStatus, Hibernation, HostEvent, HostInfo, RestorePolicy, Session,
-    SessionExit,
+    SessionExit, SessionSandbox,
 };
 use nomux_core::configuration::HostEntry;
 use serde::Serialize;
 
 use super::extension_json::ExtensionBody;
 use super::hooks_json::HooksBody;
-use super::human::{reason_name, state_name};
+use super::human::{reason_name, sandbox_state_name, state_name};
 use super::memory_human::measure_name;
 use super::memory_json::SessionsMemoryBody;
 use super::status_json::StatusBody;
@@ -187,6 +187,28 @@ pub(super) struct SessionDocument<'a> {
     hibernation: Option<HibernationDocument<'a>>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pinned: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sandbox: Option<SandboxDocument<'a>>,
+}
+
+/// The sandbox of a session.
+#[derive(Serialize)]
+struct SandboxDocument<'a> {
+    profile: &'a str,
+    state: &'static str,
+    enforced: &'a [String],
+    missing: &'a [String],
+}
+
+impl<'a> From<&'a SessionSandbox> for SandboxDocument<'a> {
+    fn from(sandbox: &'a SessionSandbox) -> Self {
+        Self {
+            profile: &sandbox.profile,
+            state: sandbox_state_name(sandbox.state),
+            enforced: &sandbox.enforced,
+            missing: &sandbox.missing,
+        }
+    }
 }
 
 /// The last hibernation of a session. `woken_at` is `null` while the
@@ -249,6 +271,7 @@ impl<'a> From<&'a Session> for SessionDocument<'a> {
             damage: session.damage.as_deref(),
             hibernation: session.hibernation.as_ref().map(HibernationDocument::from),
             pinned: session.pinned,
+            sandbox: session.sandbox.as_ref().map(SandboxDocument::from),
         }
     }
 }
@@ -389,6 +412,15 @@ struct DaemonDocument<'a> {
     configuration: Option<&'a Path>,
     #[serde(skip_serializing_if = "Option::is_none")]
     memory_limit: Option<MemoryLimitDocument<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sandbox: Option<SandboxSupportDocument<'a>>,
+}
+
+#[derive(Serialize)]
+struct SandboxSupportDocument<'a> {
+    enforced: &'a [String],
+    missing: &'a [String],
+    detail: &'a str,
 }
 
 #[derive(Serialize)]
@@ -411,6 +443,13 @@ impl<'a> From<Option<&'a HostInfo>> for DaemonDocument<'a> {
                     applied: limit.applied,
                     detail: &limit.detail,
                 }),
+            sandbox: info.and_then(|info| info.sandbox.as_ref()).map(|support| {
+                SandboxSupportDocument {
+                    enforced: &support.enforced,
+                    missing: &support.missing,
+                    detail: &support.detail,
+                }
+            }),
         }
     }
 }
@@ -591,6 +630,7 @@ mod tests {
             resolved_working_directory: None,
             hibernation: None,
             pinned: false,
+            sandbox: None,
         }
     }
 
@@ -733,6 +773,7 @@ mod tests {
             daemon_pid: 7,
             session_count: 2,
             memory_limit: None,
+            sandbox: None,
         };
         assert_eq!(
             report(&Report::DaemonStatus {
@@ -778,6 +819,7 @@ mod tests {
                 daemon_pid: 7,
                 session_count: 0,
                 memory_limit: None,
+                sandbox: None,
             },
         };
         assert_eq!(

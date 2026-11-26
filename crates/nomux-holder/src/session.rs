@@ -4,7 +4,7 @@
 //! A pooled holder runs the command before its session exists. It has no
 //! files until the daemon assigns the session to it.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::io;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
@@ -13,6 +13,7 @@ use std::time::Instant;
 
 use nomux_holder_protocol::SessionId;
 use nomux_holder_protocol::ring::RingWriter;
+use nomux_holder_protocol::sandbox::FeatureSet;
 use nomux_holder_protocol::wire::{
     ChildSignal, ChildStatus, ErrorCode, Hello, POOLED_EPOCH, ProtocolVersion, SessionToken,
     WindowSize,
@@ -32,6 +33,7 @@ use crate::input_queue::InputQueue;
 use crate::program_reports::ProgramReportStore;
 use crate::pty;
 use crate::resize_verification::ResizeVerification;
+use crate::sandbox_start::{CommandSandbox, SandboxEntry};
 use crate::session_environment::{self, CommandEnvironment};
 use crate::session_files::SessionFiles;
 
@@ -76,6 +78,9 @@ pub(crate) struct Session {
     /// The secret that the command of the session has in its environment.
     /// It is only in memory: no file has it.
     token: SessionToken,
+    /// The sandbox features that apply to the command.
+    sandbox_features: FeatureSet,
+    landlock_abi: u8,
 }
 
 impl Session {
@@ -83,6 +88,7 @@ impl Session {
     /// `files`, the holder is pooled until [`assign`](Self::assign).
     pub(crate) fn start(
         arguments: &SessionArguments,
+        sandbox: Option<CommandSandbox>,
         ring: RingWriter,
         files: Option<SessionFiles>,
         discovery: DiscoveryDirectory,
@@ -95,15 +101,35 @@ impl Session {
             .as_deref()
             .map(DirectoryFifo::open)
             .transpose()?;
+        let mut environment = CommandEnvironment::of_session(
+            &arguments.session_id,
+            &arguments.runtime_directory,
+            &token,
+        );
+        let (sandbox_features, landlock_abi) =
+            sandbox.as_ref().map_or((FeatureSet::EMPTY, 0), |sandbox| {
+                (sandbox.enforced, sandbox.landlock_abi)
+            });
+        let mut command_line = arguments.command_line();
+        let stub;
+        let mut limits = None;
+        if let Some(sandbox) = sandbox {
+            environment.sandboxed(&arguments.runtime_directory, &sandbox.plan);
+            match sandbox.entry {
+                SandboxEntry::Child(prepared) => limits = Some(prepared),
+                SandboxEntry::Stub(plan) => {
+                    stub = enter_sandbox_stub(plan)?;
+                    let after_launcher = arguments.launcher.len();
+                    command_line.splice(after_launcher..after_launcher, stub.iter());
+                }
+            }
+        }
         let child = ChildProcess::spawn(
-            &arguments.command_line(),
-            CommandEnvironment::of_session(
-                &arguments.session_id,
-                &arguments.runtime_directory,
-                &token,
-            ),
+            &command_line,
+            environment,
             arguments.working_directory.as_deref(),
             pty.slave,
+            limits,
         )?;
         Ok(Self {
             id: arguments.session_id.clone(),
@@ -121,6 +147,8 @@ impl Session {
             size: arguments.size,
             resize_verification: ResizeVerification::default(),
             token,
+            sandbox_features,
+            landlock_abi,
         })
     }
 
@@ -134,6 +162,8 @@ impl Session {
                 .files
                 .as_ref()
                 .map_or(POOLED_EPOCH, SessionFiles::epoch),
+            sandbox: self.sandbox_features,
+            landlock_abi: self.landlock_abi,
         }
     }
 
@@ -452,6 +482,17 @@ fn keep_record(
 /// The size of the screen state for a window. `None` if the window has more
 /// cells than the holder keeps in memory, or if the screen state cannot have
 /// the size: no row, or fewer than [`Size::MIN_COLUMNS`] columns.
+/// The words that make a launcher start this binary as the sandbox stub,
+/// before the command: `nomux-holder --enter-sandbox <plan> --`.
+fn enter_sandbox_stub(plan: PathBuf) -> io::Result<[OsString; 4]> {
+    Ok([
+        std::env::current_exe()?.into_os_string(),
+        "--enter-sandbox".into(),
+        plan.into_os_string(),
+        "--".into(),
+    ])
+}
+
 fn screen_size(size: WindowSize) -> Option<Size> {
     if size.cells() > WindowSize::MAX_CELLS {
         return None;

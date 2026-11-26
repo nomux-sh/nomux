@@ -29,6 +29,7 @@ pub(super) async fn create(
 ) -> Result<response::Result, Error> {
     let working_directory =
         (!request.working_directory.is_empty()).then(|| PathBuf::from(request.working_directory));
+    let sandbox = (!request.sandbox.is_empty()).then_some(request.sandbox.as_str());
     let named = match name_of(&request.name)? {
         Some(name) => {
             context
@@ -36,6 +37,7 @@ pub(super) async fn create(
                 .create_named(
                     request.command,
                     working_directory,
+                    sandbox,
                     name,
                     request.reuse_existing,
                 )
@@ -44,7 +46,7 @@ pub(super) async fn create(
         None => NamedSession {
             session: context
                 .sessions
-                .create(request.command, working_directory)
+                .create(request.command, working_directory, sandbox)
                 .await?,
             created: true,
         },

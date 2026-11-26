@@ -12,6 +12,7 @@ use nomux_term::Size;
 
 pub(crate) const USAGE: &str = "\
 Usage: nomux-holder --session <identifier> [options] -- <command> [argument...]
+       nomux-holder --enter-sandbox <path> -- <command> [argument...]
        nomux-holder --version
 
 Options:
@@ -36,6 +37,14 @@ Options:
                               after the command read it, and at its end
   --start-argument <value>    One more argument for the command, after its arguments.
                               The session metadata does not have it. Can be repeated
+  --sandbox-plan <path>       Apply the sandbox plan of the file at <path> to the
+                              command. The holder reads the file and removes it.
+                              If the operating system cannot apply a feature that
+                              the plan requires, the command does not start
+  --enter-sandbox <path>      Not a holder: apply the sandbox plan of the file at
+                              <path> to this process, remove the file and start the
+                              command in its place. A launcher of the holder starts
+                              it, for example the memory limit
 
 The command gets the environment of the holder, and the variables
 NOMUX_SESSION_ID, NOMUX_SOCK and NOMUX_TOKEN. NOMUX_TOKEN is the value of
@@ -57,6 +66,11 @@ const DEFAULT_EXIT_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) enum Invocation {
     Version,
     Session(Box<SessionArguments>),
+    /// Apply the plan of the file to this process and start the command.
+    EnterSandbox {
+        plan: PathBuf,
+        command: Vec<OsString>,
+    },
 }
 
 /// The description of the session that the holder starts.
@@ -82,6 +96,8 @@ pub(crate) struct SessionArguments {
     /// The arguments after `program_arguments` that only the start of the
     /// command has: the session metadata has the command without them.
     pub(crate) start_arguments: Vec<OsString>,
+    /// The file with the sandbox plan of the command.
+    pub(crate) sandbox_plan: Option<PathBuf>,
 }
 
 impl SessionArguments {
@@ -110,6 +126,8 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Inv
     let mut directory_fifo = None;
     let mut start_arguments = Vec::new();
     let mut launcher = Vec::new();
+    let mut sandbox_plan = None;
+    let mut enter_sandbox = None;
 
     loop {
         let Some(option) = arguments.next() else {
@@ -130,6 +148,8 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Inv
             "--directory-fifo" => directory_fifo = Some(PathBuf::from(value()?)),
             "--start-argument" => start_arguments.push(value()?),
             "--launcher" => launcher.push(value()?),
+            "--sandbox-plan" => sandbox_plan = Some(PathBuf::from(value()?)),
+            "--enter-sandbox" => enter_sandbox = Some(PathBuf::from(value()?)),
             "--session" => session_id = Some(parse_value(option, &value()?)?),
             "--runtime-directory" => runtime_directory = Some(PathBuf::from(value()?)),
             "--state-directory" => state_directory = Some(PathBuf::from(value()?)),
@@ -147,6 +167,15 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Inv
     let program = arguments
         .next()
         .ok_or("the command is missing after `--`")?;
+    if let Some(plan) = enter_sandbox {
+        return Ok(Invocation::EnterSandbox {
+            plan,
+            command: std::iter::once(program).chain(arguments).collect(),
+        });
+    }
+    if sandbox_plan.is_some() && pooled {
+        return Err("--sandbox-plan cannot be used with --pooled".to_owned());
+    }
     if directory_fifo.is_some() && !pooled {
         return Err("--directory-fifo needs --pooled".to_owned());
     }
@@ -180,6 +209,7 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Inv
         program,
         program_arguments: arguments.collect(),
         start_arguments,
+        sandbox_plan,
     })))
 }
 

@@ -37,7 +37,7 @@ mod window_size;
 
 pub use descriptor::{receive_with_descriptor, send_with_descriptor};
 pub use frame::{Frame, FrameBuffer, FrameError, MAX_PAYLOAD_LENGTH};
-pub use hello::{Hello, HelloError, POOLED_EPOCH, ProtocolVersion};
+pub use hello::{Hello, HelloError, POOLED_EPOCH, ProtocolVersion, SANDBOX_MINOR_VERSION};
 pub use payload::DecodeError;
 pub use reply::{ChildStatus, ErrorCode, Reply};
 pub use request::{ChildSignal, Request};

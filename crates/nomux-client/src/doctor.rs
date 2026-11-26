@@ -18,8 +18,8 @@ use crate::{Client, ClientError, ClientKind, Host, HostInfo};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostCheck {
     /// The name of the check: `connection`, `platform`, `binaries`,
-    /// `permissions`, `daemon`, `versions`, `memory-limit`, `free-space` or
-    /// `shared-build-output`.
+    /// `permissions`, `daemon`, `versions`, `memory-limit`, `sandbox`,
+    /// `free-space` or `shared-build-output`.
     pub name: &'static str,
     /// `true` if the host passed the check.
     pub passed: bool,
@@ -120,16 +120,32 @@ pub async fn check_local_host(kind: ClientKind) -> Vec<HostCheck> {
         }
         Err(error) => return vec![HostCheck::of("daemon", Err(error.to_string()))],
     };
+    let info = client.host_info().await;
     let mut checks = vec![HostCheck::of(
         "daemon",
-        client
-            .host_info()
-            .await
-            .map(|info| daemon_detail(&info))
-            .map_err(|error| error.to_string()),
+        info.as_ref()
+            .map(daemon_detail)
+            .map_err(ToString::to_string),
     )];
+    checks.extend(info.ok().as_ref().and_then(sandbox_check));
     checks.extend(worktree_checks(&mut client).await);
     checks
+}
+
+/// What the host applies of a sandbox. The check passes on each host, as
+/// `memory-limit` does: a host without a sandbox still runs sessions. The
+/// detail names the gaps, and says when a sandboxed session does not start.
+fn sandbox_check(info: &HostInfo) -> Option<HostCheck> {
+    let support = info.sandbox.as_ref()?;
+    let detail = if support.enforced.iter().any(|feature| feature == "files") {
+        support.detail.clone()
+    } else {
+        format!(
+            "{}. A session with a sandbox profile does not start on this host",
+            support.detail
+        )
+    };
+    Some(HostCheck::of("sandbox", Ok(detail)))
 }
 
 /// The checks of the worktrees. None if the daemon does not answer
@@ -224,9 +240,13 @@ async fn daemon(
                     info.daemon_version
                 )
             };
+            let sandbox = sandbox_check(&info);
             let memory_limit = info.memory_limit.map(|limit| limit.detail);
-            let worktrees = worktree_checks(&mut client).await;
-            (Ok(daemon), Some(Ok(versions)), memory_limit, worktrees)
+            let checks = sandbox
+                .into_iter()
+                .chain(worktree_checks(&mut client).await)
+                .collect();
+            (Ok(daemon), Some(Ok(versions)), memory_limit, checks)
         }
         Err(error) => (Err(error.to_string()), None, None, Vec::new()),
     }

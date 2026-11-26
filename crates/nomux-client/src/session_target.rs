@@ -85,6 +85,7 @@ mod tests {
             attached_clients: 0,
             hibernation: None,
             pinned: false,
+            sandbox: None,
         }
     }
 

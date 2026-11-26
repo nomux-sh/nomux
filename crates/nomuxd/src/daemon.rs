@@ -5,6 +5,7 @@ use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
+use nomux_holder_protocol::discovery::AGENT_SOCKET_FILE;
 use nomux_transport::{LocalListener, SOCKET_FILE};
 use tracing::info;
 
@@ -18,6 +19,7 @@ use crate::in_flight_requests::InFlightRequests;
 use crate::instance_lock::InstanceLock;
 use crate::listener;
 use crate::runtime_directory;
+use crate::sandbox;
 use crate::session_store::SessionStore;
 use crate::sessions::Sessions;
 use crate::settings::Settings;
@@ -35,6 +37,10 @@ pub(crate) async fn run(running_daemon: RunningDaemon) -> io::Result<()> {
     let socket_path = runtime_directory.join(SOCKET_FILE);
     remove_socket_of_earlier_daemon(&socket_path)?;
     let listener = LocalListener::bind(&socket_path)?;
+    let agent_socket_path =
+        sandbox::prepare_agent_socket_directory(&runtime_directory)?.join(AGENT_SOCKET_FILE);
+    remove_socket_of_earlier_daemon(&agent_socket_path)?;
+    let agent_listener = LocalListener::bind(&agent_socket_path)?;
 
     let shutdown = Shutdown::new();
     shutdown.trigger_on_signals()?;
@@ -89,7 +95,12 @@ pub(crate) async fn run(running_daemon: RunningDaemon) -> io::Result<()> {
         Arc::clone(&context.events),
     ));
     let worktree_work = tokio::task::spawn_local(worktrees::run_background(Arc::clone(&context)));
+    let agent_socket = tokio::task::spawn_local(sandbox::serve_agent_socket(
+        agent_listener,
+        Arc::clone(&context),
+    ));
     listener::serve(listener, Arc::clone(&context)).await;
+    agent_socket.abort();
     restoring.abort();
     hibernating.abort();
     worktree_work.abort();
@@ -102,6 +113,7 @@ pub(crate) async fn run(running_daemon: RunningDaemon) -> io::Result<()> {
     // a client that sees the end of its connection can start a new daemon.
     context.in_flight_requests.all_ended().await;
     fs::remove_file(&socket_path)?;
+    fs::remove_file(&agent_socket_path)?;
     drop(lock);
     info!("the daemon stops; the holders continue");
     Ok(())

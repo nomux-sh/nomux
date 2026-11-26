@@ -10,6 +10,8 @@
 //!     12     1  length of the session identifier
 //!     13     n  session identifier (ASCII)
 //!   13+n     4  epoch of the session; since protocol version 1.3
+//!   17+n     1  sandbox features that apply to the command; since 1.7
+//!   18+n     1  Landlock ABI of the kernel, 0 without; since 1.7
 //! ```
 //!
 //! The holder sends the read-only descriptor of the ring buffer together
@@ -24,6 +26,7 @@ use super::request::Request;
 use super::window_size::WindowSize;
 use crate::SessionId;
 use crate::journal::FIRST_EPOCH;
+use crate::sandbox::FeatureSet;
 
 const KIND: u16 = 0x0001;
 
@@ -39,7 +42,7 @@ pub struct ProtocolVersion {
 
 impl ProtocolVersion {
     /// The version that this crate implements.
-    pub const CURRENT: Self = Self { major: 1, minor: 6 };
+    pub const CURRENT: Self = Self { major: 1, minor: 7 };
 
     /// `true` if a holder of this version knows `request`. The daemon asks
     /// this before it sends a request that a minor version added.
@@ -65,6 +68,14 @@ pub struct Hello {
     /// it, and it then is [`FIRST_EPOCH`]. A pooled holder, which has no
     /// session yet, sends [`POOLED_EPOCH`]. Since protocol version 1.3.
     pub epoch: u32,
+    /// The sandbox features that the operating system applies to the
+    /// command: empty for a command without a sandbox, and from a holder
+    /// before protocol version 1.7.
+    pub sandbox: FeatureSet,
+    /// The version of the Landlock interface of the kernel: 0 if the
+    /// kernel has none or the holder does not know it. Since protocol
+    /// version 1.7.
+    pub landlock_abi: u8,
 }
 
 /// The epoch in the hello of a pooled holder: no epoch of a session has
@@ -74,12 +85,14 @@ pub const POOLED_EPOCH: u32 = 0;
 
 /// The minor version that added the epoch to the hello.
 const EPOCH_MINOR_VERSION: u16 = 3;
+/// The minor version that added the sandbox to the hello.
+pub const SANDBOX_MINOR_VERSION: u16 = 7;
 
 impl Hello {
     /// Appends the encoded hello frame to `output`.
     pub fn encode(&self, output: &mut Vec<u8>) {
         let session_id = self.session_id.as_str().as_bytes();
-        let mut payload = Vec::with_capacity(17 + session_id.len());
+        let mut payload = Vec::with_capacity(19 + session_id.len());
         payload.extend_from_slice(&self.protocol.major.to_le_bytes());
         payload.extend_from_slice(&self.protocol.minor.to_le_bytes());
         payload.extend_from_slice(&self.child_pid.to_le_bytes());
@@ -88,6 +101,8 @@ impl Hello {
         payload.push(session_id.len().to_le_bytes()[0]);
         payload.extend_from_slice(session_id);
         payload.extend_from_slice(&self.epoch.to_le_bytes());
+        payload.push(self.sandbox.bits());
+        payload.push(self.landlock_abi);
         let frame = Frame {
             kind: KIND,
             request_id: 0,
@@ -127,12 +142,19 @@ impl Hello {
         } else {
             FIRST_EPOCH
         };
+        let (sandbox, landlock_abi) = if protocol.minor >= SANDBOX_MINOR_VERSION {
+            (FeatureSet::from_bits(reader.u8()?), reader.u8()?)
+        } else {
+            (FeatureSet::EMPTY, 0)
+        };
         Ok(Self {
             protocol,
             session_id,
             child_pid,
             size,
             epoch,
+            sandbox,
+            landlock_abi,
         })
     }
 }

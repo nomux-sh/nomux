@@ -3,8 +3,8 @@
 use std::time::Duration;
 
 use nomux_core::configuration::{
-    AutoClean, BuildOutputRule, ConfigurationError, ConfigurationFile, RestorePolicy, StopSignal,
-    default_configuration_path,
+    AutoClean, BuildOutputRule, ConfigurationError, ConfigurationFile, RestorePolicy,
+    SandboxSettings, StopSignal, default_configuration_path,
 };
 use tracing::warn;
 
@@ -71,6 +71,8 @@ pub(crate) struct Settings {
     pub(crate) hibernation: HibernationSettings,
     /// The rules of the worktrees: the `[worktrees]` table.
     pub(crate) worktrees: WorktreeSettings,
+    /// The sandbox profiles and their defaults: the `[sandbox]` table.
+    pub(crate) sandbox: SandboxSettings,
 }
 
 /// The settings of the worktrees: the `[worktrees]` table.
@@ -157,6 +159,7 @@ impl Default for Settings {
             total_memory_limit: None,
             hibernation: HibernationSettings::default(),
             worktrees: WorktreeSettings::default(),
+            sandbox: SandboxSettings::default(),
         }
     }
 }
@@ -230,6 +233,7 @@ impl Settings {
                     .unwrap_or(defaults.worktrees.critical_free),
                 build_output_rules: file.worktree_build_output_rules()?.unwrap_or_default(),
             },
+            sandbox: file.sandbox()?,
         })
     }
 }

@@ -10,6 +10,8 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use nomux_holder_protocol::wire::{ChildSignal, ChildStatus};
 use rustix::process::{Pid, Signal, kill_process};
 
+use nomux_sandbox::Prepared;
+
 use crate::session_environment::CommandEnvironment;
 
 /// The child command, and its exit status after it ended.
@@ -24,12 +26,14 @@ impl ChildProcess {
     /// slave side of the pseudoterminal: it becomes the controlling terminal,
     /// the standard input, the standard output and the standard error of the
     /// child. The child gets the environment of the holder with the
-    /// changes of `environment`.
+    /// changes of `environment`. With `sandbox`, the child applies its
+    /// limits before `exec`.
     pub(crate) fn spawn(
         command_line: &[&OsString],
         environment: CommandEnvironment,
         working_directory: Option<&Path>,
         terminal: OwnedFd,
+        sandbox: Option<Prepared>,
     ) -> io::Result<Self> {
         let (program, arguments) = command_line
             .split_first()
@@ -45,6 +49,11 @@ impl ChildProcess {
             command.current_dir(directory);
         }
         take_controlling_terminal(&mut command);
+        // After the terminal: `pre_exec` closures run in their sequence, and
+        // the sandbox applies to each step that follows it.
+        if let Some(sandbox) = sandbox {
+            sandbox.install(&mut command);
+        }
         Ok(Self {
             child: command.spawn()?,
             status: ChildStatus::Running,

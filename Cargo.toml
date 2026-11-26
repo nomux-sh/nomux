@@ -20,6 +20,7 @@ nomux-client = { path = "crates/nomux-client", version = "0.5.0" }
 nomux-core = { path = "crates/nomux-core", version = "0.5.0" }
 nomux-ext-host = { path = "crates/nomux-ext-host", version = "0.5.0" }
 nomux-holder-protocol = { path = "crates/nomux-holder-protocol", version = "0.5.0" }
+nomux-sandbox = { path = "crates/nomux-sandbox", version = "0.5.0" }
 nomux-status = { path = "crates/nomux-status", version = "0.5.0" }
 nomux-term = { path = "crates/nomux-term", version = "0.5.0" }
 nomux-transport = { path = "crates/nomux-transport", version = "0.5.0" }

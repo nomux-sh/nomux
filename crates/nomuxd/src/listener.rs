@@ -22,7 +22,15 @@ pub(crate) async fn serve(listener: LocalListener, context: Arc<Context>) {
         tokio::select! {
             () = context.shutdown.requested() => return,
             accepted = listener.accept() => match accepted {
-                Ok(stream) => {
+                Ok((stream, peer)) => {
+                    // A process of a sandboxed session uses the agent
+                    // socket: on the main socket it could control each
+                    // session.
+                    if context.sessions.refuses_peer(peer) {
+                        warn!(?peer, "a process of a sandboxed session was refused on the main socket");
+                        spawn_local(client_connection::refuse_sandboxed(stream));
+                        continue;
+                    }
                     // An attach holds a reader of a ring buffer, which stays
                     // on the thread that mapped the memory.
                     spawn_local(client_connection::serve(stream, Arc::clone(&context)));

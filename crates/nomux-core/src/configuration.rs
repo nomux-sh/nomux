@@ -14,6 +14,7 @@ mod host_entry;
 mod location;
 mod prefix_keys;
 mod restore_policy;
+mod sandbox_settings;
 mod size_text;
 mod stop_signal;
 mod worktree_settings;
@@ -31,6 +32,7 @@ pub use self::host_entry::{HostEntry, is_valid_host_name};
 pub use self::location::default_configuration_path;
 pub use self::prefix_keys::{PrefixKey, PrefixKeys};
 pub use self::restore_policy::{RestorePolicy, UnknownRestorePolicy};
+pub use self::sandbox_settings::{SandboxSettings, UserProfile, is_profile_name};
 pub use self::stop_signal::StopSignal;
 pub use self::worktree_settings::{AutoClean, BuildOutputRule};
 
@@ -54,6 +56,7 @@ const POOL_IDLE_TIME: &str = "idle_time";
 const ATTACH: &str = "attach";
 const PREFIX: &str = "prefix";
 const POOL_SHELL_START_FILES: &str = "shell_start_files";
+const SANDBOX: &str = "sandbox";
 const OWNER_ONLY_DIRECTORY: u32 = 0o700;
 const OWNER_READ_WRITE: u32 = 0o600;
 
@@ -111,6 +114,7 @@ impl ConfigurationFile {
         file.worktree_warn_free()?;
         file.worktree_critical_free()?;
         file.worktree_build_output_rules()?;
+        file.sandbox()?;
         Ok(file)
     }
 
@@ -346,6 +350,23 @@ impl ConfigurationFile {
             item.as_bool()
                 .ok_or_else(|| "must be true or false".to_owned())
         })
+    }
+
+    /// The `[sandbox]` table: the default profiles and the profiles of the
+    /// user. Empty settings if the file does not have the table.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error with the key if a value is not valid.
+    pub fn sandbox(&self) -> Result<SandboxSettings, ConfigurationError> {
+        let Some(item) = self.document.get(SANDBOX) else {
+            return Ok(SandboxSettings::default());
+        };
+        let table = item
+            .as_table()
+            .ok_or_else(|| self.invalid(SANDBOX, "must be a table"))?;
+        sandbox_settings::parse(table)
+            .map_err(|(key, problem)| self.invalid(&format!("{SANDBOX}.{key}"), &problem))
     }
 
     /// The prefix keys of an attach on this computer: `prefix` in

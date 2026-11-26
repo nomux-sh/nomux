@@ -90,6 +90,9 @@ pub(crate) struct HolderStart<'a> {
     pub(crate) pooled: bool,
     /// The start file of nomux for the shell of a pooled holder.
     pub(crate) shell_start: Option<&'a ShellStart>,
+    /// The file with the sandbox plan of the command. `None` without a
+    /// sandbox.
+    pub(crate) sandbox_plan: Option<&'a Path>,
 }
 
 impl HolderStart<'_> {
@@ -155,6 +158,9 @@ pub(crate) async fn launch(
     }
     for word in start.launcher {
         holder.arg("--launcher").arg(word);
+    }
+    if let Some(plan) = start.sandbox_plan {
+        holder.arg("--sandbox-plan").arg(plan);
     }
     if let Some(size) = start.size {
         holder

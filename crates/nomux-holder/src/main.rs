@@ -44,6 +44,7 @@ mod panic_record;
 mod program_reports;
 mod pty;
 mod resize_verification;
+mod sandbox_start;
 mod session;
 mod session_environment;
 mod session_files;
@@ -62,6 +63,7 @@ use crate::arguments::{Invocation, SessionArguments, USAGE};
 use crate::child_exit_signal::ChildExitSignal;
 use crate::control::ControlServer;
 use crate::discovery_directory::DiscoveryDirectory;
+use crate::sandbox_start::CommandSandbox;
 use crate::session::Session;
 use crate::session_files::SessionFiles;
 
@@ -70,6 +72,11 @@ const EXIT_USAGE: u8 = 2;
 fn main() -> ExitCode {
     match arguments::parse(env::args_os().skip(1)) {
         Ok(Invocation::Version) => nomux_core::version_only_main(nomux_core::version_line!()),
+        Ok(Invocation::EnterSandbox { plan, command }) => {
+            let error = sandbox_start::enter_and_exec(&plan, &command);
+            eprintln!("nomux-holder: {error}");
+            ExitCode::FAILURE
+        }
         Ok(Invocation::Session(arguments)) => match run(&arguments) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
@@ -90,6 +97,19 @@ fn run(arguments: &SessionArguments) -> io::Result<()> {
         &arguments.session_id,
     ));
     leave_session_of_starter()?;
+    // The plan is read and checked before each other step: a plan that the
+    // host cannot apply starts nothing.
+    let stub_plan =
+        (arguments.sandbox_plan.is_some() && !arguments.launcher.is_empty()).then(|| {
+            arguments
+                .runtime_directory
+                .join(format!("{}.stub-plan", arguments.session_id))
+        });
+    let sandbox = arguments
+        .sandbox_plan
+        .as_deref()
+        .map(|path| CommandSandbox::prepare(path, stub_plan.as_deref()))
+        .transpose()?;
     let child_exit = ChildExitSignal::install()?;
 
     let memory = shared_memory::create("ring", region_length(arguments.ring_capacity))?;
@@ -110,11 +130,17 @@ fn run(arguments: &SessionArguments) -> io::Result<()> {
     } else {
         Some(SessionFiles::create(arguments, 0)?)
     };
-    let session = Session::start(arguments, ring, files, directory)
+    let session = Session::start(arguments, sandbox, ring, files, directory)
         .map_err(|error| with_context("cannot start the command", &error))?;
     session.mark_ready()?;
 
-    event_loop::run(session, server, child_exit, arguments.exit_timeout)
+    let ended = event_loop::run(session, server, child_exit, arguments.exit_timeout);
+    // The stub removes its copy before the command starts. A launcher that
+    // never started it leaves the copy.
+    if let Some(path) = stub_plan {
+        let _ = std::fs::remove_file(path);
+    }
+    ended
 }
 
 /// Makes the holder the leader of a new session. Thus a signal for the
