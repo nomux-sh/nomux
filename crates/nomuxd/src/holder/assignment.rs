@@ -8,14 +8,10 @@ use nomux_holder_protocol::wire::{Reply, Request};
 
 use super::HolderLink;
 
-/// Gives the pooled holder of `link` its session with `working_directory`,
-/// then writes `input` to its terminal: the change of the directory of the
-/// command that already runs. `link` must have the lease.
-pub(crate) async fn assign(
-    link: &mut HolderLink,
-    working_directory: &Path,
-    input: Option<&[u8]>,
-) -> io::Result<()> {
+/// Gives the pooled holder of `link` its session with `working_directory`.
+/// A shell with a start file of nomux gets the directory from the holder.
+/// `link` must have the lease.
+pub(crate) async fn assign(link: &mut HolderLink, working_directory: &Path) -> io::Result<()> {
     let assignment = Request::AssignSession {
         size: link.hello.size,
         working_directory: working_directory.as_os_str().as_bytes(),
@@ -25,11 +21,7 @@ pub(crate) async fn assign(
             "the holder is too old to get a session from the pool",
         ));
     }
-    request(link, assignment).await?;
-    if let Some(input) = input {
-        request(link, Request::Input(input)).await?;
-    }
-    Ok(())
+    request(link, assignment).await
 }
 
 /// Sends one request that the holder answers with `Done`.

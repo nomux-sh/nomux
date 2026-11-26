@@ -25,6 +25,7 @@ use rustix::io::Errno;
 
 use crate::arguments::SessionArguments;
 use crate::child::ChildProcess;
+use crate::directory_fifo::DirectoryFifo;
 use crate::discovery_directory::DiscoveryDirectory;
 use crate::foreground_program::ForegroundProgram;
 use crate::input_queue::InputQueue;
@@ -63,6 +64,9 @@ pub(crate) struct Session {
     /// after the assignment, and for a holder that started with its
     /// session.
     pooled: Option<SessionArguments>,
+    /// The named pipe that gives the command its working directory at the
+    /// assignment. `None` after the command read it.
+    directory_fifo: Option<DirectoryFifo>,
     /// The discovery files. The directory is removed when the session is
     /// dropped.
     discovery: DiscoveryDirectory,
@@ -86,9 +90,18 @@ impl Session {
         let screen_size = screen_size(arguments.size).ok_or(io::ErrorKind::InvalidInput)?;
         let pty = pty::open(arguments.size)?;
         let token = session_environment::new_token()?;
+        let directory_fifo = arguments
+            .directory_fifo
+            .as_deref()
+            .map(DirectoryFifo::open)
+            .transpose()?;
         let child = ChildProcess::spawn(
             &arguments.program,
-            &arguments.program_arguments,
+            &[
+                &arguments.program_arguments[..],
+                &arguments.start_arguments[..],
+            ]
+            .concat(),
             CommandEnvironment::of_session(
                 &arguments.session_id,
                 &arguments.runtime_directory,
@@ -106,6 +119,7 @@ impl Session {
             screen: Terminal::new(screen_size),
             reports: ProgramReportStore::default(),
             pooled: files.is_none().then(|| arguments.clone()),
+            directory_fifo,
             files,
             discovery,
             input: InputQueue::default(),
@@ -140,11 +154,15 @@ impl Session {
 
     /// Makes the pooled holder the holder of its session: writes the state
     /// directory with `working_directory` and `size`, starts the journal at
-    /// the current position with a checkpoint of the screen, and gives the
-    /// discovery directory the name of the session.
+    /// the current position with a checkpoint of the screen, gives the
+    /// discovery directory the name of the session, and then writes
+    /// `working_directory` to the named pipe of the directory if the holder
+    /// has one.
     ///
-    /// The command already runs, thus its working directory does not change
-    /// here: the daemon types the change into the terminal.
+    /// The command already runs, thus the holder does not change its
+    /// working directory: a shell that the daemon started with its start
+    /// file reads the directory from the named pipe before its first
+    /// prompt.
     pub(crate) fn assign(
         &mut self,
         size: WindowSize,
@@ -153,7 +171,8 @@ impl Session {
         if self.child.has_exited() {
             return Err(ErrorCode::ChildExited);
         }
-        let working_directory = PathBuf::from(OsStr::from_bytes(working_directory));
+        let directory_bytes = working_directory;
+        let working_directory = PathBuf::from(OsStr::from_bytes(directory_bytes));
         let Some(mut arguments) = self.pooled.clone() else {
             return Err(ErrorCode::InvalidPayload);
         };
@@ -185,6 +204,13 @@ impl Session {
             })?;
         self.files = Some(files);
         self.pooled = None;
+        if let Some(fifo) = &mut self.directory_fifo
+            && let Err(error) = fifo.send(directory_bytes)
+        {
+            // The command stays in its directory, and the session works.
+            eprintln!("nomux-holder: cannot give the command its directory: {error}");
+            self.directory_fifo = None;
+        }
         Ok(())
     }
 
@@ -242,6 +268,14 @@ impl Session {
             Ok(_) => {
                 if let Some(journal) = journal {
                     journal.output_written(&mut self.screen, self.size);
+                }
+                // The shell writes its prompt after it read the directory.
+                if self
+                    .directory_fifo
+                    .as_ref()
+                    .is_some_and(DirectoryFifo::is_read)
+                {
+                    self.directory_fifo = None;
                 }
                 self.resize_verification
                     .output_read(terminal.as_fd(), self.size);

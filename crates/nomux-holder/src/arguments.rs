@@ -26,6 +26,12 @@ Options:
   --pooled                    Start without a session: the daemon assigns the session
                               later. The standard input must be a pipe from the daemon:
                               a holder without a session ends when the pipe closes
+  --directory-fifo <path>     With --pooled: open the named pipe at <path>. At the
+                              assignment, the holder writes the working directory of
+                              the session and a zero byte to it. The holder removes it
+                              after the command read it, and at its end
+  --start-argument <value>    One more argument for the command, after its arguments.
+                              The session metadata does not have it. Can be repeated
 
 The command gets the environment of the holder, and the variables
 NOMUX_SESSION_ID, NOMUX_SOCK and NOMUX_TOKEN.
@@ -44,7 +50,7 @@ const DEFAULT_EXIT_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Invocation {
     Version,
-    Session(SessionArguments),
+    Session(Box<SessionArguments>),
 }
 
 /// The description of the session that the holder starts.
@@ -59,8 +65,14 @@ pub(crate) struct SessionArguments {
     pub(crate) exit_timeout: Duration,
     /// The holder waits in the pool of the daemon for its session.
     pub(crate) pooled: bool,
+    /// The named pipe through which the command gets the working directory
+    /// of the session at the assignment.
+    pub(crate) directory_fifo: Option<PathBuf>,
     pub(crate) program: OsString,
     pub(crate) program_arguments: Vec<OsString>,
+    /// The arguments after `program_arguments` that only the start of the
+    /// command has: the session metadata has the command without them.
+    pub(crate) start_arguments: Vec<OsString>,
 }
 
 pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Invocation, String> {
@@ -73,6 +85,8 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Inv
     let mut ring_capacity = DEFAULT_RING_CAPACITY;
     let mut exit_timeout = DEFAULT_EXIT_TIMEOUT;
     let mut pooled = false;
+    let mut directory_fifo = None;
+    let mut start_arguments = Vec::new();
 
     loop {
         let Some(option) = arguments.next() else {
@@ -90,6 +104,8 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Inv
             "--version" | "-V" => return Ok(Invocation::Version),
             "--" => break,
             "--pooled" => pooled = true,
+            "--directory-fifo" => directory_fifo = Some(PathBuf::from(value()?)),
+            "--start-argument" => start_arguments.push(value()?),
             "--session" => session_id = Some(parse_value(option, &value()?)?),
             "--runtime-directory" => runtime_directory = Some(PathBuf::from(value()?)),
             "--state-directory" => state_directory = Some(PathBuf::from(value()?)),
@@ -107,6 +123,9 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Inv
     let program = arguments
         .next()
         .ok_or("the command is missing after `--`")?;
+    if directory_fifo.is_some() && !pooled {
+        return Err("--directory-fifo needs --pooled".to_owned());
+    }
     if size.rows == 0 {
         return Err("--rows must be larger than 0".to_owned());
     }
@@ -119,7 +138,7 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Inv
             WindowSize::MAX_CELLS
         ));
     }
-    Ok(Invocation::Session(SessionArguments {
+    Ok(Invocation::Session(Box::new(SessionArguments {
         session_id: session_id.ok_or("--session is necessary")?,
         runtime_directory: runtime_directory
             .or_else(|| nomux_core::runtime_directory::locate().ok())
@@ -132,9 +151,11 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Inv
         ring_capacity,
         exit_timeout,
         pooled,
+        directory_fifo,
         program,
         program_arguments: arguments.collect(),
-    }))
+        start_arguments,
+    })))
 }
 
 fn parse_value<T>(option: &str, value: &OsString) -> Result<T, String>

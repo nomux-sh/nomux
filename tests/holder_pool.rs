@@ -1,10 +1,12 @@
 //! The holder pool of the daemon with the real binaries: a new session with
 //! the shell takes a pooled holder and works as a session with a new
-//! holder, the pool starts only after the first request of a client and
-//! empties after its idle time, and no pooled holder stays without its
+//! holder, a pooled bash, zsh or fish shows only its prompt in the directory
+//! of the session, the pool starts only after the first request of a client
+//! and empties after its idle time, and no pooled holder stays without its
 //! daemon.
 
 use std::collections::HashSet;
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -16,11 +18,22 @@ use nomux_end_to_end::{Sandbox, binary, kill_process, process_runs, wait_for};
 use nomux_holder_protocol::discovery::{
     HolderState, PID_FILE, ProcessIdentity, pooled_holder_directory, scan_pooled,
 };
+use nomux_holder_protocol::journal::JournalReader;
+use nomux_holder_protocol::session_state::JOURNAL_DIRECTORY;
 
 /// The pool of the default configuration.
 const POOL_SIZE: usize = 2;
 /// The target of `bench/README.md` for a new session from the pool.
 const NEW_SESSION_TARGET: Duration = Duration::from_millis(10);
+/// The pool changes the directory of this shell.
+const POOLED_SHELL: &str = "/bin/bash";
+
+/// A sandbox whose shell is [`POOLED_SHELL`].
+fn sandbox_with_bash() -> Sandbox {
+    let mut sandbox = Sandbox::new();
+    sandbox.set_variable("SHELL", POOLED_SHELL);
+    sandbox
+}
 
 fn block_on<T>(future: impl Future<Output = T>) -> T {
     tokio::runtime::Builder::new_current_thread()
@@ -102,7 +115,7 @@ fn project_directory(sandbox: &Sandbox) -> PathBuf {
 
 #[test]
 fn a_session_from_the_pool_works_as_a_session_with_a_new_holder() {
-    let sandbox = Sandbox::new();
+    let sandbox = sandbox_with_bash();
     let project = project_directory(&sandbox);
     let _ = sandbox.sessions();
     let pooled = wait_for_pool(&sandbox, POOL_SIZE);
@@ -165,7 +178,7 @@ fn a_session_from_the_pool_works_as_a_session_with_a_new_holder() {
 /// full pool, also in a debug build.
 #[test]
 fn a_session_from_the_pool_opens_in_less_than_10_ms() {
-    let sandbox = Sandbox::new();
+    let sandbox = sandbox_with_bash();
     let project = project_directory(&sandbox);
     let _ = sandbox.sessions();
     let mut times = Vec::new();
@@ -190,6 +203,161 @@ fn a_session_from_the_pool_opens_in_less_than_10_ms() {
     }
     times.sort();
     assert!(times[times.len() / 2] < NEW_SESSION_TARGET, "{times:?}");
+}
+
+/// The path of the program `name` in `PATH`.
+fn program_in_path(name: &str) -> Option<PathBuf> {
+    env::split_paths(&env::var_os("PATH")?)
+        .map(|directory| directory.join(name))
+        .find(|path| path.is_file())
+}
+
+/// A start file that prints a line and sets a prompt with the full path of
+/// the working directory, for each shell.
+fn write_start_file(sandbox: &Sandbox, shell: &str) {
+    let (path, text) = match shell {
+        "bash" => (".bashrc", "PS1='[$PWD]\\$ '\necho start file\n"),
+        "zsh" => (".zshrc", "PROMPT='[%/]%# '\nprint start file\n"),
+        _ => (
+            ".config/fish/config.fish",
+            "set -g fish_greeting\nfunction fish_prompt; echo -n \"[$PWD]> \"; end\necho start file\n",
+        ),
+    };
+    let path = sandbox.home().join(path);
+    fs::create_dir_all(path.parent().expect("a directory")).expect("the directory can be made");
+    fs::write(path, text).expect("the start file can be written");
+}
+
+/// The rows of the screen of the session `id` in an attach, when it shows
+/// the prompt in `directory`.
+fn screen_with_prompt(sandbox: &Sandbox, id: &str, directory: &Path) -> Vec<String> {
+    let mut terminal = sandbox.nomux_in_terminal(&["attach", id]);
+    terminal.wait_for_text(&format!("[{}]", directory.display()))
+}
+
+/// A pooled shell runs the start files of the user while it waits, and
+/// changes to the directory of the session before its first prompt. Thus
+/// the screen is the screen of a session with a new holder, and neither the
+/// screen nor the journal has a line that the daemon typed.
+#[test]
+fn a_pooled_shell_shows_only_its_prompt_in_the_directory_of_the_session() {
+    for shell in ["bash", "zsh", "fish"] {
+        let Some(path) = program_in_path(shell) else {
+            eprintln!("SKIPPED for {shell}: the program is not in PATH");
+            continue;
+        };
+        let mut sandbox = Sandbox::new();
+        sandbox.set_variable("SHELL", &path);
+        // No terminal answers the queries of fish: it would wait for them.
+        sandbox.set_variable("fish_features", "no-query-term");
+        write_start_file(&sandbox, shell);
+        // A name that a shell reads in different ways as a word.
+        let project = sandbox.home().join("it's a $project");
+        fs::create_dir(&project).expect("the directory can be made");
+        let project = fs::canonicalize(project).expect("the directory exists");
+        let _ = sandbox.sessions();
+        let pooled = wait_for_pool(&sandbox, POOL_SIZE);
+
+        let id = new_session_in(&sandbox, &project);
+        assert!(
+            pooled.contains(&id),
+            "{shell}: session {id} is not from {pooled:?}"
+        );
+        let screen = screen_with_prompt(&sandbox, &id, &project);
+        // A command gets a new holder.
+        let path_text = path.to_str().expect("text");
+        let new_holder = sandbox
+            .nomux_ok(&[
+                "new",
+                "--quiet",
+                "--cwd",
+                project.to_str().expect("text"),
+                "--",
+                path_text,
+            ])
+            .stdout
+            .trim()
+            .to_owned();
+        let expected = screen_with_prompt(&sandbox, &new_holder, &project);
+
+        assert_eq!(screen, expected, "{shell}");
+        assert!(
+            screen.iter().any(|row| row == "start file"),
+            "{shell}: {screen:?}"
+        );
+        let journal = sandbox.session_state_directory(&id).join(JOURNAL_DIRECTORY);
+        let output = wait_for(&format!("{shell}: the journal has the prompt"), || {
+            let range = JournalReader::open(&journal)
+                .ok()?
+                .read(1, 0, 65536)
+                .ok()??;
+            let text = String::from_utf8_lossy(&range.bytes).into_owned();
+            text.contains(&format!("[{}]", project.display()))
+                .then_some(text)
+        });
+        assert!(!output.contains(" cd "), "{shell}: {output:?}");
+        // The named pipe is gone, and the shell has no variable of nomux.
+        let fifo = sandbox
+            .runtime_directory()
+            .join("pool")
+            .join(format!("{id}.directory"));
+        assert!(!fifo.exists(), "{shell}: {} stays", fifo.display());
+        type_line(
+            &sandbox,
+            &id,
+            "env | grep -c -e NOMUX_DIRECTORY_FIFO -e NOMUX_ZDOTDIR -e ZDOTDIR",
+        );
+        wait_for(
+            &format!("{shell}: the shell has no variable of nomux"),
+            || {
+                let output = sandbox.nomux_ok(&["capture", &id]).stdout;
+                // The count is a line of its own in the raw output.
+                output
+                    .split(['\r', '\n'])
+                    .any(|part| part == "0")
+                    .then_some(())
+            },
+        );
+    }
+}
+
+/// Starts a session with the shell through the client library. `None` is
+/// the home directory.
+fn new_shell_session(sandbox: &Sandbox, working_directory: Option<PathBuf>) -> String {
+    block_on(async {
+        let mut client = Client::connect(&sandbox.daemon_socket(), ClientKind::Cli)
+            .await
+            .expect("the daemon answers");
+        client
+            .create_session(NewSession {
+                command: Vec::new(),
+                working_directory,
+            })
+            .await
+            .expect("the session starts")
+            .id
+    })
+}
+
+#[test]
+fn without_the_start_files_of_nomux_the_pool_takes_only_sessions_in_the_home_directory() {
+    let mut sandbox = sandbox_with_bash();
+    sandbox.write_configuration("[pool]\nshell_start_files = false\n");
+    let project = project_directory(&sandbox);
+    let _ = sandbox.sessions();
+    let pooled = wait_for_pool(&sandbox, POOL_SIZE);
+
+    let in_project = new_shell_session(&sandbox, Some(project));
+    let in_home = new_shell_session(&sandbox, None);
+
+    assert!(
+        !pooled.contains(&in_project),
+        "{in_project} is from {pooled:?}"
+    );
+    assert!(
+        pooled.contains(&in_home),
+        "{in_home} is not from {pooled:?}"
+    );
 }
 
 #[test]

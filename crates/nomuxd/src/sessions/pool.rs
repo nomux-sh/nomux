@@ -1,6 +1,7 @@
 //! The holder pool of the sessions: its task, which starts the pooled
 //! holders, and the take of a pooled holder for a new session.
 
+use std::fs;
 use std::io;
 use std::path::Path;
 use std::sync::Arc;
@@ -13,7 +14,7 @@ use tracing::{debug, info, warn};
 
 use super::{Sessions, start_failure};
 use crate::holder::{self, HolderStart};
-use crate::holder_pool::{PoolStep, PooledHolder};
+use crate::holder_pool::{PoolStep, PooledHolder, ShellStart, remove_pool_directory};
 use crate::session_error::SessionError;
 
 impl Sessions {
@@ -36,14 +37,8 @@ impl Sessions {
     /// the identifier of the session. `None` if the pool has no holder that
     /// can take the session.
     pub(super) async fn take_pooled(&self, working_directory: &Path) -> Option<PooledHolder> {
-        while let Some(taken) = self.pool.take(working_directory, &self.home) {
-            let mut holder = taken.holder;
-            let assigned = holder::assign(
-                &mut holder.link,
-                working_directory,
-                taken.directory_change.as_deref(),
-            )
-            .await;
+        while let Some(mut holder) = self.pool.take(working_directory, &self.home) {
+            let assigned = holder::assign(&mut holder.link, working_directory).await;
             match assigned {
                 Ok(()) => return Some(holder),
                 Err(error) => {
@@ -64,6 +59,7 @@ impl Sessions {
     /// of that daemon. A pooled holder ends by itself when the pipe of its
     /// daemon closes, thus a holder that still runs ends a moment later.
     pub(super) fn remove_pooled_holders_of_earlier_daemon(&self) -> io::Result<()> {
+        remove_pool_directory(&self.runtime_directory)?;
         for pooled in scan_pooled(&self.runtime_directory)? {
             let HolderState::Stale(reason) = pooled.state else {
                 debug!(session = %pooled.session_id, "a pooled holder of an earlier daemon ends");
@@ -110,15 +106,29 @@ impl Sessions {
             .ok_or_else(|| SessionError::Failed("the holder pool is off".to_owned()))?;
         let session_id = self.unused_session_id().map_err(start_failure)?;
         let command = [shell.to_owned()];
+        let shell_start = self
+            .pool
+            .start_file_shell()
+            .map(|shell| ShellStart::prepare(shell, &self.runtime_directory, &session_id))
+            .transpose()
+            .map_err(start_failure)?;
         let start = HolderStart {
             session_id: &session_id,
             command: &command,
             working_directory: &self.home,
             size: None,
             pooled: true,
+            shell_start: shell_start.as_ref(),
         };
-        let pipe = holder::launch(&self.runtime_directory, self.store.state_directory(), start)
-            .await
+        let launched =
+            holder::launch(&self.runtime_directory, self.store.state_directory(), start).await;
+        if launched.is_err()
+            && let Some(shell_start) = &shell_start
+        {
+            // A holder that did not start does not remove its named pipe.
+            let _ = fs::remove_file(&shell_start.directory_fifo);
+        }
+        let pipe = launched
             .map_err(start_failure)?
             .ok_or_else(|| SessionError::Failed("the pooled holder has no pipe".to_owned()))?;
         let socket =

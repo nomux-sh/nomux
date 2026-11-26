@@ -34,6 +34,7 @@ mod arguments;
 mod child;
 mod child_exit_signal;
 mod control;
+mod directory_fifo;
 mod discovery_directory;
 mod event_loop;
 mod foreground_program;

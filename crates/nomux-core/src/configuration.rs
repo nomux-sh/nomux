@@ -2,8 +2,8 @@
 //!
 //! This module reads only the parts of the file that the core uses now: the
 //! hosts in `[hosts.<name>]`, `default_policy` in `[restore]`,
-//! `ended_retention` in `[sessions]`, and `size` and `idle_time` in
-//! `[pool]`. It writes only the hosts, and it keeps
+//! `ended_retention` in `[sessions]`, and `size`, `idle_time` and
+//! `shell_start_files` in `[pool]`. It writes only the hosts, and it keeps
 //! each other part of the file, also the comments, when it writes the file.
 
 mod duration_text;
@@ -34,6 +34,7 @@ const ENDED_RETENTION: &str = "ended_retention";
 const POOL: &str = "pool";
 const POOL_SIZE: &str = "size";
 const POOL_IDLE_TIME: &str = "idle_time";
+const POOL_SHELL_START_FILES: &str = "shell_start_files";
 const OWNER_ONLY_DIRECTORY: u32 = 0o700;
 const OWNER_READ_WRITE: u32 = 0o600;
 
@@ -75,6 +76,7 @@ impl ConfigurationFile {
         file.ended_session_retention()?;
         file.pool_size()?;
         file.pool_idle_time()?;
+        file.pool_shell_start_files()?;
         Ok(file)
     }
 
@@ -172,6 +174,21 @@ impl ConfigurationFile {
             duration_text::parse(text).ok_or_else(|| {
                 "must be a number with the unit s, m, h or d, for example \"10m\"".to_owned()
             })
+        })
+    }
+
+    /// If a pooled shell starts with a start file of nomux, which changes to
+    /// the directory of the session before the first prompt:
+    /// `shell_start_files` in `[pool]`. Returns `None` if the file does not
+    /// have the key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is not a boolean.
+    pub fn pool_shell_start_files(&self) -> Result<Option<bool>, ConfigurationError> {
+        self.value(POOL, POOL_SHELL_START_FILES, |item| {
+            item.as_bool()
+                .ok_or_else(|| "must be true or false".to_owned())
         })
     }
 
