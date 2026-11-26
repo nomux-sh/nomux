@@ -40,7 +40,18 @@ async fn converse(mut stream: EnvelopeStream, context: &Context) -> io::Result<(
                 // The request is complete. The attach is not a request: it
                 // ends when the daemon closes the connections.
                 drop(in_flight);
+                let session_id = attachment.session_id().clone();
                 attachment.run(stream).await;
+                // A result that came while the client was attached was seen.
+                context.status.mark_seen(&session_id);
+                return Ok(());
+            }
+            Outcome::Subscribe(subscription) => {
+                let accepted = response::Result::EventsSubscribe(subscription.response());
+                respond(&mut stream, request.id, accepted).await?;
+                // Like an attach, a subscription is not a request.
+                drop(in_flight);
+                subscription.run(stream).await;
                 return Ok(());
             }
         }

@@ -30,6 +30,7 @@ use crate::session_registry::{SessionRecord, SessionRegistry, SessionState};
 use crate::session_store::SessionStore;
 use crate::settings::Settings;
 use crate::shutdown::Shutdown;
+use crate::status::{self, StatusRegistry};
 use crate::stopped_sessions::StoppedSessions;
 
 /// The commands of the attached clients and of the request handlers that
@@ -55,6 +56,7 @@ pub(crate) struct Sessions {
     stopped: Arc<StoppedSessions>,
     default_restore_policy: RestorePolicy,
     shutdown: Shutdown,
+    status: Arc<StatusRegistry>,
     /// One restore at a time: two clients that open the same dormant
     /// session start one holder.
     restoring: Mutex<()>,
@@ -70,6 +72,7 @@ impl Sessions {
         runtime_directory: PathBuf,
         settings: Settings,
         shutdown: Shutdown,
+        status: Arc<StatusRegistry>,
     ) -> io::Result<Self> {
         let registry: Arc<SessionRegistry> = Arc::default();
         let store = Arc::new(SessionStore::locate()?);
@@ -85,6 +88,7 @@ impl Sessions {
             stopped,
             default_restore_policy: settings.default_restore_policy,
             shutdown,
+            status,
             restoring: Mutex::new(()),
         })
     }
@@ -161,6 +165,7 @@ impl Sessions {
             return handle.kill().await;
         }
         self.stopped.forget(&record.id);
+        self.status.remove(&record.id);
         Ok(())
     }
 
@@ -265,7 +270,8 @@ impl Sessions {
     }
 
     /// Puts a session into the list and starts the task that owns the
-    /// connection to its holder. Without a link, the task connects itself.
+    /// connection to its holder and its status task. Without a link, the
+    /// task connects itself.
     fn supervise(&self, session_id: SessionId, link: Option<HolderLink>) -> SessionRecord {
         let state = match &link {
             Some(link) => SessionState::Running {
@@ -276,6 +282,13 @@ impl Sessions {
         let (commands, command_receiver) = mpsc::channel(COMMAND_QUEUE);
         let (ended_sender, ended) = watch::channel(None);
         let output = SharedOutputFeed::new(self.holder_socket(&session_id), session_id.clone());
+        tokio::spawn(status::watch(
+            session_id.clone(),
+            self.holder_socket(&session_id),
+            ended.clone(),
+            Arc::clone(&self.status),
+            Arc::clone(&self.registry),
+        ));
         let handle = SessionHandle::new(session_id.clone(), commands, ended, output);
         let record = SessionRecord {
             id: session_id.clone(),

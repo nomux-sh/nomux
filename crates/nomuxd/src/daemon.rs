@@ -9,6 +9,7 @@ use nomux_transport::{LocalListener, SOCKET_FILE};
 use tracing::info;
 
 use crate::arguments::RunningDaemon;
+use crate::events::EventLog;
 use crate::extensions;
 use crate::handlers::Context;
 use crate::in_flight_requests::InFlightRequests;
@@ -18,6 +19,7 @@ use crate::runtime_directory;
 use crate::sessions::Sessions;
 use crate::settings::Settings;
 use crate::shutdown::Shutdown;
+use crate::status::StatusRegistry;
 
 /// Runs the daemon until a stop is requested.
 pub(crate) async fn run(running_daemon: RunningDaemon) -> io::Result<()> {
@@ -32,10 +34,13 @@ pub(crate) async fn run(running_daemon: RunningDaemon) -> io::Result<()> {
 
     let shutdown = Shutdown::new();
     shutdown.trigger_on_signals()?;
+    let events = Arc::new(EventLog::default());
+    let status = Arc::new(StatusRegistry::new(Arc::clone(&events)));
     let sessions = Arc::new(Sessions::new(
         runtime_directory,
         Settings::load(),
         shutdown.clone(),
+        Arc::clone(&status),
     )?);
     // A client that connects now waits in the queue of the socket. It gets
     // its answer after the daemon has the sessions of the earlier daemon
@@ -46,6 +51,8 @@ pub(crate) async fn run(running_daemon: RunningDaemon) -> io::Result<()> {
 
     let context = Arc::new(Context {
         sessions,
+        status,
+        events,
         extensions,
         shutdown,
         in_flight_requests: InFlightRequests::default(),

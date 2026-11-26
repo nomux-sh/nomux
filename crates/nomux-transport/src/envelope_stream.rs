@@ -130,7 +130,10 @@ mod tests {
 
     fn event(seq: u64) -> Envelope {
         Envelope {
-            kind: Some(envelope::Kind::Event(Event { seq })),
+            kind: Some(envelope::Kind::Event(Event {
+                seq,
+                ..Event::default()
+            })),
         }
     }
 

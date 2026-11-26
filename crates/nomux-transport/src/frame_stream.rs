@@ -249,7 +249,10 @@ mod tests {
         let (read, write) = near.into_split();
         let mut envelopes = EnvelopeStream::new(read, write);
         let event = Envelope {
-            kind: Some(envelope::Kind::Event(Event { seq: 1 })),
+            kind: Some(envelope::Kind::Event(Event {
+                seq: 1,
+                ..Event::default()
+            })),
         };
         let mut bytes = event.encode_length_delimited_to_vec();
         bytes.extend(frame(FrameKind::Input.as_u8(), 0, b"key"));

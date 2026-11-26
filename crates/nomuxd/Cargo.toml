@@ -16,6 +16,7 @@ nomux-core.workspace = true
 nomux-ext-host.workspace = true
 nomux-holder-protocol.workspace = true
 nomux-proto.workspace = true
+nomux-status.workspace = true
 nomux-transport.workspace = true
 prost.workspace = true
 rustix = { workspace = true, features = ["process"] }
