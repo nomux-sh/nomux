@@ -79,6 +79,15 @@ unimplemented = "deny"
 # `clippy.toml` permits `unwrap` in tests.
 unwrap_used = "warn"
 
+# Development and test builds keep line numbers for a backtrace and no other
+# debug information. The dependencies have none. This makes the target
+# directory and the CI cache much smaller, and the builds faster.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 # Release profile from the performance architecture: small and fast binaries.
 # `panic = "abort"` removes the unwind tables. A panic stops the process.
 [profile.release]
