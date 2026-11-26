@@ -179,6 +179,7 @@ The state is a `nomux_term::Terminal` of the size of the terminal window. [`nomu
 - The holder has no timer for this comparison. A program that started a prompt writes output after it wrote the size, and the holder compares when it reads that output. An idle holder does not wake.
 - The comparison has these limits. The holder does not correct a size that a program writes after the 16 reads, or a size after which the program writes no output. A program that sets a size of its own after each change keeps it after 16 corrections at most. During the 16 reads, a size that a program sets on purpose (`stty rows`) is also set back.
 - The terminal gives the holder each OSC sequence that the VT library does not handle. "Program reports" shows what the holder keeps from them.
+- The holder answers the queries of the program from the screen state: "Answers to queries" below.
 - After the command ended, the holder keeps the screen state. The daemon can ask for the last screen.
 
 ### Redraw sequence and its position
@@ -202,6 +203,16 @@ Thus the daemon sends the redraw sequence to a client, and then the bytes of the
 One case is not exact. A control character (for example a line feed) in a CSI sequence or in an escape sequence has its effect immediately. A client that attaches between that control character and the end of the sequence gets the control character a second time. Programs do not write such sequences.
 
 If an incomplete sequence is longer than the ring buffer, the position is older than the oldest byte of the ring buffer, and the reader of the daemon reports an overrun. The daemon then waits for output and asks again.
+
+### Answers to queries
+
+A program asks its terminal with a query, for example the device attributes (`CSI c`) or the cursor position (`CSI 6 n`), and reads the answer from its input. The holder owns the terminal state of the session and always runs. Thus the holder answers each query, from the state of the session, with no client and also while clients are attached:
+
+- After each chunk of output, the holder takes the answers of `Terminal::take_replies` and writes them on the input side of the PTY, in the order of the queries. The table "Answers" in the [README of `nomux-term`](../crates/nomux-term/README.md#answers) has the answer to each query.
+- The answers go through the input queue, as the bytes of an `Input` request do. While the input queue has 65536 bytes or more, the holder does not add answers, as for the OSC 7501 query. `nomux-term` keeps 4096 bytes of answers at most between two chunks.
+- A client never gives the answers of its own terminal to the program. The output that the CLI writes to the terminal of the user in an attach goes through `QueryFilter` of `nomux-term`: the filter removes each query that the holder answers. Thus the terminal of the user does not see the query and does not answer it, and the program gets one answer. A query that the holder does not answer goes to the terminal of the user, which can answer it. The desktop client gives the output to a `Terminal` of its own and does not send its answers.
+- The colors (OSC 4, 10, 11 and 12) that the program did not set come from the default `Palette` of `nomux-term`: a dark palette. A program that reads the background color to choose a light or a dark scheme gets dark. [#118](https://github.com/nomux-sh/nomux/issues/118) adds the palette of the client that attached last.
+- The holder has no pixel size: the answer to `CSI 14 t` is `CSI 4 ; 0 ; 0 t`.
 
 ## Program reports
 
@@ -887,6 +898,10 @@ Measured on Linux x86-64 with the release profile. The targets are in [bench/REA
 | CPU time and context switches in 10 s, idle | 0 and 0 | 0 |
 | Size of `nomux-holder` (musl, static), with the pooled holder | 737968 bytes: 4128 bytes more than before | < 1 MB |
 | Resident memory, idle pooled holder with `/bin/sh` (musl, static) | 0.8 MB to 0.9 MB | < 3 MB |
+| Size of `nomux-holder` (musl, static), with the answers to queries | 762544 bytes: 4096 bytes more than before | < 1 MB |
+| Resident memory, idle holder with `/bin/sh`, with the answers to queries (musl, static) | 0.9 MB | < 3 MB |
+| Resident memory, a program that sends queries in a loop and does not read its input (musl, static) | 1.5 MB, the same after 30 s | < 3 MB |
+| Time from the queries `CSI c` and `CSI 6 n` to the two answers, no client attached | less than 1 ms | |
 | Start of the holder to its `ready` file, with `/bin/sh`: median of 50 | 1.07 ms | |
 | Output of `cat` of a 128 MiB file through the holder, plain text | 82 MiB/s | |
 | Output of `cat` of a 128 MiB file through the holder, colored words | 69 MiB/s | |

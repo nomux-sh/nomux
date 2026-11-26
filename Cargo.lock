@@ -1130,6 +1130,7 @@ dependencies = [
  "nomux-core",
  "nomux-proto",
  "nomux-status",
+ "nomux-term",
  "nomux-transport",
  "serde",
  "serde_json",

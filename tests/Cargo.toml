@@ -34,6 +34,13 @@ name = "nomux-test-status-program"
 path = "support/status_program.rs"
 test = false
 
+# A test starts this program as the command of a session: it sends
+# queries to its terminal and writes the answers to a file.
+[[bin]]
+name = "nomux-test-query-program"
+path = "support/query_program.rs"
+test = false
+
 # A test installs this program as the adapter extension of the made-up
 # tool `testtool`.
 [[bin]]
@@ -104,6 +111,10 @@ path = "journal.rs"
 [[test]]
 name = "process_cleanup"
 path = "process_cleanup.rs"
+
+[[test]]
+name = "queries"
+path = "queries.rs"
 
 [[test]]
 name = "remote_host"

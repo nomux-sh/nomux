@@ -14,6 +14,7 @@ publish.workspace = true
 nomux-core.workspace = true
 nomux-status.workspace = true
 nomux-proto.workspace = true
+nomux-term.workspace = true
 nomux-transport.workspace = true
 serde.workspace = true
 serde_json.workspace = true

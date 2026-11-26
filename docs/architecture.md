@@ -107,7 +107,7 @@ Rules:
 | Crate | Type | Responsibility | State |
 |---|---|---|---|
 | `nomux-core` | library | Shared types, errors, configuration, glossary types | in use: the version output of the binaries, the lookup of a binary of the same installation, the global configuration file: the hosts, the default restore policy and the retention time of an ended session, the data directory of nomux, the rules of a hook event, and the workspace tree of the Groups and the Projects with its rules |
-| `nomux-term` | library | Thin abstraction over the VT library (`alacritty_terminal`), which lets the project replace the library | in use by the holder: the screen state, the redraw sequence and its position, and the OSC sequences |
+| `nomux-term` | library | Thin abstraction over the VT library (`alacritty_terminal`), which lets the project replace the library | in use by the holder: the screen state, the redraw sequence and its position, the OSC sequences and the answers to the queries of a program; in use by the client library: the filter that removes those queries from the output of an attach |
 | `nomux-holder-protocol` | library | Contract between a holder and the daemon: control messages, ring buffer layout, redraw memory, discovery files | in use by the holder |
 | `nomux-holder` | binary | The holder. No async runtime | owns the PTY, the ring buffer, the screen state, the control socket and the discovery files |
 | `nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows | in use: the Unix socket of the local host, the SSH client with its channels to the socket of a remote daemon, the framing of the control channel and the framing of the terminal channels of an attach |

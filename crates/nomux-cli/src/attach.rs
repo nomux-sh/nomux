@@ -15,8 +15,8 @@ use std::task::Poll;
 use std::time::Duration;
 
 use nomux_client::{
-    AttachEnd, AttachOptions, Client, ClientError, Host, Session, TerminalEvent, TerminalInput,
-    TerminalOutput,
+    AttachEnd, AttachOptions, Client, ClientError, Host, QueryFilter, Session, TerminalEvent,
+    TerminalInput, TerminalOutput,
 };
 use tokio::io::{AsyncWriteExt, Stdout};
 use tokio::signal::unix::{Signal, SignalKind, signal};
@@ -84,12 +84,18 @@ pub(crate) async fn run(
 /// Writes the screen and the output of the session to the terminal until
 /// the attach ends. While the attach has no connection, the title of the
 /// terminal says so: the screen of the session is not changed.
+///
+/// The holder answers the queries of the program. The output goes to the
+/// terminal without them: else the terminal answers them too, and its
+/// answers go to the program as keys.
 async fn show_output(
     output: &mut TerminalOutput,
     reconnected: &Notify,
 ) -> Result<AttachEnd, ClientError> {
     let mut terminal = tokio::io::stdout();
     let mut title_is_changed = false;
+    let mut queries = QueryFilter::default();
+    let mut without_queries = Vec::new();
     let end = loop {
         let event = match output.next().await {
             Ok(event) => event,
@@ -98,11 +104,18 @@ async fn show_output(
         match event {
             TerminalEvent::Snapshot { bytes, starts } => {
                 if starts {
+                    // The output before the snapshot does not continue. A
+                    // redraw sequence has no query: it needs no filter.
+                    queries = QueryFilter::default();
                     write(&mut terminal, local_terminal::BEFORE_SNAPSHOT).await?;
                 }
                 write(&mut terminal, bytes).await?;
             }
-            TerminalEvent::Output(bytes) => write(&mut terminal, bytes).await?,
+            TerminalEvent::Output(bytes) => {
+                without_queries.clear();
+                queries.filter(bytes, &mut without_queries);
+                write(&mut terminal, &without_queries).await?;
+            }
             // The terminal of the user keeps the lines that it has. The
             // snapshot that follows draws the screen.
             TerminalEvent::HistoryGap => {}

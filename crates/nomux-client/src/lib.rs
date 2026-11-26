@@ -120,6 +120,7 @@ pub use host::Host;
 pub use host_info::{HostInfo, MemoryLimitSupport};
 pub use nomux_core::configuration::RestorePolicy;
 pub use nomux_core::workspace_tree::{Node, NodeKind, TreeError, WorkspaceTree};
+pub use nomux_term::QueryFilter;
 pub use scrollback::{CaptureRange, CapturedOutput};
 pub use session::{ExitStatus, NewSession, Session, SessionExit, SessionState};
 pub use session_memory::{MemoryMeasure, SessionMemory};

@@ -274,12 +274,24 @@ impl Session {
                 }
                 self.resize_verification
                     .output_read(terminal.as_fd(), self.size);
-                // The answer to a program status query.
+                self.answer_queries();
                 self.flush_input();
                 Ok(true)
             }
             Err(Errno::AGAIN | Errno::INTR) => Ok(false),
             Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Gives the program the answers of the screen state to the queries in
+    /// its output. The holder answers each query, also while clients are
+    /// attached: a client does not give the queries to its terminal.
+    fn answer_queries(&mut self) {
+        let replies = self.screen.take_replies();
+        // A program that sends queries and does not read the answers must
+        // not make the input queue grow without a limit.
+        if !replies.is_empty() && !self.input.is_backlogged() {
+            self.input.push(&replies);
         }
     }
 
