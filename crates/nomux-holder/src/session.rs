@@ -23,6 +23,7 @@ use crate::input_queue::InputQueue;
 use crate::journal::Journal;
 use crate::program_reports::ProgramReportStore;
 use crate::pty;
+use crate::resize_verification::ResizeVerification;
 use crate::session_state_directory::SessionStateDirectory;
 
 /// The largest number of bytes that one read moves from the terminal to the
@@ -52,6 +53,7 @@ pub(crate) struct Session {
     state_directory: SessionStateDirectory,
     input: InputQueue,
     size: WindowSize,
+    resize_verification: ResizeVerification,
 }
 
 impl Session {
@@ -82,6 +84,7 @@ impl Session {
             state_directory,
             input: InputQueue::default(),
             size: arguments.size,
+            resize_verification: ResizeVerification::default(),
         })
     }
 
@@ -139,6 +142,8 @@ impl Session {
             }
             Ok(_) => {
                 self.journal.output_written(&mut self.screen, self.size);
+                self.resize_verification
+                    .output_read(terminal.as_fd(), self.size);
                 // The answer to a program status query.
                 self.flush_input();
                 Ok(true)
@@ -224,6 +229,7 @@ impl Session {
         pty::resize(terminal, size).map_err(|_| ErrorCode::Failed)?;
         self.screen.resize(screen_size);
         self.size = size;
+        self.resize_verification.window_resized();
         self.journal.window_resized();
         report_state_error(self.state_directory.record_window_size(size));
         Ok(())

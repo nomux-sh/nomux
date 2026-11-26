@@ -1,4 +1,5 @@
-//! Opens the pseudoterminal of the session.
+//! Opens the pseudoterminal of the session, and reads and sets its window
+//! size.
 
 use std::io;
 use std::os::fd::{AsFd, OwnedFd};
@@ -6,7 +7,7 @@ use std::os::fd::{AsFd, OwnedFd};
 use nomux_holder_protocol::wire::WindowSize;
 use rustix::fs::{Mode, OFlags, fcntl_getfl, fcntl_setfl};
 use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
-use rustix::termios::{Winsize, tcsetwinsize};
+use rustix::termios::{Winsize, tcgetwinsize, tcsetwinsize};
 
 /// The two sides of a new pseudoterminal. Both descriptors are
 /// close-on-exec.
@@ -42,6 +43,14 @@ pub(crate) fn resize(terminal: impl AsFd, size: WindowSize) -> io::Result<()> {
     };
     tcsetwinsize(terminal, size)?;
     Ok(())
+}
+
+pub(crate) fn size(terminal: impl AsFd) -> io::Result<WindowSize> {
+    let size = tcgetwinsize(terminal)?;
+    Ok(WindowSize {
+        rows: size.ws_row,
+        columns: size.ws_col,
+    })
 }
 
 #[cfg(target_os = "linux")]
