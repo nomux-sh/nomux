@@ -13,8 +13,8 @@ use std::os::unix::process::ExitStatusExt;
 use std::process::{Command, Stdio};
 
 use nomux_end_to_end::{
-    Impairment, RemoteHost, TerminalClient, binary, generate_key, process_runs, public_key,
-    wait_for,
+    Impairment, ProcessGuard, RemoteHost, TerminalClient, binary, generate_key, process_runs,
+    public_key, wait_for,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -265,13 +265,13 @@ fn a_daemon_without_a_common_protocol_version_is_replaced_and_the_session_contin
     let _ = remote.host.nomux_ok(&["daemon", "stop"]);
 
     // A daemon of a version that refuses the client takes the place.
-    let mut old_daemon = Command::new(env!("CARGO_BIN_EXE_nomux-test-incompatible-daemon"))
-        .env("HOME", remote.host.home())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut old_daemon = ProcessGuard::spawn(
+        Command::new(env!("CARGO_BIN_EXE_nomux-test-incompatible-daemon"))
+            .env("HOME", remote.host.home())
+            .stdout(Stdio::piped()),
+    );
     let mut ready = String::new();
-    BufReader::new(old_daemon.stdout.take().unwrap())
+    BufReader::new(old_daemon.process().stdout.take().unwrap())
         .read_line(&mut ready)
         .unwrap();
     assert_eq!(ready, "ready\n");
@@ -280,7 +280,7 @@ fn a_daemon_without_a_common_protocol_version_is_replaced_and_the_session_contin
 
     // The daemon of the client stopped the old daemon and found the
     // session, and the holder is the same process.
-    assert_eq!(old_daemon.wait().unwrap().signal(), Some(SIGTERM));
+    assert_eq!(old_daemon.process().wait().unwrap().signal(), Some(SIGTERM));
     assert_eq!(sessions["sessions"][0]["id"], id.as_str());
     assert_eq!(sessions["sessions"][0]["state"], "running");
     assert!(process_runs(holder));
@@ -349,13 +349,13 @@ fn the_keys_of_ssh_agent_authenticate_and_a_user_without_a_key_has_no_permission
     remote.add_as_vps();
     let key = remote.client.home().join(".ssh/id_ed25519");
     let socket = remote.client.home().join("agent.sock");
-    let mut agent = Command::new("ssh-agent")
-        .arg("-D")
-        .arg("-a")
-        .arg(&socket)
-        .stdout(Stdio::null())
-        .spawn()
-        .unwrap();
+    let _agent = ProcessGuard::spawn(
+        Command::new("ssh-agent")
+            .arg("-D")
+            .arg("-a")
+            .arg(&socket)
+            .stdout(Stdio::null()),
+    );
     wait_for("the agent listens", || socket.exists().then_some(()));
     let added = Command::new("ssh-add")
         .arg(&key)
@@ -376,8 +376,6 @@ fn the_keys_of_ssh_agent_authenticate_and_a_user_without_a_key_has_no_permission
 
     remote.client.set_variable("SSH_AUTH_SOCK", &socket);
     let with_agent = remote.nomux(&["--host", "vps", "ls"]);
-    agent.kill().unwrap();
-    agent.wait().unwrap();
     assert_eq!(with_agent.code, 0, "{with_agent:?}");
     assert_eq!(with_agent.stdout, "no sessions\n");
 }

@@ -55,6 +55,10 @@ name = "journal"
 path = "journal.rs"
 
 [[test]]
+name = "process_cleanup"
+path = "process_cleanup.rs"
+
+[[test]]
 name = "remote_host"
 path = "remote_host.rs"
 

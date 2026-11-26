@@ -153,11 +153,16 @@ fn a_daemon_that_replaces_the_daemon_that_runs_takes_its_sessions() {
         .unwrap();
     assert!(replaced.success());
 
-    wait_for("the first daemon ends", || {
-        (!process_runs(first_daemon)).then_some(())
+    // `daemon status` starts no daemon. A command that starts one, in the
+    // time in which no daemon listens, would give the daemon of this test a
+    // daemon to replace that the test does not know.
+    wait_for("the second daemon answers", || {
+        let status = sandbox.nomux(&["daemon", "status", "--json"]);
+        let answers = status.code == 0 && status.json()["daemon"]["pid"] != first_daemon;
+        answers.then_some(())
     });
+    assert!(!process_runs(first_daemon));
     assert_eq!(listed(&sandbox), [session_document(&id, pid)]);
-    assert_ne!(sandbox.daemon_pid(), first_daemon);
     assert_eq!(sandbox.holder_pid(&id), holder);
     assert!(process_runs(holder));
 }
