@@ -56,7 +56,6 @@ The library also handles the OSC sequences for the title, the palette colors, th
 | Kitty graphics | The library ignores the sequences. No picture is kept | ADR-0003 |
 | Sixel | The library ignores the sequences. No picture is kept | ADR-0003 |
 | Grapheme clusters | An emoji that a zero width joiner connects to a second emoji uses two cells for each emoji. The emoji variation selector does not make a character wide | G `wide_and_combining` |
-| Erase in display above the cursor | From the second row, ED 1 keeps the first row. The cause is in the library. A correction in `nomux-term` needs a second parser for the CSI parameters in the path of each byte, thus the gap stays until a release of the library corrects it | G `erase`, [#29](https://github.com/nomux-sh/nomux/issues/29) |
 | A terminal of 1 column | `Size::new` refuses fewer than 2 columns: the library cannot keep a wide character in 1 column. The holder refuses such a window | [`tests/size.rs`](tests/size.rs) |
 | The wrap after a backward tab | After a character in the last column, a backward tab (CBT) keeps the wrap of the library: a next character in the same call of `Terminal::feed` goes to the next row. `nomux-term` ends the wrap at the end of each call | G `tab_stops`, R |
 | Synchronized updates | `nomux-term` turns off DEC mode 2026: each byte changes the screen immediately | ADR-0003 |

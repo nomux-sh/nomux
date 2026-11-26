@@ -6,13 +6,14 @@ use std::time::Duration;
 use alacritty_terminal::Term;
 use alacritty_terminal::event::VoidListener;
 use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::index::Line;
 use alacritty_terminal::term::{Config, TermMode};
 use alacritty_terminal::vte::ansi::{Processor, Timeout};
 
 use crate::osc::Osc;
 use crate::redraw;
 use crate::screen::Screen;
-use crate::sequence_scanner::SequenceScanner;
+use crate::sequence_scanner::{Found, SequenceScanner};
 use crate::size::Size;
 
 /// The OSC codes that the VT library handles: titles, colors, hyperlinks,
@@ -52,12 +53,20 @@ impl Terminal {
     /// A sequence without a decimal code or with more than 4096 bytes is
     /// ignored.
     pub fn feed(&mut self, bytes: &[u8], mut unhandled_osc: impl FnMut(Osc<'_>)) {
-        self.scanner.scan(bytes, |osc| {
-            if !LIBRARY_OSC_CODES.contains(&osc.code) {
-                unhandled_osc(osc);
+        let mut parsed = 0;
+        self.scanner.scan(bytes, |found| match found {
+            Found::Osc(osc) => {
+                if !LIBRARY_OSC_CODES.contains(&osc.code) {
+                    unhandled_osc(osc);
+                }
+            }
+            Found::EraseAbove { end } => {
+                self.parser.advance(&mut self.term, &bytes[parsed..end]);
+                parsed = end;
+                erase_the_first_row_from_the_second_row(&mut self.term);
             }
         });
-        self.parser.advance(&mut self.term, bytes);
+        self.parser.advance(&mut self.term, &bytes[parsed..]);
         self.end_wrap_before_the_last_column();
     }
 
@@ -135,6 +144,15 @@ impl Terminal {
         redraw::write_hidden_screen(&self.screen(), output);
         self.term.swap_alt();
         *self.term.grid_mut() = alternate_screen;
+    }
+}
+
+/// Completes an erase in display above the cursor (ED 1) of the VT library.
+/// The library erases the rows above the cursor only if the cursor is below
+/// the second row: <https://github.com/alacritty/alacritty/issues/9096>.
+fn erase_the_first_row_from_the_second_row(term: &mut Term<VoidListener>) {
+    if term.grid().cursor.point.line == Line(1) {
+        term.grid_mut().reset_region(..Line(1));
     }
 }
 

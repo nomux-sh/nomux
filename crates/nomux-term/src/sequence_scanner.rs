@@ -4,9 +4,11 @@
 //! The VT library gives no access to the state of its parser, and it has no
 //! hook for the OSC codes that it does not know. Thus this module uses the
 //! rules of that parser for the start and the end of each sequence: the two
-//! always see the same sequences. The scanner gives two results:
+//! always see the same sequences. The scanner gives three results:
 //!
 //! - Each OSC sequence that ends.
+//! - The end of each erase in display above the cursor (ED 1), which the
+//!   terminal corrects after the library.
 //! - The length of the incomplete tail: the bytes at the end of the output
 //!   that are a sequence or a UTF-8 character that is not complete.
 
@@ -25,6 +27,21 @@ const MAX_OSC_BYTES: usize = 4096;
 /// The largest number of bytes of one UTF-8 character.
 const MAX_CHARACTER_BYTES: usize = 4;
 
+/// The scanner keeps this number of parameter bytes of a CSI sequence that
+/// the end of the output or a control character divides. Such an erase in
+/// display with more parameter bytes is not reported.
+const MAX_CSI_PARAMETER_BYTES: usize = 8;
+
+/// A result of [`SequenceScanner::scan`].
+#[derive(Debug)]
+pub(crate) enum Found<'a> {
+    /// An OSC sequence that ended.
+    Osc(Osc<'a>),
+    /// An erase in display above the cursor (`CSI 1 J`) ended at this
+    /// offset of the bytes of the call.
+    EraseAbove { end: usize },
+}
+
 /// Finds the sequences in a byte stream. A sequence can start in one call of
 /// [`SequenceScanner::scan`] and end in a later call.
 #[derive(Debug)]
@@ -38,6 +55,13 @@ pub(crate) struct SequenceScanner {
     partial_character_length: usize,
     osc: Vec<u8>,
     osc_too_long: bool,
+    /// The first parameter bytes of the CSI sequence in progress, if the
+    /// sequence was divided.
+    csi_parameters: [u8; MAX_CSI_PARAMETER_BYTES],
+    /// The number of parameter bytes of the CSI sequence in progress, also
+    /// the bytes that `csi_parameters` does not keep.
+    csi_parameters_length: usize,
+    erase_above_ended: bool,
 }
 
 impl SequenceScanner {
@@ -49,6 +73,9 @@ impl SequenceScanner {
             partial_character_length: 0,
             osc: Vec::with_capacity(MAX_OSC_BYTES),
             osc_too_long: false,
+            csi_parameters: [0; MAX_CSI_PARAMETER_BYTES],
+            csi_parameters_length: 0,
+            erase_above_ended: false,
         }
     }
 
@@ -62,8 +89,9 @@ impl SequenceScanner {
     }
 
     /// Takes the next bytes of the output. Calls `found` for each OSC
-    /// sequence that ends in `bytes`.
-    pub(crate) fn scan(&mut self, bytes: &[u8], mut found: impl FnMut(Osc<'_>)) {
+    /// sequence and each erase in display above the cursor that ends in
+    /// `bytes`.
+    pub(crate) fn scan(&mut self, bytes: &[u8], mut found: impl FnMut(Found<'_>)) {
         let mut rest = bytes;
         if self.partial_character_length != 0 {
             rest = self.continue_partial_character(rest);
@@ -75,6 +103,12 @@ impl SequenceScanner {
                 State::Csi => self.csi(rest),
                 _ => self.sequence(rest),
             };
+            if self.erase_above_ended {
+                self.erase_above_ended = false;
+                found(Found::EraseAbove {
+                    end: bytes.len() - rest.len(),
+                });
+            }
         }
     }
 
@@ -123,10 +157,36 @@ impl SequenceScanner {
         let parameters = bytes.iter().take_while(is_parameter).count();
         self.sequence_length += parameters;
         let Some(byte) = bytes.get(parameters) else {
+            self.keep_csi_parameters(&bytes[..parameters]);
             return &[];
         };
+        if !(0x40..=0x7e).contains(byte) {
+            self.keep_csi_parameters(&bytes[..parameters]);
+        } else if *byte == b'J' {
+            self.erase_above_ended = self.ends_erase_above(&bytes[..parameters]);
+        }
         self.take(*byte);
         &bytes[parameters + 1..]
+    }
+
+    /// Keeps the parameter bytes of a CSI sequence that continues after the
+    /// end of the output or after a control character.
+    fn keep_csi_parameters(&mut self, parameters: &[u8]) {
+        let kept = self.csi_parameters_length.min(MAX_CSI_PARAMETER_BYTES);
+        let added = parameters.len().min(MAX_CSI_PARAMETER_BYTES - kept);
+        self.csi_parameters[kept..kept + added].copy_from_slice(&parameters[..added]);
+        self.csi_parameters_length += parameters.len();
+    }
+
+    /// `true` if the `J` sequence with the `last` parameter bytes is an
+    /// erase in display above the cursor.
+    fn ends_erase_above(&mut self, last: &[u8]) -> bool {
+        if self.csi_parameters_length == 0 {
+            return is_erase_above(last);
+        }
+        self.keep_csi_parameters(last);
+        self.csi_parameters_length <= MAX_CSI_PARAMETER_BYTES
+            && is_erase_above(&self.csi_parameters[..self.csi_parameters_length])
     }
 
     /// The bytes of a sequence that is not a CSI sequence or an OSC
@@ -143,7 +203,7 @@ impl SequenceScanner {
     }
 
     /// The data of an OSC sequence.
-    fn osc_data<'b>(&mut self, bytes: &'b [u8], found: &mut impl FnMut(Osc<'_>)) -> &'b [u8] {
+    fn osc_data<'b>(&mut self, bytes: &'b [u8], found: &mut impl FnMut(Found<'_>)) -> &'b [u8] {
         for (index, byte) in bytes.iter().enumerate() {
             match *byte {
                 BELL | CANCEL | SUBSTITUTE | ESCAPE => {
@@ -178,6 +238,9 @@ impl SequenceScanner {
             self.osc.clear();
             self.osc_too_long = false;
         }
+        if self.state == State::Csi && before != State::Csi {
+            self.csi_parameters_length = 0;
+        }
     }
 
     fn push_osc(&mut self, byte: u8) {
@@ -188,14 +251,29 @@ impl SequenceScanner {
         }
     }
 
-    fn finish_osc(&self, found: &mut impl FnMut(Osc<'_>)) {
+    fn finish_osc(&self, found: &mut impl FnMut(Found<'_>)) {
         if self.osc_too_long {
             return;
         }
         if let Some(osc) = Osc::parse(&self.osc) {
-            found(osc);
+            found(Found::Osc(osc));
         }
     }
+}
+
+/// `true` if the library reads the parameters of a `J` sequence as "above
+/// the cursor": the first parameter is 1, and the sequence has no private
+/// marker and no intermediate byte.
+fn is_erase_above(parameters: &[u8]) -> bool {
+    if !parameters
+        .iter()
+        .all(|byte| matches!(byte, b'0'..=b'9' | b';' | b':'))
+    {
+        return false;
+    }
+    let mut groups = parameters.split(|byte| matches!(byte, b';' | b':'));
+    let first = groups.next().unwrap_or_default();
+    first.iter().skip_while(|digit| **digit == b'0').eq(b"1")
 }
 
 /// The bytes at the end of `text` that are the start of one UTF-8 character
