@@ -245,7 +245,7 @@ A request needs the daemon. The client opens a channel to the socket and does th
 | No daemon listens | Runs `~/.nomux/bin/<label>/nomuxd --detach` and connects when the daemon answers (5 seconds at most) |
 | A daemon answers, and the two have no common protocol version | Runs `~/.nomux/bin/<label>/nomuxd --detach --replace` (20 seconds at most) |
 
-`nomuxd --replace` sends `SIGTERM` to the daemon that has the lock of the runtime directory and waits for the lock. The first daemon answers the requests that it began, removes its socket and ends. The new daemon then finds the holders and takes their leases ([daemon.md](daemon.md)). **No session ends**: a holder is never replaced.
+`nomuxd --replace` sends `SIGTERM` to the daemon that has the lock of the runtime directory and waits for the lock. The first daemon answers the requests that it began, removes its socket and ends. A connection that the first daemon did not answer closes, and the client connects again until the new daemon answers. The new daemon then finds the holders and takes their leases ([daemon.md](daemon.md)). **No session ends**: a holder is never replaced.
 The clients that are attached through the first daemon lose their connection. Their sessions continue.
 
 `daemon status` and `daemon stop` with `--host` start no daemon and replace none, as on the local host.

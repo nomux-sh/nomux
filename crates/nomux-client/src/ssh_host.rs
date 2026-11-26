@@ -20,6 +20,16 @@ const START_TIMEOUT: Duration = Duration::from_secs(5);
 const REPLACE_TIMEOUT: Duration = Duration::from_secs(20);
 const CONNECT_INTERVAL: Duration = Duration::from_millis(50);
 
+/// The start of a daemon that a client waits for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DaemonStart {
+    /// No daemon ran.
+    New,
+    /// A daemon without a common protocol version ran. It stops during
+    /// the wait.
+    Replacement,
+}
+
 /// A remote host that has the nomux binaries.
 #[derive(Debug)]
 pub(crate) struct SshHost {
@@ -65,11 +75,11 @@ impl SshHost {
             Ok(Some(client)) => Ok(client),
             Ok(None) => {
                 self.start_daemon("--detach").await?;
-                self.wait_for_daemon(kind, START_TIMEOUT).await
+                self.wait_for_daemon(kind, DaemonStart::New).await
             }
             Err(ClientError::VersionIncompatible(_)) => {
                 self.start_daemon("--detach --replace").await?;
-                self.wait_for_daemon(kind, REPLACE_TIMEOUT).await
+                self.wait_for_daemon(kind, DaemonStart::Replacement).await
             }
             Err(error) => Err(error),
         }
@@ -117,18 +127,26 @@ impl SshHost {
     }
 
     /// Connects until the daemon of this client answers. During a
-    /// replacement, the earlier daemon can still answer.
+    /// replacement, the earlier daemon can still answer, or it closes the
+    /// connection when it stops.
     async fn wait_for_daemon(
         &self,
         kind: ClientKind,
-        limit: Duration,
+        start: DaemonStart,
     ) -> Result<Client, ClientError> {
+        let limit = match start {
+            DaemonStart::New => START_TIMEOUT,
+            DaemonStart::Replacement => REPLACE_TIMEOUT,
+        };
         let deadline = Instant::now() + limit;
         loop {
             let not_ready = match self.running_client(kind).await {
                 Ok(Some(client)) => return Ok(client),
                 Ok(None) => None,
                 Err(error @ ClientError::VersionIncompatible(_)) => Some(error),
+                Err(error @ ClientError::Connection(_)) if start == DaemonStart::Replacement => {
+                    Some(error)
+                }
                 Err(error) => return Err(error),
             };
             if Instant::now() < deadline {
