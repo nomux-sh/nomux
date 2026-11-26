@@ -39,8 +39,7 @@ impl<'a> WorkspaceStatus<'a> {
             let project = sessions
                 .iter()
                 .find(|session| session.id == run.session_id)
-                .and_then(|session| session.working_directory.as_deref())
-                .and_then(|directory| tree.project_of(directory));
+                .and_then(|session| session.project(tree));
             let Some(project) = project else {
                 outside.push(run);
                 continue;
@@ -101,6 +100,7 @@ mod tests {
             restore_policy: None,
             exit: None,
             damage: None,
+            resolved_working_directory: None,
         }
     }
 

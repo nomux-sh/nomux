@@ -181,3 +181,36 @@ fn status_tree_shows_the_sessions_below_their_groups_and_projects() {
     assert!(lines[3].contains("  web"), "{text}");
     assert!(lines[4].contains(&format!("    {inside}")), "{text}");
 }
+
+#[test]
+fn a_session_that_starts_through_a_symbolic_link_belongs_to_the_project() {
+    let sandbox = Sandbox::new();
+    make_directories(&sandbox, &["web/frontend"]);
+    let link = sandbox.home().join("web-link");
+    std::os::unix::fs::symlink(sandbox.home().join("src/web"), &link).expect("a link is made");
+    let _ = sandbox.nomux_ok(&["project", "add", "src/web"]);
+    let through_link = link.join("frontend");
+    let id = sandbox
+        .nomux_ok(&[
+            "new",
+            "--quiet",
+            "--cwd",
+            through_link.to_str().unwrap(),
+            "--",
+            "sleep",
+            "300",
+        ])
+        .stdout
+        .trim()
+        .to_owned();
+
+    let session = sandbox
+        .sessions()
+        .into_iter()
+        .find(|session| session["id"] == id)
+        .expect("the session is listed");
+
+    // The session keeps the path that the client gave.
+    assert_eq!(session["cwd"], through_link.to_str().unwrap());
+    assert_eq!(session["project"]["path"], "web");
+}

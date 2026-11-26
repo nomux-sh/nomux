@@ -5,6 +5,7 @@
 mod adoption;
 mod memory;
 mod pool;
+mod resolved_directories;
 mod restore;
 
 use std::env;
@@ -35,6 +36,8 @@ use crate::shutdown::Shutdown;
 use crate::status::{self, StatusRegistry};
 use crate::stopped_sessions::StoppedSessions;
 
+use self::resolved_directories::ResolvedDirectories;
+
 /// The commands of the attached clients and of the request handlers that
 /// wait for the task of one session. A sender waits when the queue is full,
 /// thus input that the holder does not take uses no more memory.
@@ -48,6 +51,9 @@ pub(crate) struct ListedSession {
     /// has no metadata that the daemon can read.
     pub(crate) metadata: Option<SessionMetadata>,
     pub(crate) restore_policy: RestorePolicy,
+    /// The working directory of the metadata with its symbolic links
+    /// resolved. `None` if it cannot be resolved.
+    pub(crate) resolved_working_directory: Option<PathBuf>,
 }
 
 /// The sessions of the host.
@@ -68,6 +74,7 @@ pub(crate) struct Sessions {
     /// without one, and of the shells of the pool.
     home: PathBuf,
     pool: HolderPool,
+    resolved_directories: ResolvedDirectories,
 }
 
 impl Sessions {
@@ -108,6 +115,7 @@ impl Sessions {
             pool: HolderPool::new(shell.clone(), settings.pool_size, settings.pool_idle_time),
             shell,
             home,
+            resolved_directories: ResolvedDirectories::default(),
         })
     }
 
@@ -163,8 +171,10 @@ impl Sessions {
     /// The sessions in the sequence of their identifiers. The ended
     /// sessions are in the list only with `include_ended`.
     pub(crate) fn list(&self, include_ended: bool) -> Vec<ListedSession> {
-        self.registry
-            .records()
+        let records = self.registry.records();
+        self.resolved_directories
+            .keep_only(&records.iter().map(|record| &record.id).collect::<Vec<_>>());
+        records
             .into_iter()
             .filter(|record| include_ended || !matches!(record.state, SessionState::Ended(_)))
             .map(|record| self.describe(record))
@@ -263,9 +273,15 @@ impl Sessions {
     }
 
     fn describe(&self, record: SessionRecord) -> ListedSession {
+        let metadata = self.store.metadata(&record.id).ok();
+        let resolved_working_directory = metadata.as_ref().and_then(|metadata| {
+            self.resolved_directories
+                .of(&record.id, &metadata.working_directory)
+        });
         ListedSession {
-            metadata: self.store.metadata(&record.id).ok(),
+            metadata,
             restore_policy: self.restore_policy(&record.id),
+            resolved_working_directory,
             record,
         }
     }

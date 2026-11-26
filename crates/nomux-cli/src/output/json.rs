@@ -419,6 +419,7 @@ mod tests {
             restore_policy: None,
             exit: None,
             damage: None,
+            resolved_working_directory: None,
         }
     }
 
