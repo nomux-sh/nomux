@@ -4,6 +4,7 @@
 
 mod adoption;
 mod memory;
+mod pool;
 mod restore;
 
 use std::env;
@@ -15,13 +16,14 @@ use std::sync::Arc;
 
 use nomux_core::configuration::RestorePolicy;
 use nomux_holder_protocol::SessionId;
-use nomux_holder_protocol::discovery::{SOCKET_FILE, holder_directory};
+use nomux_holder_protocol::discovery::{SOCKET_FILE, holder_directory, pooled_holder_directory};
 use nomux_holder_protocol::session_state::SessionMetadata;
 use tokio::sync::{Mutex, mpsc, watch};
 
 use crate::holder::{
     self, HolderLink, HolderStart, LaunchError, OutputFeed, SharedOutputFeed, Supervisor,
 };
+use crate::holder_pool::HolderPool;
 use crate::session_error::SessionError;
 use crate::session_handle::SessionHandle;
 use crate::session_id;
@@ -60,6 +62,12 @@ pub(crate) struct Sessions {
     /// One restore at a time: two clients that open the same dormant
     /// session start one holder.
     restoring: Mutex<()>,
+    /// The shell of the user: the command of a session without a command.
+    shell: OsString,
+    /// The home directory of the user: the working directory of a session
+    /// without one, and of the shells of the pool.
+    home: PathBuf,
+    pool: HolderPool,
 }
 
 impl Sessions {
@@ -67,7 +75,8 @@ impl Sessions {
     ///
     /// # Errors
     ///
-    /// Returns an error if the state directory of the user has no path.
+    /// Returns an error if the state directory or the home directory of the
+    /// user has no path.
     pub(crate) fn new(
         runtime_directory: PathBuf,
         settings: Settings,
@@ -81,6 +90,11 @@ impl Sessions {
             Arc::clone(&store),
             settings.ended_session_retention,
         ));
+        let shell = env::var_os("SHELL").unwrap_or_else(|| FALLBACK_SHELL.into());
+        let home = env::var_os("HOME")
+            .filter(|home| !home.is_empty())
+            .map(PathBuf::from)
+            .ok_or_else(|| io::Error::other("the HOME variable of the daemon is not set"))?;
         Ok(Self {
             runtime_directory,
             registry,
@@ -90,29 +104,52 @@ impl Sessions {
             shutdown,
             status,
             restoring: Mutex::new(()),
+            pool: HolderPool::new(shell.clone(), settings.pool_size, settings.pool_idle_time),
+            shell,
+            home,
         })
     }
 
-    /// Starts a holder with `command` and connects to it. An empty command
-    /// is the shell of the user. No working directory is the home directory
-    /// of the user.
+    /// Starts a session with `command`: an empty command is the shell of the
+    /// user, and no working directory is the home directory of the user. A
+    /// session with the shell takes a holder of the pool if it has one. Else
+    /// the daemon starts a holder and connects to it.
     pub(crate) async fn create(
-        &self,
+        self: &Arc<Self>,
         command: Vec<String>,
         working_directory: Option<PathBuf>,
     ) -> Result<ListedSession, SessionError> {
+        let working_directory = self.working_directory_of_session(working_directory)?;
+        // The pool keeps its holders for the idle time from now, and fills
+        // again after this session. Its task runs after the response: the
+        // start of a holder does not delay this session.
+        let created = self.create_with(command, working_directory).await;
+        self.start_pool();
+        created
+    }
+
+    async fn create_with(
+        &self,
+        command: Vec<String>,
+        working_directory: PathBuf,
+    ) -> Result<ListedSession, SessionError> {
+        if command.is_empty()
+            && let Some(pooled) = self.take_pooled(&working_directory).await
+        {
+            return Ok(self.describe(self.supervise(pooled.session_id, Some(pooled.link))));
+        }
         let command: Vec<OsString> = if command.is_empty() {
-            vec![env::var_os("SHELL").unwrap_or_else(|| FALLBACK_SHELL.into())]
+            vec![self.shell.clone()]
         } else {
             command.into_iter().map(OsString::from).collect()
         };
-        let working_directory = working_directory_of_session(working_directory)?;
         let session_id = self.unused_session_id().map_err(start_failure)?;
         let start = HolderStart {
             session_id: &session_id,
             command: &command,
             working_directory: &working_directory,
             size: None,
+            pooled: false,
         };
         let link = self.start_holder(start).await.inspect_err(|_| {
             // A holder that did not start leaves the state directory of a
@@ -309,39 +346,38 @@ impl Sessions {
         record
     }
 
+    fn working_directory_of_session(
+        &self,
+        requested: Option<PathBuf>,
+    ) -> Result<PathBuf, SessionError> {
+        let directory = requested.unwrap_or_else(|| self.home.clone());
+        if !is_absolute_directory(&directory) {
+            return Err(SessionError::Failed(format!(
+                "the working directory {} is not an absolute path of a directory",
+                directory.display()
+            )));
+        }
+        Ok(directory)
+    }
+
     fn holder_socket(&self, session_id: &SessionId) -> PathBuf {
         holder_directory(&self.runtime_directory, session_id).join(SOCKET_FILE)
     }
 
-    /// A random identifier that no session, no holder directory and no
-    /// state directory has.
+    /// A random identifier that no session, no holder directory, no pooled
+    /// holder and no state directory has.
     fn unused_session_id(&self) -> io::Result<SessionId> {
         loop {
             let session_id = session_id::random()?;
             let in_use = self.registry.contains(&session_id)
                 || holder_directory(&self.runtime_directory, &session_id).exists()
+                || pooled_holder_directory(&self.runtime_directory, &session_id).exists()
                 || self.store.has(&session_id);
             if !in_use {
                 return Ok(session_id);
             }
         }
     }
-}
-
-fn working_directory_of_session(requested: Option<PathBuf>) -> Result<PathBuf, SessionError> {
-    let directory = match requested {
-        Some(directory) => directory,
-        None => env::var_os("HOME").map(PathBuf::from).ok_or_else(|| {
-            SessionError::Failed("the HOME variable of the daemon is not set".to_owned())
-        })?,
-    };
-    if !is_absolute_directory(&directory) {
-        return Err(SessionError::Failed(format!(
-            "the working directory {} is not an absolute path of a directory",
-            directory.display()
-        )));
-    }
-    Ok(directory)
 }
 
 fn is_absolute_directory(path: &Path) -> bool {

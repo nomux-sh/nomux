@@ -40,7 +40,7 @@ The start sequence is:
 2. Take the instance lock (see "One daemon for each runtime directory").
 3. Remove the socket file of an earlier daemon and make the socket.
 4. Read the global configuration file: see "Configuration".
-5. Scan the runtime directory for holders. Remove the stale directories and connect to the live holders.
+5. Scan the runtime directory for holders. Remove the stale directories and connect to the live holders. Remove the directories of the pooled holders of an earlier daemon that ended: see "Holder pool".
 6. Read the session state directories. A session that has no live holder becomes dormant, ended or damaged: see "Sessions without a holder". The daemon starts no process in this step.
 7. Read the installed extensions from the directory of the extension host. Start no extension.
 8. Accept connections.
@@ -122,12 +122,18 @@ default_policy = "on-focus"   # auto | on-focus | manual
 
 [sessions]
 ended_retention = "24h"       # a number with the unit s, m, h or d
+
+[pool]
+size = 2                      # 0 to 8; 0 turns the pool off
+idle_time = "10m"             # a number with the unit s, m, h or d
 ```
 
 | Key | Default | Function |
 |---|---|---|
 | `restore.default_policy` | `on-focus` | The restore policy of a session that has none of its own |
 | `sessions.ended_retention` | `24h` | How long the daemon keeps a session after its command ended |
+| `pool.size` | `2` | The number of holders that the daemon keeps ready for a new session: see "Holder pool" |
+| `pool.idle_time` | `10m` | How long the pool stays when no session starts |
 
 A file that is not valid does not stop the daemon, because the sessions need it. The daemon writes the problem to its log and uses the defaults.
 
@@ -156,9 +162,9 @@ If two clients start a daemon at the same time, one daemon gets the lock, the ot
 
 ### Start of a session
 
-For `Session.Create`, the daemon does these steps:
+For `Session.Create` of a session with the shell of the user, the daemon first takes a holder of the pool: see "Holder pool". If the pool has no holder that can take the session, and for a session with a different command, the daemon does these steps:
 
-1. It makes a random session identifier of 8 characters from `a` to `z` and `2` to `7`. It makes a new one if a session or a holder directory already has the identifier.
+1. It makes a random session identifier of 8 characters from `a` to `z` and `2` to `7`. It makes a new one if a session, a holder directory or a pooled holder already has the identifier.
 2. It starts `nomux-holder --session <identifier> --runtime-directory <directory> --state-directory <directory> --working-directory <directory> -- <command>`. It finds `nomux-holder` in the directory of its own binary, and then in `PATH`. The state directory is the state directory of the user: [holder.md](holder.md) has its path.
 3. It waits until the holder writes its `ready` file. If the holder ends before that, the request fails with the last line of the standard error of the holder. If the holder is not ready after 5 seconds, the daemon stops it and the request fails with the code 3 (timeout).
 4. It connects to the holder and takes the lease.
@@ -211,6 +217,44 @@ If the connection to a holder fails, the session gets the state "unreachable" an
 - In all other cases, the task waits and tries again. The pause starts at 100 ms and becomes two times longer after each attempt, up to 5 seconds. There is no tight loop.
 
 A request to end the session that arrives during this time waits for the connection. A request for the terminal of an unreachable session (`Session.Attach`, `Session.Input`, `Session.Resize`) fails immediately with the code 1.
+
+## Holder pool
+
+A new session must open in less than 10 ms ([bench/README.md](../bench/README.md)). The start of a holder takes approximately 1 ms, and the start of a shell with its start files takes from 2 ms to more than 200 ms. Thus the daemon keeps a small number of holders ready, each with the shell of the user already started in the home directory: the pooled holders. A new session with the shell takes one. [holder.md](holder.md#pooled-holder) describes a pooled holder.
+
+```
+first request ──> pool starts ──> fill: start one pooled holder at a time, up to pool.size
+                                    ^                      |
+                                    |                      v
+              Session.Create ──> take the oldest ──> AssignSession, type the change of the directory
+                  (restarts the idle time)
+pool.idle_time without a new session ──> the pool empties ──> the next Session.Create starts it again
+```
+
+**Rules.**
+
+- **Nothing runs before a client.** No pooled holder exists before the first request of a client after the start of the daemon. A daemon that starts at login and gets no request runs no holder. `Host.Stop` does not start the pool.
+- **Idle time.** When no session starts for `pool.idle_time` (10 minutes by default), the pool empties: its holders and their shells end. After that, only `Session.Create` starts the pool again. One timer for the end of the idle time wakes the task of the pool: the daemon does not poll.
+- **Fill.** The pool starts one pooled holder at a time until it has `pool.size` holders. A take starts the fill again after the response to the client, thus the start of a holder does not delay the new session. If a start fails, the fill stops until the next new session: there is no loop of starts.
+- **Pooled holders are not sessions.** They are not in `Session.List`, `Host.Info` does not count them, and they have no state directory and no journal.
+- **The end of the daemon ends them.** The standard input of a pooled holder is a pipe from the daemon. When the daemon ends, also after `kill -9`, the pipe closes and each pooled holder ends with its shell. A holder that has its session continues, as each session holder does.
+- **A new daemon takes no pooled holder of an earlier daemon.** The shell of such a holder has the environment of the earlier daemon, and a session gets the environment of the daemon that starts it (see "Restore"). Such a holder ends by itself when the pipe of its daemon closes. The new daemon removes the directories of the pooled holders that ended, and starts its own pool after its first request.
+
+**The take.** For `Session.Create` without a command, the daemon takes the oldest pooled holder, because its shell had the most time to start, and does these steps:
+
+1. It sends `AssignSession` with the window size of the holder and the working directory of the session. The holder writes the state directory and starts the journal.
+2. If the working directory is not the home directory, it sends `Input` with ` cd '<directory>'` and a carriage return: the shell changes to the directory. The space before the command keeps the line out of the history of a shell that is configured for it (`ignorespace` of bash, `HIST_IGNORE_SPACE` of zsh, and the default of fish).
+3. It connects the session as a session with a new holder: the task of the session, the status, the attach and the restore are the same.
+
+If a step fails, the daemon drops the holder, which ends, removes the state directory that the holder wrote, and takes the next one. With no pooled holder left, it starts a new holder.
+
+**Limits.**
+
+- **The change of the directory is visible.** The `cd` line is in the terminal, thus on the screen of the session and in its journal. It runs after the start files of the shell, which ran in the home directory: a start file that reads the working directory reads the home directory. A shell that reads its input before its start files completed gets the line when it reads input.
+- **Only known shells.** The pool is off if the shell of the user is not `sh`, `bash`, `zsh`, `dash`, `ksh`, `mksh` or `fish`: the daemon knows how these shells read `cd '<directory>'`. A working directory with `'`, `\`, a control character or bytes that are not UTF-8 gets a new holder, because the shells read such a path in different ways.
+- **A command gets a new holder.** A pooled holder can only give its shell. A holder that waits without a command and starts the command at the assignment saves only the start of the holder (approximately 1 ms of the 2.3 ms of a new holder in the daemon) and not the start of the command, which is the long part for a shell. Thus a session with a command always gets a new holder.
+- **The size of the pool.** The default of 2 gives a ready holder to two sessions that start one after the other, for example a split of a window, and the second take starts the fill while the first session opens. A pooled holder uses approximately 1 MB with the static musl build, and its shell uses its own memory (4.4 MB for bash 5.3 without start files): a larger default uses memory that most hosts do not need.
+- **A shell that starts slowly.** The pool has a holder when the holder is ready, not when its shell completed its start files. A take in that time gives a session whose shell shows its prompt later.
 
 ## Sessions without a holder
 
@@ -423,10 +467,12 @@ The daemon keeps the last events in memory: 1024 events at most, and 16 MiB of e
 | A stop of a systemd unit with the default `KillMode=control-group` | **End** |
 | A stop of a systemd unit with `KillMode=process` | Continue |
 
+The pooled holders are not sessions: they end with the daemon in each case.
+
 These properties make a holder independent of the daemon:
 
 - The holder calls `setsid` at its start. It has its own session and its own process group, thus a signal for the group of the daemon does not reach it.
-- The daemon gives the holder no pipe. The standard input and the standard output of the holder are `/dev/null`. The standard error is a file without a name that the daemon reads only if the holder ends before it is ready. A holder that writes after the end of the daemon does not fail.
+- The daemon gives the holder of a session no pipe. The standard input and the standard output of the holder are `/dev/null`. Only a pooled holder has a pipe as its standard input, and it ends with the daemon: see "Holder pool". The standard error is a file without a name that the daemon reads only if the holder ends before it is ready. A holder that writes after the end of the daemon does not fail.
 - The daemon does not set a signal for the end of the parent (`PR_SET_PDEATHSIG`).
 - The daemon waits for the exit status of each holder that it started. Thus an ended holder does not stay as a zombie.
 
@@ -517,6 +563,17 @@ Measured on Linux x86-64 with the release profile. The targets are in [bench/REA
 | The same during a flood of 10 MB/s in a second attached session | 0.2 ms to 0.5 ms, 1.4 ms to 4.7 ms | no change that matters |
 | The same during a flood without a limit in a second attached session (19 MB/s to 36 MB/s to its client) | 0.2 ms to 0.8 ms, 3.1 ms to 5.3 ms | no change that matters |
 | Growth of the resident memory during a flood of 32 MiB to a client that takes no output | less than 8 MiB (the limit of the test) | no growth with the length of the output |
+| `Session.Create` from the holder pool, connected client, debug build: median of 11 (the test `a_session_from_the_pool_opens_in_less_than_10_ms`) | 1.2 ms to 2.0 ms | < 10 ms |
+| `Session.Create` without the pool, connected client: median, slowest of 50 | 2.31 ms, 2.43 ms | |
+| The same, the part in the daemon: start of the holder process, wait for `ready`, lease, response | 0.12 ms to 0.19 ms, 2.2 ms, 0.08 ms, 0.03 ms | |
+| Request to the first command of the shell, `bash` with start files of 200 ms: without the pool, from the pool (median of 50) | 205.8 ms, 2.8 ms | < 10 ms |
+| `nomux new`, `sh` without start files: without the pool, from the pool (median of 50) | 3.2 ms, 3.1 ms | < 10 ms |
+| Resident memory of the daemon with a full pool of 2, idle (glibc) | 4.4 MB | < 10 MB |
+| Resident memory of 2 pooled holders (glibc); one pooled holder (musl, static) | 5.5 MB; 0.8 MB to 0.9 MB | < 3 MB for each holder |
+| Resident memory of the 2 shells of the pool (bash 5.3 without start files) | 8.9 MB | no target |
+| CPU time in 30 s of the idle daemon with a full pool, its pooled holders and their shells | 0 | 0 |
+
+The rows of the holder pool are from the program `tests/measurements/new_session.rs` with the release build, a home directory without start files and `SHELL=/bin/sh`, except where a row says more: [tests/README.md](../tests/README.md) says how to run it. The part in the daemon was measured with log lines that are not in the code. The shell with start files of 200 ms is `bash` with a `.bashrc` of `sleep 0.2`. For `sh` without start files, `nomux new` takes the same time with and without the pool: the start of the CLI and its connection are the larger part, and the start of that shell is short. For comparison, `bash -i` with the start files of a real user took 232 ms to its first prompt on the same computer, and its first prompt after a typed `cd` took 12.5 ms.
 
 "Key to echo" is the time from the write of one key to the terminal of `nomux attach` until the terminal has the echo of that key. The session runs `cat`, and the terminal of the session echoes the key. The path has the CLI, the daemon, the holder and the terminal of the session, two times. The program `tests/measurements/attach.rs` types 2000 keys with 2 ms between them: [tests/README.md](../tests/README.md) says how to run it. Each range is the result of 3 runs. The largest value of a run is between 3 ms and 58 ms: a small number of keys wait for the scheduler of a computer that does other work.
 
@@ -553,4 +610,5 @@ These parts are not in the daemon yet:
 - **Service files.** The launchd agent was not loaded on a Mac. The commands do not give the file to the service manager, and they do not stop a daemon.
 - **Log rotation.** `nomuxd.log` has no size limit. With the default level it stays almost empty.
 - **Memory limit.** The daemon shows the memory of each session and applies no limit. [memory.md](memory.md) has the design of the limit.
-- **Host identity, authentication, warm pool, hibernation of agents, the QUIC transport.**
+- **Holder pool.** The change of the directory of a pooled shell is visible in the terminal. A session with a command gets a new holder. The pool has no size for each shell or each directory.
+- **Host identity, authentication, hibernation of agents, the QUIC transport.**

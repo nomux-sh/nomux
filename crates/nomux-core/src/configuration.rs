@@ -1,8 +1,9 @@
 //! The global configuration file of nomux: `config.toml`.
 //!
 //! This module reads only the parts of the file that the core uses now: the
-//! hosts in `[hosts.<name>]`, `default_policy` in `[restore]` and
-//! `ended_retention` in `[sessions]`. It writes only the hosts, and it keeps
+//! hosts in `[hosts.<name>]`, `default_policy` in `[restore]`,
+//! `ended_retention` in `[sessions]`, and `size` and `idle_time` in
+//! `[pool]`. It writes only the hosts, and it keeps
 //! each other part of the file, also the comments, when it writes the file.
 
 mod duration_text;
@@ -30,8 +31,15 @@ const RESTORE: &str = "restore";
 const DEFAULT_POLICY: &str = "default_policy";
 const SESSIONS: &str = "sessions";
 const ENDED_RETENTION: &str = "ended_retention";
+const POOL: &str = "pool";
+const POOL_SIZE: &str = "size";
+const POOL_IDLE_TIME: &str = "idle_time";
 const OWNER_ONLY_DIRECTORY: u32 = 0o700;
 const OWNER_READ_WRITE: u32 = 0o600;
+
+/// The largest pool of holders. Each pooled holder runs a shell, which
+/// uses memory while no session needs it.
+pub const MAX_POOL_SIZE: usize = 8;
 
 /// The global configuration file, in memory.
 #[derive(Debug, Clone)]
@@ -65,6 +73,8 @@ impl ConfigurationFile {
         file.hosts()?;
         file.default_restore_policy()?;
         file.ended_session_retention()?;
+        file.pool_size()?;
+        file.pool_idle_time()?;
         Ok(file)
     }
 
@@ -132,12 +142,59 @@ impl ConfigurationFile {
         })
     }
 
+    /// The number of holders that the daemon keeps ready for a new session:
+    /// `size` in `[pool]`. 0 turns the pool off. Returns `None` if the file
+    /// does not have the key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is not an integer from 0 to
+    /// [`MAX_POOL_SIZE`].
+    pub fn pool_size(&self) -> Result<Option<usize>, ConfigurationError> {
+        self.value(POOL, POOL_SIZE, |item| {
+            item.as_integer()
+                .and_then(|size| usize::try_from(size).ok())
+                .filter(|size| *size <= MAX_POOL_SIZE)
+                .ok_or_else(|| format!("must be an integer from 0 to {MAX_POOL_SIZE}"))
+        })
+    }
+
+    /// How long the daemon keeps its pooled holders when no session starts:
+    /// `idle_time` in `[pool]`, for example `"10m"`. Returns `None` if the
+    /// file does not have the key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is not a number with the unit `s`,
+    /// `m`, `h` or `d`.
+    pub fn pool_idle_time(&self) -> Result<Option<Duration>, ConfigurationError> {
+        self.text_value(POOL, POOL_IDLE_TIME, |text| {
+            duration_text::parse(text).ok_or_else(|| {
+                "must be a number with the unit s, m, h or d, for example \"10m\"".to_owned()
+            })
+        })
+    }
+
     /// The value of the string `key` of `table`, as `read` gives it.
     fn text_value<T>(
         &self,
         table: &str,
         key: &str,
         read: impl FnOnce(&str) -> Result<T, String>,
+    ) -> Result<Option<T>, ConfigurationError> {
+        self.value(table, key, |item| {
+            item.as_str()
+                .ok_or_else(|| "must be a string".to_owned())
+                .and_then(read)
+        })
+    }
+
+    /// The value of `key` of `table`, as `read` gives it.
+    fn value<T>(
+        &self,
+        table: &str,
+        key: &str,
+        read: impl FnOnce(&Item) -> Result<T, String>,
     ) -> Result<Option<T>, ConfigurationError> {
         let Some(item) = self.document.get(table) else {
             return Ok(None);
@@ -149,13 +206,9 @@ impl ConfigurationFile {
         else {
             return Ok(None);
         };
-        let full_key = format!("{table}.{key}");
-        let text = item
-            .as_str()
-            .ok_or_else(|| self.invalid(&full_key, "must be a string"))?;
-        read(text)
+        read(item)
             .map(Some)
-            .map_err(|problem| self.invalid(&full_key, &problem))
+            .map_err(|problem| self.invalid(&format!("{table}.{key}"), &problem))
     }
 
     /// Adds the host `entry`, or replaces the host with the same name.
@@ -302,6 +355,23 @@ mod tests {
             retention.to_string().contains("sessions.ended_retention"),
             "{retention}"
         );
+    }
+
+    #[test]
+    fn the_pool_settings_are_read_and_a_size_out_of_range_names_its_key() {
+        let file = load("[pool]\nsize = 0\nidle_time = \"30s\"\n").unwrap();
+        assert_eq!(file.pool_size().unwrap(), Some(0));
+        assert_eq!(
+            file.pool_idle_time().unwrap(),
+            Some(Duration::from_secs(30))
+        );
+
+        for size in ["-1", "9", "\"2\""] {
+            let error = load(&format!("[pool]\nsize = {size}\n")).unwrap_err();
+            assert!(error.to_string().contains("pool.size"), "{size}: {error}");
+        }
+        let idle = load("[pool]\nidle_time = \"soon\"\n").unwrap_err();
+        assert!(idle.to_string().contains("pool.idle_time"), "{idle}");
     }
 
     #[test]

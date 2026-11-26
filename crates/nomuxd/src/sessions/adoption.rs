@@ -17,13 +17,15 @@ use crate::session_registry::SessionState;
 impl Sessions {
     /// Finds the sessions that exist. A session with a holder that runs is
     /// connected. A session that has only a state directory is dormant,
-    /// ended or damaged: the daemon starts no process for it.
+    /// ended or damaged: the daemon starts no process for it. The daemon
+    /// takes no pooled holder of an earlier daemon.
     ///
     /// # Errors
     ///
     /// Returns an error if the runtime directory cannot be read. A state
     /// directory that cannot be read stops nothing.
     pub(crate) async fn adopt_existing(&self) -> io::Result<()> {
+        self.remove_pooled_holders_of_earlier_daemon()?;
         let with_holder = self.adopt_holders().await?;
         let stored = self.store.session_ids().unwrap_or_else(|error| {
             warn!(%error, "cannot read the session state directories");

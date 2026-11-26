@@ -136,11 +136,11 @@ Two definitions exist in two crates, because the client side must not depend on 
 
 ## State
 
-The repository has the Cargo workspace, the developer tools and CI. The holder runs a command in a PTY and serves the daemon side of its contract. The daemon starts holders, finds them again after a restart and serves the clients on a Unix socket. The CLI creates, lists and ends sessions, and it attaches a terminal to a session and detaches it, on the local host and on a remote host through SSH. The daemon runs the daemon parts of the extensions that the user installed from a directory, and the CLI installs, lists, removes and calls them.
+The repository has the Cargo workspace, the developer tools and CI. The holder runs a command in a PTY and serves the daemon side of its contract. The daemon starts holders, keeps a pool of holders with a started shell for new sessions, finds them again after a restart and serves the clients on a Unix socket. The CLI creates, lists and ends sessions, and it attaches a terminal to a session and detaches it, on the local host and on a remote host through SSH. The daemon runs the daemon parts of the extensions that the user installed from a directory, and the CLI installs, lists, removes and calls them.
 
 The work comes in this sequence:
 
-1. The warm pool, the restore of a workspace layout, the state database of the daemon and the selection of the VT library.
+1. The restore of a workspace layout, the state database of the daemon and the selection of the VT library.
 2. The rest of the remote hosts: a second way for SSH servers and configurations that the SSH client does not support, and the local echo for a slow connection.
 3. The rest of the extension host: the restriction of the file access of an extension, more host services, the installation from a registry, and the UI parts.
 4. The agent status engine: the real adapters of the agent tools in the `extensions` repository, the answer of a hook with a decision, ACP, `wait`, and the notifications.
