@@ -67,6 +67,9 @@ pub(crate) struct HolderStart<'a> {
     pub(crate) session_id: &'a SessionId,
     /// The program and its arguments.
     pub(crate) command: &'a [OsString],
+    /// The words of a program that starts the command, for example with a
+    /// memory limit. Empty if the holder starts the command itself.
+    pub(crate) launcher: &'a [OsString],
     pub(crate) working_directory: &'a Path,
     /// The size of the terminal window. `None` is the default size of the
     /// holder.
@@ -136,6 +139,9 @@ pub(crate) async fn launch(
                 None => holder.env_remove(name),
             };
         }
+    }
+    for word in start.launcher {
+        holder.arg("--launcher").arg(word);
     }
     if let Some(size) = start.size {
         holder

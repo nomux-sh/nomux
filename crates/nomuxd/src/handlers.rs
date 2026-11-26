@@ -86,11 +86,8 @@ pub(crate) async fn handle(
         }
         request::Body::SessionMemory(_) => session_memory::memory(context).await,
         request::Body::SessionRename(request) => session::rename(request, context).await,
-        // Requests of the protocol that this daemon does not do yet.
-        request::Body::SessionHibernate(_) | request::Body::SessionSetPinned(_) => Err(Error {
-            code: ErrorCode::Failed.into(),
-            message: "the daemon does not know this request".to_owned(),
-        }),
+        request::Body::SessionHibernate(request) => session::hibernate(&request, context).await,
+        request::Body::SessionSetPinned(request) => session::set_pinned(&request, context),
         request::Body::ExtList(_) => Ok(ext::list(context)),
         request::Body::ExtInspect(request) => ext::inspect(request).await,
         request::Body::ExtInstall(request) => ext::install(request, context).await,

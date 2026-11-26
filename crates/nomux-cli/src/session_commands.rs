@@ -1,7 +1,7 @@
 //! The session commands: `new`, `attach`, `start`, `capture`,
-//! `restore-policy`, `detach`, `kill`, `rename` and `send`. Each command
-//! that takes a session finds it by its target first:
-//! `Client::find_session` has the rule.
+//! `restore-policy`, `detach`, `kill`, `rename`, `send`, `hibernate`,
+//! `wake`, `pin` and `unpin`. Each command that takes a session finds it by
+//! its target first: `Client::find_session` has the rule.
 
 mod arguments;
 mod follow;
@@ -139,6 +139,40 @@ pub(crate) async fn set_restore_policy(
     let session = client.find_session(target).await?;
     client.set_restore_policy(&session.id, policy).await?;
     Ok(Report::RestorePolicySet { session, policy })
+}
+
+pub(crate) async fn hibernate(host: &Host, target: &Target) -> Result<Report, ClientError> {
+    let mut client = host.client(KIND).await?;
+    let session = client.find_session(target.text()).await?;
+    let session = client.hibernate_session(&session.id).await?;
+    Ok(Report::SessionHibernated(session))
+}
+
+/// Starts the resume command of a hibernated session. A session that is
+/// not hibernated is not started: `start` does that.
+pub(crate) async fn wake(host: &Host, target: &Target) -> Result<Report, ClientError> {
+    let mut client = host.client(KIND).await?;
+    let session = client.find_session(target.text()).await?;
+    if !session.is_hibernated() {
+        return Err(ClientError::Failed(format!(
+            "session {} is not hibernated: `nomux start {}` starts a dormant session",
+            session.label(),
+            target.text()
+        )));
+    }
+    let session = client.start_session(&session.id).await?;
+    Ok(Report::SessionWoken(session))
+}
+
+pub(crate) async fn set_pinned(
+    host: &Host,
+    target: &Target,
+    pinned: bool,
+) -> Result<Report, ClientError> {
+    let mut client = host.client(KIND).await?;
+    let session = client.find_session(target.text()).await?;
+    client.set_pinned(&session.id, pinned).await?;
+    Ok(Report::SessionPinned { session, pinned })
 }
 
 /// A session lives without a daemon, thus `kill` starts one too.

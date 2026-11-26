@@ -75,6 +75,8 @@ The extension runs its methods one at a time. A `hook` method must be short: the
 | `agent.report` | `AgentReport` | Reports the Agent run of a session: state, kind, soft, message, title, tool, and the details (model, provider session identifier, resume command) |
 | `agent.child` | `ChildWorkReport` | Starts, changes or ends one Child work: an identifier and the identifier of its parent |
 
+- The resume command is words with the quoting of a POSIX shell and without an operator or an expansion. The daemon never gives it to a shell, and starts it unchanged for the wake of a hibernated session: [memory.md](memory.md#what-nomux-never-does). An adapter that reports no resume command makes its sessions never hibernate automatically.
+- The wait of an agent at its input prompt is `AGENT_STATE_NEEDS_YOU` with the kind `NEEDS_YOU_KIND_PROMPT`, not `QUESTION`: a hibernation keeps a session at its prompt and never a session that waits for an answer.
 - A report stays until the next one. `AGENT_STATE_IDLE` takes the report of the Agent run back. A new process of the session removes each report of the adapter. The details stay when the session loses its process, thus a client can show the resume command of a dormant session.
 - Child work: 8 levels and 64 items at most. A new item takes the place of the oldest one that ended. An end has the state `done` or `error`.
 - A text is one line of 512 bytes at most without a control character.
@@ -107,7 +109,7 @@ HookInstallPlan
 
 ## Test adapter
 
-`tests/support/test_adapter.rs` is the adapter of the made-up tool `testtool` that the end-to-end tests use. It maps three events (`prompt`, `tool`, `task`) to status reports, sends the extension event `mapped` after each event, and describes the hooks for `~/.testtool/settings.json`. It is not the adapter of a real tool: the real adapters are in the [`extensions`](https://github.com/nomux-sh/extensions) repository.
+`tests/support/test_adapter.rs` is the adapter of the made-up tool `testtool` that the end-to-end tests use. It maps four events (`prompt`, `tool`, `task`, `stop`) to status reports, gives the resume command `testtool --resume <session>` or the field `resume` of the event, sends the extension event `mapped` after each event, and describes the hooks for `~/.testtool/settings.json`. It is not the adapter of a real tool: the real adapters are in the [`extensions`](https://github.com/nomux-sh/extensions) repository.
 
 ## Measurements
 
@@ -121,6 +123,7 @@ HookInstallPlan
 ## Not done yet
 
 - Real adapters (they are in the `extensions` repository), approval cards and the answer of a hook with a decision of the user.
+- The adapter of Claude Code reports its notification `idle_prompt` as `NEEDS_YOU_KIND_QUESTION`: it must report `NEEDS_YOU_KIND_PROMPT`, else a Claude Code session at rest does not hibernate.
 - Events from the daemon to an extension.
 - `hooks install` for a remote host, and settings files that are not JSON.
 - A queue for each adapter: an adapter that hangs delays the events of the other adapters until its call times out.

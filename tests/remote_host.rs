@@ -327,7 +327,8 @@ fn host_doctor_passes_for_a_good_host_and_names_a_wrong_permission() {
             "binaries",
             "permissions",
             "daemon",
-            "versions"
+            "versions",
+            "memory-limit"
         ]
     );
 

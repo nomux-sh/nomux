@@ -28,6 +28,12 @@ pub(crate) enum Report {
         memory: Vec<SessionMemory>,
     },
     SessionStarted(Session),
+    SessionHibernated(Session),
+    SessionWoken(Session),
+    SessionPinned {
+        session: Session,
+        pinned: bool,
+    },
     OutputCaptured {
         id: String,
         /// The output bytes, as the command of the session wrote them.

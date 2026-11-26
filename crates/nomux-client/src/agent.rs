@@ -30,6 +30,8 @@ pub enum NeedsYouKind {
     Question,
     /// Give a login, a token or a credential.
     Auth,
+    /// Give the next instruction: the agent waits at its input prompt.
+    Prompt,
 }
 
 /// Where a part of a status comes from.
@@ -250,8 +252,8 @@ fn needs_you_kind(kind: i32) -> Option<NeedsYouKind> {
         wire::NeedsYouKind::Permission => Some(NeedsYouKind::Permission),
         wire::NeedsYouKind::Question => Some(NeedsYouKind::Question),
         wire::NeedsYouKind::Auth => Some(NeedsYouKind::Auth),
-        // A kind that this client does not show yet.
-        wire::NeedsYouKind::Prompt | wire::NeedsYouKind::Unspecified => None,
+        wire::NeedsYouKind::Prompt => Some(NeedsYouKind::Prompt),
+        wire::NeedsYouKind::Unspecified => None,
     }
 }
 

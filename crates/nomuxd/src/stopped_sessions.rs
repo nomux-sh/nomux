@@ -12,13 +12,14 @@
 //! an ended session has no timer.
 
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use nomux_holder_protocol::SessionId;
 use nomux_holder_protocol::wire::ChildStatus;
 use tokio::time::sleep;
 use tracing::{info, warn};
 
+use crate::clock;
 use crate::holder::SessionEnd;
 use crate::session_registry::{EndedSession, SessionRecord, SessionRegistry, SessionState};
 use crate::session_store::SessionStore;
@@ -58,7 +59,14 @@ impl StoppedSessions {
         let (state, damage) = match self.store.metadata(id) {
             Err(reason) => (SessionState::Damaged, Some(reason)),
             Ok(metadata) => {
+                // The holder of a hibernated session wrote the exit status of
+                // its command: the hibernation ended it.
+                let hibernated = self
+                    .store
+                    .hibernation(id)
+                    .is_some_and(|record| record.is_hibernated());
                 let state = match metadata.status {
+                    _ if hibernated => SessionState::Dormant,
                     ChildStatus::Running => SessionState::Dormant,
                     ChildStatus::Exited { code } => {
                         ended(SessionEnd::Exited { code }, metadata.ended)
@@ -74,8 +82,16 @@ impl StoppedSessions {
     }
 
     /// Keeps the session `id`, whose command ended now, for the retention
-    /// time.
+    /// time. A hibernation that did not complete is not a hibernation.
     pub(crate) fn command_ended(self: &Arc<Self>, id: &SessionId, end: SessionEnd) {
+        if self
+            .store
+            .hibernation(id)
+            .is_some_and(|record| record.is_hibernated())
+            && let Err(error) = self.store.remove_hibernation(id)
+        {
+            warn!(session = %id, %error, "cannot remove the hibernation of the ended session");
+        }
         self.keep(id, ended(end, None), None);
     }
 
@@ -101,7 +117,7 @@ impl StoppedSessions {
         let remaining = ended
             .ended_at
             .saturating_add(self.retention.as_secs())
-            .saturating_sub(seconds_after_unix_epoch());
+            .saturating_sub(clock::now_seconds());
         let sessions = Arc::clone(self);
         tokio::spawn(async move {
             sleep(Duration::from_secs(remaining)).await;
@@ -129,12 +145,6 @@ impl StoppedSessions {
 fn ended(end: SessionEnd, ended_at: Option<u64>) -> SessionState {
     SessionState::Ended(EndedSession {
         end,
-        ended_at: ended_at.unwrap_or_else(seconds_after_unix_epoch),
+        ended_at: ended_at.unwrap_or_else(clock::now_seconds),
     })
-}
-
-fn seconds_after_unix_epoch() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs())
 }

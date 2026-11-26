@@ -1,6 +1,6 @@
 //! The child command of the session.
 
-use std::ffi::OsStr;
+use std::ffi::OsString;
 use std::io;
 use std::os::fd::OwnedFd;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
@@ -19,18 +19,21 @@ pub(crate) struct ChildProcess {
 }
 
 impl ChildProcess {
-    /// Starts `program` as the leader of a new session. `terminal` is the
+    /// Starts the program and the arguments of `command_line` as the leader
+    /// of a new session. `terminal` is the
     /// slave side of the pseudoterminal: it becomes the controlling terminal,
     /// the standard input, the standard output and the standard error of the
     /// child. The child gets the environment of the holder with the
     /// changes of `environment`.
     pub(crate) fn spawn(
-        program: &OsStr,
-        arguments: &[impl AsRef<OsStr>],
+        command_line: &[&OsString],
         environment: CommandEnvironment,
         working_directory: Option<&Path>,
         terminal: OwnedFd,
     ) -> io::Result<Self> {
+        let (program, arguments) = command_line
+            .split_first()
+            .ok_or(io::ErrorKind::InvalidInput)?;
         let mut command = Command::new(program);
         environment.apply(&mut command);
         command

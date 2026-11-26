@@ -38,6 +38,7 @@ nomux-holder --session <identifier> [options] -- <command> [argument...]
 | `--ring-capacity <bytes>` | 262144 | The size of the ring buffer: a power of two, 4096 or more |
 | `--exit-timeout <seconds>` | 30 | The time to keep the exit status for the daemon |
 | `--pooled` | off | Start as a pooled holder: the command runs, and the session comes later. See "Pooled holder" |
+| `--launcher <word>` | none | One word of a program that starts the command; the option is repeated for each word. The holder starts the launcher with the command after its words, and the session metadata has the command. The daemon uses it for the memory limit of a session: `systemd-run --user --scope ... --`, which starts the command in its place with `exec`. [memory.md](memory.md#memory-limit) has the rule |
 
 The command gets the environment of the holder with the changes of "Environment of the command". There is no option for environment variables, because the arguments of a process are visible to other users and the environment is not. The starter sets the environment of the holder.
 
@@ -504,6 +505,7 @@ The holder writes a checkpoint:
 | At the start | 0. It has the size of the window at the start |
 | After 1 MiB of output since the last checkpoint | The end of the record that completes the 1 MiB |
 | After a `Resize` | The position at which the size changed. It is written before the next output byte, thus many changes of the size without output give one checkpoint |
+| For a `Checkpoint` request | The end of the output: the holder first writes each byte that waits. The daemon asks for it before it ends the command for a hibernation, thus the journal has the screen of the moment of the stop |
 
 - **The interval is a number of bytes, not a time.** A time needs a timer, and a timer wakes an idle holder. The holder examines the interval only when it writes a record.
 - **Why 1 MiB.** A reader that starts at a checkpoint decompresses and parses 1 MiB at most. This took 3 ms to 12 ms for colored text, and 100 ms for the slowest megabyte of a colored `git log -p` (see "Measurements"). The redraw sequence of a window of 80 x 24 cells is 0.1 KiB to 4 KiB: less than 0.5 % of the output between two checkpoints. To make it takes 0.05 ms.
@@ -569,7 +571,7 @@ The session is more important than its journal. If a write to a segment fails, o
 ## Control protocol
 
 The control socket is a Unix stream socket. The protocol has its own version, which is independent of the product version and of the protocol between the clients and the daemon.
-The current version is 1.5. "Protocol versions" shows what each version added.
+The current version is 1.6. "Protocol versions" shows what each version added.
 
 The encoding is written by hand: fixed little-endian fields with a length prefix. The holder decodes 12 small messages, thus a schema compiler and its runtime give no benefit, and the binary stays small.
 
@@ -636,6 +638,7 @@ The holder answers each request with one message that has the same request ident
 | `0x010A` | `JournalRead` | The position of the first byte (8), the largest number of bytes (4, not 0). Since version 1.3 | | `Journal`, with a descriptor if it has bytes |
 | `0x010B` | `SessionToken` | Empty. Since version 1.4 | | `SessionToken` |
 | `0x010C` | `AssignSession` | Rows (2), columns (2), length of the working directory (2), the bytes of the working directory. Since version 1.5 | necessary | `Done` |
+| `0x010D` | `Checkpoint` | Empty. Since version 1.6 | necessary | `Done`, or `Failed` for a pooled holder, which has no journal |
 
 `Signal` sends the signal to the process of the command. After the holder has the exit status, it sends no signal, because the process ID can belong to a different process.
 
@@ -785,6 +788,7 @@ An old daemon never sees a new reply kind or a new error code, because only a ne
 | 1.3 | Field `epoch` at the end of the hello, request `JournalRead`, reply `Journal` | The epoch is 1. The holder has no journal: a client that needs bytes that the ring buffer has no more gets a redraw, and the session has no scrollback and no state on disk |
 | 1.4 | The variables `NOMUX_SESSION_ID`, `NOMUX_SOCK` and `NOMUX_TOKEN` for the command, request `SessionToken`, reply `SessionToken` | It has no token of the session. The command of that holder has none of the three variables, and the daemon refuses each self-report for the session with a message that says why. The other status sources work |
 | 1.5 | Option `--pooled`, request `AssignSession`, epoch 0 in the hello of a pooled holder | Nothing changes for a holder of a session. The daemon sends `AssignSession` only to a pooled holder that it started, and only if the hello has version 1.5 or later. A pooled holder of an earlier version does not exist |
+| 1.6 | Option `--launcher`, request `Checkpoint` | The daemon sends `Checkpoint` only if the hello has version 1.6 or later. A hibernation of a session of an older holder writes no checkpoint: a wake shows the last checkpoint of that holder and the output after it. The daemon gives `--launcher` only to a holder that it starts, which is of its own version |
 
 Release 0.1.0 has a holder of version 1.2. No release has a holder of version 1.0 or 1.1, thus each holder that runs has version 1.2 or later.
 

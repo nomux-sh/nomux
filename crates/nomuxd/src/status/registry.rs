@@ -20,7 +20,7 @@ use nomux_proto::wire::v1::{
     AgentDetails, AgentExplainResponse, AgentRunChanged, AgentRunRemoved, AgentTreeResponse, event,
 };
 use nomux_status::{
-    AdapterSource, AgentRun, Observation, Source, SourceReport, Timestamp, carried_over,
+    AdapterSource, AgentRun, Observation, Source, SourceReport, Status, Timestamp, carried_over,
     most_urgent, resolve,
 };
 
@@ -37,6 +37,15 @@ use crate::holder::HolderFacts;
 /// The largest number of ended sessions that keep their last Agent run.
 /// With the limits of one Agent run, the kept runs use a few MiB at most.
 pub(crate) const MAX_KEPT_RUNS: usize = 64;
+
+/// What the hibernation needs to know about the Agent run of a session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AgentFacts {
+    /// The aggregate: the most urgent status of the run and its Child work.
+    pub(crate) aggregate: Status,
+    /// The resume command of the adapter. Empty if it gave none.
+    pub(crate) resume_command: String,
+}
 
 /// The status of each session.
 pub(crate) struct StatusRegistry {
@@ -235,6 +244,20 @@ impl StatusRegistry {
                     session_id: id.to_string(),
                 }));
         }
+    }
+
+    /// The facts of the Agent run of the session `id`, if an adapter gave
+    /// its details: the adapter knows the session as an agent session.
+    /// `None` until the status task has a connection to the current holder:
+    /// before that, the entry has the run of the process before a restore.
+    pub(crate) fn agent_facts(&self, id: &SessionId) -> Option<AgentFacts> {
+        let entries = self.entries();
+        let entry = entries.get(id).filter(|entry| entry.holder.is_some())?;
+        let details = entry.sources.details.as_ref()?;
+        Some(AgentFacts {
+            aggregate: entry.run.aggregate.clone(),
+            resume_command: details.resume_command.clone(),
+        })
     }
 
     /// The user looks at the session `id`: each result of it is seen.

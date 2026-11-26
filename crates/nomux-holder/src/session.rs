@@ -96,12 +96,7 @@ impl Session {
             .map(DirectoryFifo::open)
             .transpose()?;
         let child = ChildProcess::spawn(
-            &arguments.program,
-            &[
-                &arguments.program_arguments[..],
-                &arguments.start_arguments[..],
-            ]
-            .concat(),
+            &arguments.command_line(),
             CommandEnvironment::of_session(
                 &arguments.session_id,
                 &arguments.runtime_directory,
@@ -320,6 +315,14 @@ impl Session {
         if let Some(files) = &mut self.files {
             files.journal().flush(&mut self.screen, self.size);
         }
+    }
+
+    /// Writes a checkpoint of the current screen to the journal: see
+    /// `Journal::checkpoint_now`. A pooled holder has no journal.
+    pub(crate) fn checkpoint(&mut self) -> Result<(), ErrorCode> {
+        let files = self.files.as_mut().ok_or(ErrorCode::Failed)?;
+        files.journal().checkpoint_now(&mut self.screen, self.size);
+        Ok(())
     }
 
     /// Output bytes from the journal: see `Journal::read`. A pooled holder

@@ -50,6 +50,10 @@ pub(crate) async fn run(
         Command::RestorePolicy { target, policy } => {
             session_commands::set_restore_policy(&host, &target, policy).await
         }
+        Command::Hibernate { target } => session_commands::hibernate(&host, &target).await,
+        Command::Wake { target } => session_commands::wake(&host, &target).await,
+        Command::Pin { target } => session_commands::set_pinned(&host, &target, true).await,
+        Command::Unpin { target } => session_commands::set_pinned(&host, &target, false).await,
         Command::Kill(arguments) => session_commands::kill(&host, &arguments).await,
         Command::Send(arguments) => session_commands::send(&host, &arguments).await,
         Command::Rename(arguments) => session_commands::rename(&host, &arguments).await,

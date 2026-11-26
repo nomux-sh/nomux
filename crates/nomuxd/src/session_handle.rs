@@ -4,14 +4,17 @@
 //! Terminal data does not go through the registry. A client that attaches
 //! takes the handle one time, and then it uses only the handle.
 
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use nomux_holder_protocol::SessionId;
-use nomux_holder_protocol::wire::WindowSize;
-use tokio::sync::{mpsc, oneshot, watch};
+use nomux_holder_protocol::wire::{ChildSignal, WindowSize};
+use nomux_status::Timestamp;
+use tokio::sync::{Notify, mpsc, oneshot, watch};
 use tokio::time::timeout;
 
 use crate::attachment::AttachedClients;
+use crate::clock;
 use crate::holder::{SessionCommand, SessionEnd, SharedOutputFeed, WriteError};
 use crate::session_error::SessionError;
 
@@ -28,6 +31,19 @@ pub(crate) struct SessionHandle {
     /// The read side of the holder for the attached clients.
     pub(crate) output: SharedOutputFeed,
     pub(crate) clients: AttachedClients,
+    activity: Mutex<Activity>,
+    /// Tells the hibernation that a fact of its rules changed without an
+    /// event: a client detached.
+    hibernation_check: Arc<Notify>,
+}
+
+/// What clients did with the session.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Activity {
+    /// When a client last wrote input.
+    pub(crate) last_input: Option<Timestamp>,
+    /// When the last client detached.
+    pub(crate) last_detach: Option<Timestamp>,
 }
 
 impl SessionHandle {
@@ -36,6 +52,7 @@ impl SessionHandle {
         commands: mpsc::Sender<SessionCommand>,
         ended: watch::Receiver<Option<SessionEnd>>,
         output: SharedOutputFeed,
+        hibernation_check: Arc<Notify>,
     ) -> Self {
         Self {
             id,
@@ -43,6 +60,68 @@ impl SessionHandle {
             ended,
             output,
             clients: AttachedClients::default(),
+            activity: Mutex::default(),
+            hibernation_check,
+        }
+    }
+
+    pub(crate) fn activity(&self) -> Activity {
+        *self.activity.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// A client detached from the session.
+    pub(crate) fn detached(&self) {
+        self.activity
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .last_detach = Some(clock::now());
+        self.hibernation_check.notify_one();
+    }
+
+    fn record_input(&self) {
+        self.activity
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .last_input = Some(clock::now());
+    }
+
+    /// Writes a checkpoint of the screen, ends the command with `signals`
+    /// and keeps the session as a dormant session. Waits until the command
+    /// has ended.
+    pub(crate) async fn hibernate(
+        &self,
+        signals: Vec<ChildSignal>,
+        wait: Duration,
+    ) -> Result<(), SessionError> {
+        // Each signal has its wait, and the last one ends the command.
+        let longest = wait * u32::try_from(signals.len()).unwrap_or(u32::MAX) + KILL_TIMEOUT;
+        let (done, ended) = oneshot::channel();
+        let command = SessionCommand::Hibernate {
+            signals,
+            wait,
+            done,
+        };
+        if self.commands.send(command).await.is_err() {
+            return Err(SessionError::Failed(format!(
+                "session {} ended before its hibernation",
+                self.id
+            )));
+        }
+        match timeout(longest, ended).await {
+            Ok(Ok(Ok(()))) => Ok(()),
+            Ok(Ok(Err(error))) => Err(SessionError::Failed(format!(
+                "session {} did not hibernate: {error}",
+                self.id
+            ))),
+            Ok(Err(_)) => Err(SessionError::Failed(format!(
+                "session {} ended before its hibernation",
+                self.id
+            ))),
+            Err(_) => Err(SessionError::Timeout(format!(
+                "the command of session {} did not end in {} seconds",
+                self.id,
+                longest.as_secs()
+            ))),
         }
     }
 
@@ -92,6 +171,7 @@ impl SessionHandle {
     /// Writes bytes to the terminal of the session and waits until the
     /// holder has them.
     pub(crate) async fn write_input(&self, bytes: Vec<u8>) -> Result<(), SessionError> {
+        self.record_input();
         let (done, written) = oneshot::channel();
         let command = SessionCommand::Input {
             bytes,
@@ -108,6 +188,7 @@ impl SessionHandle {
     /// Sends bytes to the terminal of the session and does not wait for the
     /// holder. The bytes are discarded if the session has ended.
     pub(crate) async fn forward_input(&self, bytes: Vec<u8>) {
+        self.record_input();
         let command = SessionCommand::Input { bytes, done: None };
         // A closed channel: the task of the session is gone.
         let _ = self.commands.send(command).await;

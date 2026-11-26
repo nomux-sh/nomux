@@ -129,15 +129,11 @@ impl Subscription {
             Some(event::Body::AgentRunRemoved(_)) => EventType::AgentRunRemoved,
             Some(event::Body::ExtensionEvent(_)) => EventType::ExtensionEvent,
             Some(event::Body::WorkspaceChanged(_)) => EventType::WorkspaceChanged,
-            // The daemon sends no hibernation event yet.
-            Some(
-                event::Body::Snapshot(_)
-                | event::Body::SessionHibernated(_)
-                | event::Body::SessionWoken(_)
-                | event::Body::SessionWakeFailed(_)
-                | event::Body::SessionMemoryLimitReached(_),
-            )
-            | None => return true,
+            Some(event::Body::SessionHibernated(_)) => EventType::SessionHibernated,
+            Some(event::Body::SessionWoken(_)) => EventType::SessionWoken,
+            Some(event::Body::SessionWakeFailed(_)) => EventType::SessionWakeFailed,
+            Some(event::Body::SessionMemoryLimitReached(_)) => EventType::SessionMemoryLimitReached,
+            Some(event::Body::Snapshot(_)) | None => return true,
         };
         self.types.is_empty() || self.types.contains(&kind)
     }

@@ -2,10 +2,11 @@
 //!
 //! This module reads only the parts of the file that the core uses now: the
 //! hosts in `[hosts.<name>]`, `default_policy` in `[restore]`,
-//! `ended_retention` in `[sessions]`, `size`, `idle_time` and
-//! `shell_start_files` in `[pool]`, and `prefix` in `[attach]`, which only
-//! the CLI reads. It writes only the hosts, and it keeps
-//! each other part of the file, also the comments, when it writes the file.
+//! `ended_retention`, `memory_limit` and `total_memory_limit` in
+//! `[sessions]`, `size`, `idle_time` and `shell_start_files` in `[pool]`,
+//! the hibernation settings in `[agents]`, and `prefix` in `[attach]`,
+//! which only the CLI reads. It writes only the hosts, and it keeps each
+//! other part of the file, also the comments, when it writes the file.
 
 mod duration_text;
 mod error;
@@ -13,6 +14,8 @@ mod host_entry;
 mod location;
 mod prefix_keys;
 mod restore_policy;
+mod size_text;
+mod stop_signal;
 
 use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{self, Write};
@@ -27,6 +30,7 @@ pub use self::host_entry::{HostEntry, is_valid_host_name};
 pub use self::location::default_configuration_path;
 pub use self::prefix_keys::{PrefixKey, PrefixKeys};
 pub use self::restore_policy::{RestorePolicy, UnknownRestorePolicy};
+pub use self::stop_signal::StopSignal;
 
 const HOSTS: &str = "hosts";
 const SSH: &str = "ssh";
@@ -34,6 +38,14 @@ const RESTORE: &str = "restore";
 const DEFAULT_POLICY: &str = "default_policy";
 const SESSIONS: &str = "sessions";
 const ENDED_RETENTION: &str = "ended_retention";
+const MEMORY_LIMIT: &str = "memory_limit";
+const TOTAL_MEMORY_LIMIT: &str = "total_memory_limit";
+const AGENTS: &str = "agents";
+const MAX_LIVE: &str = "max_live";
+const HIBERNATE_AFTER: &str = "hibernate_after";
+const HIBERNATE_ON_PRESSURE: &str = "hibernate_on_pressure";
+const STOP_SIGNALS: &str = "stop_signals";
+const STOP_WAIT: &str = "stop_wait";
 const POOL: &str = "pool";
 const POOL_SIZE: &str = "size";
 const POOL_IDLE_TIME: &str = "idle_time";
@@ -82,6 +94,13 @@ impl ConfigurationFile {
         file.pool_size()?;
         file.pool_idle_time()?;
         file.pool_shell_start_files()?;
+        file.session_memory_limit()?;
+        file.total_memory_limit()?;
+        file.max_live_agents()?;
+        file.hibernate_after()?;
+        file.hibernate_on_pressure()?;
+        file.stop_signals()?;
+        file.stop_wait()?;
         Ok(file)
     }
 
@@ -142,11 +161,7 @@ impl ConfigurationFile {
     /// Returns an error if the value is not a number with the unit `s`,
     /// `m`, `h` or `d`.
     pub fn ended_session_retention(&self) -> Result<Option<Duration>, ConfigurationError> {
-        self.text_value(SESSIONS, ENDED_RETENTION, |text| {
-            duration_text::parse(text).ok_or_else(|| {
-                "must be a number with the unit s, m, h or d, for example \"24h\"".to_owned()
-            })
-        })
+        self.duration_value(SESSIONS, ENDED_RETENTION, "24h")
     }
 
     /// The number of holders that the daemon keeps ready for a new session:
@@ -175,9 +190,135 @@ impl ConfigurationFile {
     /// Returns an error if the value is not a number with the unit `s`,
     /// `m`, `h` or `d`.
     pub fn pool_idle_time(&self) -> Result<Option<Duration>, ConfigurationError> {
-        self.text_value(POOL, POOL_IDLE_TIME, |text| {
+        self.duration_value(POOL, POOL_IDLE_TIME, "10m")
+    }
+
+    /// The memory limit for the processes of one session, in bytes:
+    /// `memory_limit` in `[sessions]`, for example `"4G"`. Returns `None` if
+    /// the file does not have the key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is not a number with the unit `K`, `M`
+    /// or `G`, or if it is 0.
+    pub fn session_memory_limit(&self) -> Result<Option<u64>, ConfigurationError> {
+        self.memory_value(SESSIONS, MEMORY_LIMIT)
+    }
+
+    /// The memory limit for the processes of all sessions together, in
+    /// bytes: `total_memory_limit` in `[sessions]`. Returns `None` if the
+    /// file does not have the key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is not a number with the unit `K`, `M`
+    /// or `G`, or if it is 0.
+    pub fn total_memory_limit(&self) -> Result<Option<u64>, ConfigurationError> {
+        self.memory_value(SESSIONS, TOTAL_MEMORY_LIMIT)
+    }
+
+    /// The largest number of live agent sessions before the daemon
+    /// hibernates idle ones: `max_live` in `[agents]`. 0 turns the count
+    /// trigger off. Returns `None` if the file does not have the key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is not an integer from 0 up.
+    pub fn max_live_agents(&self) -> Result<Option<usize>, ConfigurationError> {
+        self.value(AGENTS, MAX_LIVE, |item| {
+            item.as_integer()
+                .and_then(|count| usize::try_from(count).ok())
+                .ok_or_else(|| "must be an integer from 0 up".to_owned())
+        })
+    }
+
+    /// How long an agent session is idle before it can hibernate:
+    /// `hibernate_after` in `[agents]`, for example `"60s"`. Returns `None`
+    /// if the file does not have the key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is not a number with the unit `s`,
+    /// `m`, `h` or `d`.
+    pub fn hibernate_after(&self) -> Result<Option<Duration>, ConfigurationError> {
+        self.duration_value(AGENTS, HIBERNATE_AFTER, "60s")
+    }
+
+    /// If the memory pressure of the host hibernates idle agent sessions:
+    /// `hibernate_on_pressure` in `[agents]`. Returns `None` if the file
+    /// does not have the key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is not `true` or `false`.
+    pub fn hibernate_on_pressure(&self) -> Result<Option<bool>, ConfigurationError> {
+        self.value(AGENTS, HIBERNATE_ON_PRESSURE, |item| {
+            item.as_bool()
+                .ok_or_else(|| "must be true or false".to_owned())
+        })
+    }
+
+    /// The signals that end the command of an agent session for a
+    /// hibernation, in their sequence: `stop_signals` in `[agents]`, for
+    /// example `["HUP", "TERM", "KILL"]`. Returns `None` if the file does
+    /// not have the key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is not a list of `HUP`, `INT`, `TERM`
+    /// and `KILL` that ends with `KILL`.
+    pub fn stop_signals(&self) -> Result<Option<Vec<StopSignal>>, ConfigurationError> {
+        self.value(AGENTS, STOP_SIGNALS, |item| {
+            let signals = item
+                .as_array()
+                .ok_or_else(|| "must be a list of signal names".to_owned())?
+                .iter()
+                .map(|signal| {
+                    signal
+                        .as_str()
+                        .ok_or_else(|| "must be a list of signal names".to_owned())?
+                        .parse()
+                })
+                .collect::<Result<Vec<StopSignal>, String>>()?;
+            // The command must end: a stop that only asks can wait forever.
+            if signals.last() != Some(&StopSignal::Kill) {
+                return Err("must end with \"KILL\"".to_owned());
+            }
+            Ok(signals)
+        })
+    }
+
+    /// How long the command of an agent session has to end after each
+    /// signal of [`stop_signals`](Self::stop_signals): `stop_wait` in
+    /// `[agents]`, for example `"5s"`. Returns `None` if the file does not
+    /// have the key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value is not a number with the unit `s`,
+    /// `m`, `h` or `d`.
+    pub fn stop_wait(&self) -> Result<Option<Duration>, ConfigurationError> {
+        self.duration_value(AGENTS, STOP_WAIT, "5s")
+    }
+
+    fn memory_value(&self, table: &str, key: &str) -> Result<Option<u64>, ConfigurationError> {
+        self.text_value(table, key, |text| {
+            size_text::parse(text).ok_or_else(|| {
+                "must be a number larger than 0 with the unit K, M or G, for example \"4G\""
+                    .to_owned()
+            })
+        })
+    }
+
+    fn duration_value(
+        &self,
+        table: &str,
+        key: &str,
+        example: &str,
+    ) -> Result<Option<Duration>, ConfigurationError> {
+        self.text_value(table, key, |text| {
             duration_text::parse(text).ok_or_else(|| {
-                "must be a number with the unit s, m, h or d, for example \"10m\"".to_owned()
+                format!("must be a number with the unit s, m, h or d, for example \"{example}\"")
             })
         })
     }

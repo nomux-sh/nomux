@@ -4,9 +4,12 @@ use std::env;
 use std::fmt::Write;
 use std::io::{self, IsTerminal};
 
-use nomux_client::{AttachEnd, ExitStatus, HostInfo, Session, SessionState, WorkspaceTree};
+use nomux_client::{
+    AttachEnd, ExitStatus, HibernationReason, HostInfo, Session, SessionState, WorkspaceTree,
+};
 use nomux_core::configuration::HostEntry;
 
+use super::memory_size::memory_size;
 use super::table::{Cell, Table};
 use super::{extension_human, hooks_human, memory_human, status_human, workspace_human};
 use crate::report::{AddedHost, HostDiagnosis, Report, ServiceFileAction, ServiceFileReport};
@@ -56,6 +59,23 @@ pub(super) fn report(report: &Report, style: Style, width: Option<usize>) -> Str
             memory_human::session_table(sessions, memory, width)
         }
         Report::SessionStarted(session) => format!("session {} runs\n", described(session)),
+        Report::SessionHibernated(session) => hibernated(session),
+        Report::SessionWoken(session) => format!(
+            "session {} woke: {}\n",
+            described(session),
+            session
+                .hibernation
+                .as_ref()
+                .map_or_default(|hibernation| hibernation.resume_command.as_str())
+        ),
+        Report::SessionPinned {
+            session,
+            pinned: true,
+        } => format!("session {} is pinned\n", described(session)),
+        Report::SessionPinned {
+            session,
+            pinned: false,
+        } => format!("session {} is not pinned\n", described(session)),
         Report::OutputCaptured { output, .. } => String::from_utf8_lossy(output).into_owned(),
         Report::RestorePolicySet { session, policy } => {
             format!(
@@ -144,6 +164,9 @@ pub(super) fn quiet_report(report: &Report) -> String {
         Report::Workspace(report) => workspace_human::quiet_report(report),
         Report::OutputCaptured { output, .. } => String::from_utf8_lossy(output).into_owned(),
         Report::SessionStarted(_)
+        | Report::SessionHibernated(_)
+        | Report::SessionWoken(_)
+        | Report::SessionPinned { .. }
         | Report::RestorePolicySet { .. }
         | Report::ServiceFile(_)
         | Report::SessionKilled { .. }
@@ -159,6 +182,24 @@ pub(super) fn quiet_report(report: &Report) -> String {
         | Report::HostRemoved { .. }
         | Report::HostsChecked(_) => String::new(),
     }
+}
+
+fn hibernated(session: &Session) -> String {
+    let freed = session
+        .hibernation
+        .as_ref()
+        .and_then(|hibernation| hibernation.freed)
+        .map_or_else(
+            || "the memory was not measured".to_owned(),
+            |(bytes, measure)| {
+                format!(
+                    "{} given back ({})",
+                    memory_size(bytes),
+                    memory_human::measure_name(measure)
+                )
+            },
+        );
+    format!("session {} hibernated: {freed}\n", session.id)
 }
 
 fn service_file(service: &ServiceFileReport) -> String {
@@ -249,10 +290,14 @@ fn daemon_status(info: &HostInfo) -> String {
         1 => "1 session".to_owned(),
         count => format!("{count} sessions"),
     };
-    format!(
+    let mut text = format!(
         "nomuxd {} runs: process ID {}, {sessions}\n",
         info.daemon_version, info.daemon_pid
-    )
+    );
+    if let Some(limit) = &info.memory_limit {
+        let _ = writeln!(text, "memory limit: {}", limit.detail);
+    }
+    text
 }
 
 /// One row of the session table.
@@ -260,6 +305,7 @@ struct SessionRow<'a> {
     id: &'a str,
     name: Option<&'a str>,
     state: SessionState,
+    hibernated: bool,
     pid: String,
     /// The path of the Project of the session.
     project: Option<String>,
@@ -280,6 +326,7 @@ impl<'a> SessionRow<'a> {
             id: &session.id,
             name: session.name.as_deref(),
             state: session.state,
+            hibernated: session.is_hibernated(),
             pid: or_dash(session.pid.map_or_default(|pid| pid.to_string())),
             project: session
                 .project(workspace)
@@ -291,19 +338,53 @@ impl<'a> SessionRow<'a> {
 }
 
 /// What a person must know about a session and what has no column: how its
-/// command ended, and why its state files are damaged.
+/// command ended, why it hibernated, if a wake failed, if it is pinned, and
+/// why its state files are damaged.
 fn note(session: &Session) -> String {
     let exit = session.exit.map(|exit| match exit.status {
         ExitStatus::Exited { code } => format!("exit status {code}"),
         ExitStatus::Signaled { signal } => format!("signal {signal}"),
         ExitStatus::Unknown => "exit status not known".to_owned(),
     });
+    let hibernation = session
+        .hibernation
+        .as_ref()
+        .filter(|_| session.is_hibernated());
+    let reason = hibernation.map(|hibernation| reason_name(hibernation.reason).to_owned());
+    let wake_error = hibernation
+        .and_then(|hibernation| hibernation.wake_error.as_deref())
+        .map(|error| format!("wake failed: {error}"));
     let parts: Vec<&str> = exit
         .as_deref()
         .into_iter()
+        .chain(reason.as_deref())
+        .chain(wake_error.as_deref())
+        .chain(session.pinned.then_some("pinned"))
         .chain(session.damage.as_deref())
         .collect();
     parts.join("; ")
+}
+
+/// The name of a reason of a hibernation in the output of the CLI.
+pub(super) fn reason_name(reason: HibernationReason) -> &'static str {
+    match reason {
+        HibernationReason::Count => "count",
+        HibernationReason::SessionMemory => "session-memory",
+        HibernationReason::TotalMemory => "total-memory",
+        HibernationReason::MemoryPressure => "memory-pressure",
+        HibernationReason::Request => "request",
+        HibernationReason::Unknown => "unknown",
+    }
+}
+
+/// The state of `session` for a person: a hibernated session is dormant
+/// for the protocol, and the CLI names it.
+pub(super) fn session_state_name(session: &Session) -> &'static str {
+    if session.is_hibernated() {
+        "hibernated"
+    } else {
+        state_name(session.state)
+    }
 }
 
 fn session_table(
@@ -354,7 +435,14 @@ fn session_table(
             cells.push(Cell::new(row.name.unwrap_or("-")));
         }
         cells.extend([
-            Cell::coloured(state_name(row.state), colour(row.state, style)),
+            Cell::coloured(
+                if row.hibernated {
+                    "hibernated"
+                } else {
+                    state_name(row.state)
+                },
+                colour(row.state, style),
+            ),
             Cell::new(row.pid),
         ]);
         if has_projects {
@@ -416,6 +504,8 @@ mod tests {
             resolved_working_directory: None,
             last_attached_at: None,
             attached_clients: 0,
+            hibernation: None,
+            pinned: false,
         }
     }
 

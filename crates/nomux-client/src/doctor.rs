@@ -17,7 +17,7 @@ use crate::{Client, ClientError, ClientKind};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostCheck {
     /// The name of the check: `connection`, `platform`, `binaries`,
-    /// `permissions`, `daemon` or `versions`.
+    /// `permissions`, `daemon`, `versions` or `memory-limit`.
     pub name: &'static str,
     /// `true` if the host passed the check.
     pub passed: bool,
@@ -93,9 +93,12 @@ pub async fn check_host(
     checks.push(HostCheck::of("permissions", permissions(&connection).await));
 
     let socket = daemon_socket(&probe.home);
-    let (daemon, versions) = daemon(&connection, &socket, kind).await;
+    let (daemon, versions, memory_limit) = daemon(&connection, &socket, kind).await;
     checks.push(HostCheck::of("daemon", daemon));
     checks.extend(versions.map(|versions| HostCheck::of("versions", versions)));
+    // A host without a limit of the operating system still works: the
+    // limit is then a threshold of the hibernation.
+    checks.extend(memory_limit.map(|detail| HostCheck::of("memory-limit", Ok(detail))));
     checks
 }
 
@@ -117,12 +120,17 @@ async fn permissions(connection: &SshConnection) -> Result<String, String> {
     check_permissions(&String::from_utf8_lossy(&output.stdout))
 }
 
-/// The state of the daemon, and the versions if a daemon answers.
+/// The state of the daemon, and the versions and the memory limit of the
+/// operating system if a daemon answers.
 async fn daemon(
     connection: &SshConnection,
     socket: &str,
     kind: ClientKind,
-) -> (Result<String, String>, Option<Result<String, String>>) {
+) -> (
+    Result<String, String>,
+    Option<Result<String, String>>,
+    Option<String>,
+) {
     let stream = match connection.open_unix_socket(socket).await {
         Ok(stream) => stream,
         Err(SshError::SocketUnavailable) => {
@@ -133,9 +141,9 @@ async fn daemon(
                 }
                 Err(error) => Err(error.to_string()),
             };
-            return (daemon, None);
+            return (daemon, None, None);
         }
-        Err(error) => return (Err(error.to_string()), None),
+        Err(error) => return (Err(error.to_string()), None, None),
     };
     let mut client = match Client::on(stream, kind).await {
         Ok(client) => client,
@@ -144,9 +152,9 @@ async fn daemon(
                 "{message}. The next command of this client for the host replaces the daemon \
                  with nomuxd {VERSION}. No session ends"
             );
-            return (Ok("a daemon runs".to_owned()), Some(Err(replace)));
+            return (Ok("a daemon runs".to_owned()), Some(Err(replace)), None);
         }
-        Err(error) => return (Err(error.to_string()), None),
+        Err(error) => return (Err(error.to_string()), None, None),
     };
     match client.host_info().await {
         Ok(info) => {
@@ -167,8 +175,9 @@ async fn daemon(
                     info.daemon_version
                 )
             };
-            (Ok(daemon), Some(Ok(versions)))
+            let memory_limit = info.memory_limit.map(|limit| limit.detail);
+            (Ok(daemon), Some(Ok(versions)), memory_limit)
         }
-        Err(error) => (Err(error.to_string()), None),
+        Err(error) => (Err(error.to_string()), None, None),
     }
 }

@@ -22,7 +22,8 @@ use self::process_memory::ProcessMemory;
 use self::process_table::{Descendant, ProcessTable};
 
 /// How the memory of the processes of one session was measured.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub(crate) enum MemoryMeasure {
     /// The proportional set size: a sum counts no shared page two times.
     Proportional,

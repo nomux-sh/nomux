@@ -46,6 +46,10 @@ name = "attach_measurements"
 path = "measurements/attach.rs"
 
 [[example]]
+name = "hibernation_measurements"
+path = "measurements/hibernation.rs"
+
+[[example]]
 name = "hook_measurements"
 path = "measurements/hooks.rs"
 
@@ -84,6 +88,10 @@ path = "daemon_service.rs"
 [[test]]
 name = "extensions"
 path = "extensions.rs"
+
+[[test]]
+name = "hibernation"
+path = "hibernation.rs"
 
 [[test]]
 name = "holder_pool"

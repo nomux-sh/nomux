@@ -12,6 +12,7 @@ use crate::arguments::RunningDaemon;
 use crate::events::EventLog;
 use crate::extensions;
 use crate::handlers::Context;
+use crate::hibernation;
 use crate::hooks::HookDelivery;
 use crate::in_flight_requests::InFlightRequests;
 use crate::instance_lock::InstanceLock;
@@ -43,6 +44,7 @@ pub(crate) async fn run(running_daemon: RunningDaemon) -> io::Result<()> {
         Settings::load(),
         shutdown.clone(),
         Arc::clone(&status),
+        Arc::clone(&events),
     )?);
     // A client that connects now waits in the queue of the socket. It gets
     // its answer after the daemon has the sessions of the earlier daemon
@@ -75,8 +77,13 @@ pub(crate) async fn run(running_daemon: RunningDaemon) -> io::Result<()> {
         let sessions = Arc::clone(&context.sessions);
         async move { sessions.restore_automatic().await }
     });
+    let hibernating = tokio::task::spawn_local(hibernation::run(
+        Arc::clone(&context.sessions),
+        Arc::clone(&context.events),
+    ));
     listener::serve(listener, Arc::clone(&context)).await;
     restoring.abort();
+    hibernating.abort();
 
     // A call of an extension that waits gets its answer now: the extension
     // stopped. No request starts an extension after this.

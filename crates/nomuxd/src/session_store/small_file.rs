@@ -1,8 +1,11 @@
-//! Reads one small file of the state directory.
+//! Reads and writes one small file of the state directory.
 
-use std::fs::{self, File};
-use std::io::{self, Read};
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
+
+const OWNER_READ_WRITE: u32 = 0o600;
 
 /// Reads the regular file `path`, which has `limit` bytes at most.
 ///
@@ -30,4 +33,27 @@ pub(crate) fn read(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
         ));
     }
     Ok(bytes)
+}
+
+/// Replaces the file `name` in `directory` with `bytes` in one step: the
+/// bytes go to a new file first, and a rename then puts it in the place of
+/// the file.
+pub(crate) fn replace(directory: &Path, name: &str, bytes: &[u8]) -> io::Result<()> {
+    let new_file = directory.join(format!("{name}.new"));
+    OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(OWNER_READ_WRITE)
+        .open(&new_file)?
+        .write_all(bytes)?;
+    fs::rename(new_file, directory.join(name))
+}
+
+/// Removes the file `path`. A file that does not exist is removed.
+pub(crate) fn remove(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
+    }
 }

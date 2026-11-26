@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use super::json::SessionDocument;
 use super::memory_human::measure_name;
-use crate::session_memory::{MemoryTotal, memory_of};
+use crate::session_memory::{FreedMemory, MemoryTotal, memory_of};
 
 /// The fields of the document of `ls --memory`.
 #[derive(Serialize)]
@@ -30,6 +30,8 @@ struct MemoryDocument {
     command_processes: u32,
     holder_bytes: u64,
     measure: &'static str,
+    /// `null` if the operating system applies no limit.
+    limit_bytes: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -41,11 +43,15 @@ struct TotalDocument {
     /// `null` if the sessions do not have the same measure, or if no session
     /// has a process.
     measure: Option<&'static str>,
+    /// The memory that the hibernated sessions gave back, and their number.
+    freed_bytes: u64,
+    hibernated_sessions: u64,
 }
 
 impl<'a> SessionsMemoryBody<'a> {
     pub(super) fn new(sessions: &'a [Session], memory: &[SessionMemory]) -> Self {
         let total = MemoryTotal::of(memory);
+        let freed = FreedMemory::of(sessions);
         Self {
             sessions: sessions
                 .iter()
@@ -56,6 +62,7 @@ impl<'a> SessionsMemoryBody<'a> {
                         command_processes: memory.command_processes,
                         holder_bytes: memory.holder_bytes,
                         measure: measure_name(memory.measure),
+                        limit_bytes: memory.limit_bytes,
                     }),
                 })
                 .collect(),
@@ -65,6 +72,8 @@ impl<'a> SessionsMemoryBody<'a> {
                 holder_bytes: total.holder_bytes,
                 sessions: total.sessions,
                 measure: total.measure.map(measure_name),
+                freed_bytes: freed.bytes,
+                hibernated_sessions: freed.sessions,
             },
         }
     }

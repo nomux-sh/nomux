@@ -9,6 +9,9 @@ pub enum NeedsYouKind {
     Question,
     /// The user must give a login, a token or a credential.
     Auth,
+    /// The agent waits at its input prompt for the next instruction.
+    /// Nothing that it asked for is pending.
+    Prompt,
 }
 
 /// The state of an Agent run or of a Child work.

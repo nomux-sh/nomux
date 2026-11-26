@@ -47,7 +47,14 @@ impl Sessions {
             .records()
             .into_iter()
             .filter(|record| record.state == SessionState::Dormant)
-            .filter(|record| self.restore_policy(&record.id) == RestorePolicy::Auto);
+            .filter(|record| self.restore_policy(&record.id) == RestorePolicy::Auto)
+            // A hibernated agent waits for the user: it gave its memory back.
+            .filter(|record| {
+                !self
+                    .store
+                    .hibernation(&record.id)
+                    .is_some_and(|hibernation| hibernation.is_hibernated())
+            });
         for record in dormant {
             if let Err(error) = self.restore(&record.id, None).await {
                 warn!(session = %record.id, %error, "cannot start the session again");

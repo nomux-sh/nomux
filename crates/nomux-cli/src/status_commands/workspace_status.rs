@@ -104,6 +104,8 @@ mod tests {
             last_attached_at: None,
             attached_clients: 0,
             resolved_working_directory: None,
+            hibernation: None,
+            pinned: false,
         }
     }
 

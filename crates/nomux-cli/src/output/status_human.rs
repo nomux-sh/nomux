@@ -5,11 +5,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use nomux_client::{
     AgentExplanation, AgentRun, AgentState, AgentStatus, AgentTree, ChildWork, EventBody,
-    HostEvent, NeedsYouKind, ReportedState, Session, SourceExplanation, StatusSource,
-    WorkspaceTree,
+    HibernatedEvent, HostEvent, NeedsYouKind, ReportedState, Session, SourceExplanation,
+    StatusSource, WorkspaceTree,
 };
 
-use super::human::{BLUE, GREEN, RED, Style, YELLOW, column_width};
+use super::human::{BLUE, GREEN, RED, Style, YELLOW, column_width, reason_name};
+use super::memory_size::memory_size;
 use super::table::{Cell, INDENT, Table};
 use super::workspace_human;
 use crate::status_commands::{StatusReport, WorkspaceStatus};
@@ -93,9 +94,53 @@ pub(super) fn event_line(event: &HostEvent) -> String {
                 workspace_human::change_line(*revision, change)
             )
         }
+        EventBody::SessionHibernated(hibernated) => {
+            format!("{seq} {}\n", hibernated_line(hibernated))
+        }
+        EventBody::SessionWoken {
+            session_id,
+            resume_command,
+        } => format!("{seq} {session_id} woke: {resume_command}\n"),
+        EventBody::SessionWakeFailed {
+            session_id,
+            error,
+            resume_command,
+        } => {
+            format!("{seq} {session_id} did not wake: {error}; resume command: {resume_command}\n")
+        }
+        EventBody::SessionMemoryLimitReached {
+            session_id,
+            limit_bytes,
+        } => format!(
+            "{seq} {session_id} ended at its memory limit of {}\n",
+            memory_size(*limit_bytes)
+        ),
         EventBody::Snapshot => format!("{seq} snapshot: the status of each session follows\n"),
         EventBody::Unknown => format!("{seq} an event that this client does not know\n"),
     }
+}
+
+/// The line of a hibernation: the session, the reason, the numbers of the
+/// trigger and the memory that it gave back.
+fn hibernated_line(event: &HibernatedEvent) -> String {
+    let trigger = match (event.live_agents, event.memory, event.pressure) {
+        (Some((live, max_live)), _, _) => format!(", {live} live agents, limit {max_live}"),
+        (_, Some((bytes, limit)), _) => {
+            format!(
+                ", {} used, limit {}",
+                memory_size(bytes),
+                memory_size(limit)
+            )
+        }
+        (_, _, Some((stall, window))) => format!(", {stall} ms waited for memory in {window} ms"),
+        _ => String::new(),
+    };
+    format!(
+        "{} hibernated ({}{trigger}): {} given back",
+        event.session_id,
+        reason_name(event.reason),
+        memory_size(event.freed_bytes)
+    )
 }
 
 /// One row of the status table: a session, or a Child work below it.
@@ -105,6 +150,8 @@ struct Row<'a> {
     name: String,
     command: String,
     status: Option<&'a AgentStatus>,
+    /// The reason of the hibernation of a hibernated session.
+    hibernated: Option<&'static str>,
 }
 
 /// The rows of the sessions. With `workspace`, the sessions without a
@@ -135,6 +182,7 @@ fn rows<'a>(
             name: format!("{}{}{mark}", INDENT.repeat(node.depth), node.node.name),
             command: String::new(),
             status: node.aggregate,
+            hibernated: None,
         });
         for run in node.runs {
             session_rows(run, sessions, node.depth + 1, with_children, &mut rows);
@@ -155,10 +203,15 @@ fn session_rows<'a>(
     let session = sessions.iter().find(|session| session.id == run.session_id);
     let command = session.map_or_else(String::new, |session| session.command.join(" "));
     let label = session.map_or(run.session_id.as_str(), Session::label);
+    let hibernated = session
+        .filter(|session| session.is_hibernated())
+        .and_then(|session| session.hibernation.as_ref())
+        .map(|hibernation| reason_name(hibernation.reason));
     rows.push(Row {
         name: format!("{}{label}", INDENT.repeat(depth)),
         command,
         status: Some(&run.aggregate),
+        hibernated,
     });
     if with_children {
         child_rows(&run.children, depth + 1, rows);
@@ -171,6 +224,7 @@ fn child_rows<'a>(children: &'a [ChildWork], depth: usize, rows: &mut Vec<Row<'a
             name: format!("{}{}", INDENT.repeat(depth), child.name),
             command: String::new(),
             status: child.status.as_ref(),
+            hibernated: None,
         });
         child_rows(&child.children, depth + 1, rows);
     }
@@ -192,7 +246,10 @@ fn status_table(header: &str, rows: &[Row<'_>], style: Style, width: Option<usiz
         let (mark, state, time, message) = match row.status {
             Some(status) => (
                 mark(status.state),
-                state_text(status),
+                row.hibernated.map_or_else(
+                    || state_text(status),
+                    |reason| format!("hibernated: {reason}"),
+                ),
                 duration(now.saturating_sub(status.since_ms)),
                 message_of(status).unwrap_or_default().to_owned(),
             ),
@@ -331,6 +388,7 @@ pub(super) fn state_name(state: AgentState) -> &'static str {
         AgentState::NeedsYou(Some(NeedsYouKind::Permission)) => "needs you: permission",
         AgentState::NeedsYou(Some(NeedsYouKind::Question)) => "needs you: question",
         AgentState::NeedsYou(Some(NeedsYouKind::Auth)) => "needs you: auth",
+        AgentState::NeedsYou(Some(NeedsYouKind::Prompt)) => "needs you: prompt",
         AgentState::Error => "error",
         AgentState::Unknown => "unknown",
     }
@@ -426,6 +484,8 @@ mod tests {
             last_attached_at: None,
             attached_clients: 0,
             resolved_working_directory: None,
+            hibernation: None,
+            pinned: false,
         }
     }
 

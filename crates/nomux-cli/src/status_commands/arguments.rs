@@ -60,6 +60,14 @@ pub(crate) enum EventTypeArgument {
     ExtensionEvent,
     /// The workspace tree of the Groups and the Projects changed
     WorkspaceChanged,
+    /// The daemon hibernated a session
+    SessionHibernated,
+    /// A wake started the resume command of a session
+    SessionWoken,
+    /// A wake of a session failed
+    SessionWakeFailed,
+    /// The operating system ended a session at its memory limit
+    SessionMemoryLimitReached,
 }
 
 impl From<EventTypeArgument> for EventType {
@@ -69,6 +77,10 @@ impl From<EventTypeArgument> for EventType {
             EventTypeArgument::AgentRunRemoved => Self::AgentRunRemoved,
             EventTypeArgument::ExtensionEvent => Self::ExtensionEvent,
             EventTypeArgument::WorkspaceChanged => Self::WorkspaceChanged,
+            EventTypeArgument::SessionHibernated => Self::SessionHibernated,
+            EventTypeArgument::SessionWoken => Self::SessionWoken,
+            EventTypeArgument::SessionWakeFailed => Self::SessionWakeFailed,
+            EventTypeArgument::SessionMemoryLimitReached => Self::SessionMemoryLimitReached,
         }
     }
 }

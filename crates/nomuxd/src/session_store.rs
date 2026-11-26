@@ -3,15 +3,18 @@
 //!
 //! The holder of a session writes its directory: the session metadata and
 //! the journal. The daemon reads the two, also when no holder runs, and it
-//! owns two files of its own in the directory: the restore policy and the
-//! name. Only the daemon removes a directory.
+//! owns four files of its own in the directory: the restore policy, the
+//! name, the last hibernation and the pin. Only the daemon removes a
+//! directory.
 //!
 //! The daemon trusts no file of a directory. A file that is damaged, too
 //! long or not a regular file gives a reason for a person, and it never
 //! stops the daemon.
 
+mod hibernation_file;
 mod journal_check;
 mod name_file;
+mod pin_file;
 mod restore_policy_file;
 pub(crate) mod small_file;
 mod stored_metadata;
@@ -27,6 +30,8 @@ use nomux_holder_protocol::session_state::{
     JOURNAL_DIRECTORY, METADATA_FILE, SessionMetadata, default_state_directory,
     session_state_directory,
 };
+
+pub(crate) use self::hibernation_file::{HibernationReason, HibernationRecord};
 
 /// The name that `session_state_directory` of the holder contract gives to
 /// the directory with one directory for each session. A test compares the
@@ -115,6 +120,32 @@ impl SessionStore {
     /// Gives `id` the name `name`, or removes its name for `None`.
     pub(crate) fn set_name(&self, id: &SessionId, name: Option<&SessionName>) -> io::Result<()> {
         name_file::write(&self.session_directory(id), name)
+    }
+
+    /// The last hibernation of `id`. `None` if the session never hibernated.
+    pub(crate) fn hibernation(&self, id: &SessionId) -> Option<HibernationRecord> {
+        hibernation_file::read(&self.session_directory(id))
+    }
+
+    pub(crate) fn set_hibernation(
+        &self,
+        id: &SessionId,
+        record: &HibernationRecord,
+    ) -> io::Result<()> {
+        hibernation_file::write(&self.session_directory(id), record)
+    }
+
+    pub(crate) fn remove_hibernation(&self, id: &SessionId) -> io::Result<()> {
+        hibernation_file::remove(&self.session_directory(id))
+    }
+
+    /// `true` if the user excluded `id` from automatic hibernation.
+    pub(crate) fn is_pinned(&self, id: &SessionId) -> bool {
+        pin_file::is_pinned(&self.session_directory(id))
+    }
+
+    pub(crate) fn set_pinned(&self, id: &SessionId, pinned: bool) -> io::Result<()> {
+        pin_file::set(&self.session_directory(id), pinned)
     }
 
     /// Removes the state directory of `id`: the daemon forgets the session.

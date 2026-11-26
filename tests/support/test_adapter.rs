@@ -1,12 +1,13 @@
 //! The adapter extension of the end-to-end tests: the adapter of the
 //! made-up tool `testtool`. It is not the adapter of a real tool.
 //!
-//! It maps three hook events of `testtool` to status reports. The data of
+//! It maps four hook events of `testtool` to status reports. The data of
 //! each event is a JSON object:
 //!
 //! | Event | Data | Report |
 //! |---|---|---|
-//! | `prompt` | `model`, `session` | The Agent run works, with the details. |
+//! | `prompt` | `model`, `session`, `resume` | The Agent run works, with the details. The resume command is `resume`, or `testtool --resume <session>`. |
+//! | `stop` | none | The Agent run is done. |
 //! | `tool` | `tool` | The Agent run works (soft), with the name of the tool. |
 //! | `task` | `id`, `parent`, `phase` (`start` or `end`), `title` | A Child work starts or ends. |
 //!
@@ -25,7 +26,7 @@ use serde_json::Value;
 /// the same identifier.
 const ID: &str = "nomux.test-adapter";
 const SETTINGS: &str = "~/.testtool/settings.json";
-const EVENTS: [&str; 3] = ["prompt", "tool", "task"];
+const EVENTS: [&str; 4] = ["prompt", "tool", "task", "stop"];
 
 /// The payload of the event `mapped`.
 #[derive(Clone, PartialEq, prost::Message)]
@@ -54,8 +55,21 @@ fn hook(call: &Call, event: HookEvent) -> Result<HookAnswer, CallError> {
                 details: Some(AgentDetails {
                     model: text("model"),
                     provider_session_id: text("session"),
-                    resume_command: format!("testtool --resume {}", text("session")),
+                    resume_command: match text("resume") {
+                        resume if resume.is_empty() => {
+                            format!("testtool --resume {}", text("session"))
+                        }
+                        resume => resume,
+                    },
                 }),
+                ..AgentReport::default()
+            },
+        )?,
+        "stop" => report(
+            call,
+            &AgentReport {
+                session_id: event.session_id,
+                state: AgentState::Done.into(),
                 ..AgentReport::default()
             },
         )?,

@@ -12,7 +12,13 @@ use crate::session_memory::{MemoryMeasure, SessionMemory};
 pub(super) async fn memory(context: &Context) -> Result<response::Result, Error> {
     let sessions = context.sessions.memory().await?;
     Ok(response::Result::SessionMemory(SessionMemoryResponse {
-        sessions: sessions.into_iter().map(WireSessionMemory::from).collect(),
+        sessions: sessions
+            .into_iter()
+            .map(|memory| WireSessionMemory {
+                limit_bytes: context.sessions.kernel_memory_limit(&memory.id),
+                ..memory.into()
+            })
+            .collect(),
     }))
 }
 

@@ -33,22 +33,31 @@ pub struct SessionMemory {
     pub holder_bytes: u64,
     /// How the daemon measured the two values.
     pub measure: MemoryMeasure,
+    /// The memory limit that the operating system applies to the
+    /// processes of the command, in bytes. `None` if no such limit
+    /// applies.
+    pub limit_bytes: Option<u64>,
 }
 
 impl From<wire::SessionMemory> for SessionMemory {
     fn from(memory: wire::SessionMemory) -> Self {
-        let measure = match wire::MemoryMeasure::try_from(memory.measure) {
-            Ok(wire::MemoryMeasure::Proportional) => MemoryMeasure::Proportional,
-            Ok(wire::MemoryMeasure::Resident) => MemoryMeasure::Resident,
-            Ok(wire::MemoryMeasure::Unspecified) | Err(_) => MemoryMeasure::Unknown,
-        };
+        let measure = measure_of(memory.measure);
         Self {
             id: memory.id,
             command_bytes: memory.command_bytes,
             command_processes: memory.command_processes,
             holder_bytes: memory.holder_bytes,
             measure,
+            limit_bytes: (memory.limit_bytes != 0).then_some(memory.limit_bytes),
         }
+    }
+}
+
+pub(crate) fn measure_of(measure: i32) -> MemoryMeasure {
+    match wire::MemoryMeasure::try_from(measure) {
+        Ok(wire::MemoryMeasure::Proportional) => MemoryMeasure::Proportional,
+        Ok(wire::MemoryMeasure::Resident) => MemoryMeasure::Resident,
+        Ok(wire::MemoryMeasure::Unspecified) | Err(_) => MemoryMeasure::Unknown,
     }
 }
 

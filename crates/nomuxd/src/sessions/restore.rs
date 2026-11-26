@@ -21,6 +21,7 @@ use crate::holder::HolderStart;
 use crate::session_error::SessionError;
 use crate::session_handle::SessionHandle;
 use crate::session_registry::{SessionRecord, SessionState};
+use crate::session_store::HibernationRecord;
 
 /// A session that a client can attach to.
 pub(crate) struct Attachable {
@@ -95,17 +96,38 @@ impl Sessions {
                  be removed: {error}"
             ))
         })?;
-        let mut command: Vec<OsString> = vec![metadata.command];
-        command.extend(metadata.arguments);
+        // A hibernated session wakes with the resume command of its agent.
+        let hibernation = self
+            .store
+            .hibernation(id)
+            .filter(HibernationRecord::is_hibernated);
+        let command: Vec<OsString> = match &hibernation {
+            Some(record) => self.wake_command(id, record, &metadata)?,
+            None => std::iter::once(metadata.command.clone())
+                .chain(metadata.arguments.iter().cloned())
+                .collect(),
+        };
+        let launcher = self.launcher(id, metadata.epoch.saturating_add(1));
         let start = HolderStart {
             session_id: id,
             command: &command,
+            launcher: &launcher,
             working_directory: &metadata.working_directory,
             size: Some(size.unwrap_or(metadata.size)),
             pooled: false,
             shell_start: None,
         };
-        let link = self.start_holder(start).await?;
+        let link = match (self.start_holder(start).await, hibernation) {
+            (Ok(link), Some(record)) => {
+                self.woken(id, record);
+                link
+            }
+            (Ok(link), None) => link,
+            (Err(error), Some(record)) => {
+                return Err(self.wake_failed(id, &record, &metadata, &error.to_string()));
+            }
+            (Err(error), None) => return Err(error),
+        };
         Ok((self.supervise(id.clone(), Some(link)), Some(metadata.epoch)))
     }
 

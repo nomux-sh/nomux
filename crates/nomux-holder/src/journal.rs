@@ -110,6 +110,13 @@ impl Journal {
         }
     }
 
+    /// Writes each byte that waits and then a checkpoint of `screen`, for
+    /// the daemon before it ends the command.
+    pub(crate) fn checkpoint_now(&mut self, screen: &mut Terminal, size: WindowSize) {
+        self.checkpoint_due = true;
+        self.flush(screen, size);
+    }
+
     /// Takes output bytes that the screen also got.
     pub(crate) fn append(&mut self, output: &[u8]) {
         if self.writer.is_none() {

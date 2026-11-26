@@ -4,6 +4,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use nomux_status::Timestamp;
 
+/// Now: seconds after the Unix epoch. A clock before the epoch gives 0.
+pub(crate) fn now_seconds() -> u64 {
+    now().0 / 1000
+}
+
 /// Now: milliseconds after the Unix epoch. A clock before the epoch gives
 /// 0.
 pub(crate) fn now() -> Timestamp {

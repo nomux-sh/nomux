@@ -115,6 +115,7 @@ impl Sessions {
         let start = HolderStart {
             session_id: &session_id,
             command: &command,
+            launcher: &[],
             working_directory: &self.home,
             size: None,
             pooled: true,
