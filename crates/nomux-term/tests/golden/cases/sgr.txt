@@ -1,0 +1,97 @@
+# Select graphic rendition (SGR): the forms that the golden tests of sgr.rs do not have.
+
+case SGR 4:0 turns off the underline
+follows kitty "underline styles"; ECMA-48 8.3.117 SGR 4
+input \e[4:3mA\e[4:0mB
+screen
+|AB                  |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,2
+style 0,0 underline=curly
+
+case SGR 21 is a double underline
+follows xterm ctlseqs "CSI Pm m", Ps = 21: doubly underlined
+input \e[21mA
+gap SGR 21 is not handled: the text has no underline
+screen
+|A                   |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,1
+style 0,0 underline=double
+library
+|A                   |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,1
+
+case SGR 38:2 without the color space parameter is a true color
+follows ITU T.416 8.3.3; xterm ctlseqs: "38:2:Pr:Pg:Pb" is also accepted
+input \e[38:2:10:20:30mA
+screen
+|A                   |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,1
+style 0,0 fg=#0a141e
+
+case SGR 58 with a palette color is the underline color
+follows kitty "colored underlines": 58:5:Ps
+input \e[4;58:5:200mA
+screen
+|A                   |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,1
+style 0,0 underline=single ul=200
+
+case SGR 5 is a blinking text
+follows ECMA-48 8.3.117 SGR 5; xterm ctlseqs "CSI Pm m", Ps = 5
+input \e[5mA
+gap The blink attribute is not kept
+screen
+|A                   |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,1
+style 0,0 blink
+library
+|A                   |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,1
+
+case SGR 53 is an overline
+follows ECMA-48 8.3.117 SGR 53; kitty and VTE support it
+input \e[53mA
+gap The overline attribute is not kept
+screen
+|A                   |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,1
+style 0,0 overline
+library
+|A                   |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,1

@@ -1,0 +1,41 @@
+# The alternate screen with the saved cursor (DEC mode 1049).
+
+case DECSET 1049 saves the style of the cursor
+follows xterm ctlseqs "CSI ? 1049 h": save the cursor as in DECSC
+input \e[31m\e[?1049h\e[0m\e[?1049lX
+screen
+|X                   |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,1
+style 0,0 fg=1
+
+case DECSC in the alternate screen does not change the cursor of the primary screen
+follows xterm: DECSET 1049 saves the cursor before the switch and DECRST 1049 restores it
+input \e[2;2H\e[?1049h\e[4;4H\e7\e[?1049lX
+screen
+|                    |
+| X                  |
+|                    |
+|                    |
+|                    |
+cursor 1,2
+
+case the alternate screen is erased with the current background
+follows xterm "back color erase" (bce in the terminfo description)
+input \e[44m\e[?1049h
+screen
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,0
+modes +ALTERNATE_SCREEN
+style 0,0-19 bg=4
+style 1,0-19 bg=4
+style 2,0-19 bg=4
+style 3,0-19 bg=4
+style 4,0-19 bg=4

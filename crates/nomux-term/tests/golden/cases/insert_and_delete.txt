@@ -1,0 +1,77 @@
+# Insert and delete of characters (ICH, DCH, ECH) at the end of the row.
+
+case ICH of more cells than the row has empties the rest of the row
+follows ECMA-48 8.3.64 ICH; xterm ctlseqs "CSI Ps @"
+input abcdef\e[1;3H\e[99@
+screen
+|ab                  |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,2
+
+case DCH of more cells than the row has empties the rest of the row
+follows ECMA-48 8.3.26 DCH; xterm ctlseqs "CSI Ps P"
+input abcdef\e[1;3H\e[99P
+gap A count larger than the cells from the cursor to the end of the row also erases the cells before the cursor: the library erases the last `count` cells of the row
+screen
+|ab                  |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,2
+library
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,2
+
+case DCH fills the end of the row with the current background
+follows xterm "back color erase" (bce in the terminfo description)
+input abcdef\e[1;2H\e[41m\e[2P
+screen
+|adef                |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,1
+style 0,18-19 bg=1
+
+case ICH fills the inserted cells with the current background
+follows xterm "back color erase" (bce in the terminfo description)
+input abcdef\e[1;2H\e[41m\e[2@
+screen
+|a  bcdef            |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,1
+style 0,1-2 bg=1
+
+case ECH of more cells than the row has stops at the end of the row
+follows ECMA-48 8.3.38 ECH; xterm ctlseqs "CSI Ps X"
+input abc\r\ndef\e[1;2H\e[99X
+screen
+|a                   |
+|def                 |
+|                    |
+|                    |
+|                    |
+cursor 0,1
+
+case ICH moves a wide character out of the row
+follows Unicode UAX #11: a wide character uses two cells; a half of it is an empty cell
+input \e[1;18H日\e[1;1H\e[2@
+screen
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,0

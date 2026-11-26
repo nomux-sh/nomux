@@ -1,0 +1,65 @@
+# Autowrap (DECAWM) and the pending wrap after a character in the last column.
+
+case BS after a character in the last column moves to the column before it
+follows xterm: the cursor is in the last column, and BS ends the pending wrap; vttest "autowrap"
+input abcdefghijklmnopqrst\bX
+screen
+|abcdefghijklmnopqrXt|
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,19
+
+case CUP after a character in the last column ends the pending wrap
+follows DEC STD 070 last column flag: each cursor move resets it
+input abcdefghijklmnopqrst\e[1;20HX
+screen
+|abcdefghijklmnopqrsX|
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,19
+
+case LF after a character in the last column keeps the column
+follows DEC STD 070 last column flag: LF resets it
+input abcdefghijklmnopqrst\nX
+gap LF keeps the pending wrap: the next character goes to the first column of the row after the next row
+screen
+|abcdefghijklmnopqrst|
+|                   X|
+|                    |
+|                    |
+|                    |
+cursor 1,19
+library
+|abcdefghijklmnopqrst|
+|                    |
+|X                   |
+|                    |
+|                    |
+cursor 2,1
+
+case DECAWM reset after a character in the last column ends the pending wrap
+follows DEC STD 070 DECAWM: with autowrap off a character replaces the last column
+input abcdefghijklmnopqrst\e[?7lX\e[?7h
+screen
+|abcdefghijklmnopqrsX|
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,19
+
+case a combining mark after a character in the last column goes to that character
+follows Unicode 3.6 combining character sequence; xterm: no wrap for a character of zero width
+input aaaaaaaaaaaaaaaaaaae\u{301}
+screen
+|aaaaaaaaaaaaaaaaaaae|
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,19
+combining 0,19 U+0301
