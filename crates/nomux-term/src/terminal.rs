@@ -29,11 +29,22 @@ pub struct Terminal {
 }
 
 impl Terminal {
-    /// Makes a terminal with an empty screen. The terminal keeps no scrollback.
+    /// Makes a terminal with an empty screen. The terminal keeps no history.
     #[must_use]
     pub fn new(size: Size) -> Self {
+        Self::with_history(size, 0)
+    }
+
+    /// Makes a terminal with an empty screen that keeps up to
+    /// `history_rows` rows that scroll out above the screen. When the
+    /// history is full, a new history row removes the oldest row.
+    ///
+    /// [`Screen::history_cell`] reads the history. A row of the history
+    /// uses memory only after it scrolls out of the screen.
+    #[must_use]
+    pub fn with_history(size: Size, history_rows: usize) -> Self {
         let config = Config {
-            scrolling_history: 0,
+            scrolling_history: history_rows,
             kitty_keyboard: true,
             ..Config::default()
         };
@@ -88,13 +99,21 @@ impl Terminal {
     }
 
     /// Changes the size of the screen.
+    ///
+    /// The primary screen and its history reflow when the number of columns
+    /// changes: a row that wrapped joins the next row when the screen gets
+    /// wider, and a long row wraps into more rows when the screen gets
+    /// narrower. A row that ended with a line break does not reflow. The
+    /// alternate screen does not reflow. When the screen gets fewer rows,
+    /// the rows above the cursor go into the history; when it gets more
+    /// rows, rows of the history come back onto the screen.
     pub fn resize(&mut self, size: Size) {
         self.term.resize(size);
         self.size = size;
         self.end_wrap_before_the_last_column();
     }
 
-    /// The visible screen.
+    /// The visible screen and the history.
     #[must_use]
     pub fn screen(&self) -> Screen<'_> {
         Screen::new(&self.term, self.size)

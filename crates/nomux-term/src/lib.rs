@@ -6,7 +6,9 @@
 //! It gives the holder and the clients one interface for the terminal state:
 //!
 //! - [`Terminal`] takes the output of a program and keeps the screen.
-//! - [`Screen`] reads the visible cells, the cursor and the modes.
+//! - [`Screen`] reads the visible cells, the cursor and the modes, and the
+//!   history rows above the screen of a terminal that
+//!   [`Terminal::with_history`] made.
 //! - [`Terminal::write_redraw`] writes the byte sequence that makes the same
 //!   screen in a new terminal. The daemon sends it to a client that attaches.
 //! - [`Terminal::incomplete_tail`] is the number of bytes at the end of the
