@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [git-cliff](https://git-cliff.org) writes this file from the commit subjects.
 To see the changes that are not in a version, run `git cliff --unreleased`.
 
+## [0.3.0] - 2026-11-26
+
+### Added
+
+- Let the extension host inspect and remove a package
+- Serve the Ext service and run extensions in the daemon
+- Add the extension requests to the client library
+- Add the ext commands to the CLI
+- Read the restore policy and the retention time from config.toml
+- Restore sessions on demand and serve their journal
+
+### Documentation
+
+- Describe the extensions in the daemon and the ext commands
+- Describe the journal and OSC record fuzz targets
+- Describe dormant sessions, the restore and the daemon at login
 ## [0.2.1] - 2026-11-25
 
 ### Fixed
