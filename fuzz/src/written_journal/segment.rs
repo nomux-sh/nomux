@@ -39,6 +39,8 @@ pub(super) struct WrittenSegment {
     /// `true` if a hostile writer made bytes of the file. Their checksums
     /// are correct, thus the reader can take them.
     pub(super) forged: bool,
+    /// `true` if the file is a copy of a different segment.
+    copy: bool,
     /// The position that a reader expects after the last record, if it took
     /// each record of the file.
     pub(super) next_position: u64,
@@ -63,7 +65,10 @@ impl WrittenSegment {
     }
 
     /// A copy of the file of `source` with the name of a different segment.
-    /// A reader must not use it: its header says that it is `source`.
+    /// A reader does not use it while its header says that it is `source`.
+    /// A changed bit of the header can make the header say that it is this
+    /// segment: the reader then takes the records of `source`, as from a
+    /// hostile writer.
     pub(super) fn copy(directory: &Path, name: SegmentName, source: &Self) -> Self {
         let mut content = vec![0; usize::try_from(source.length).expect("a segment is small")];
         source
@@ -71,7 +76,8 @@ impl WrittenSegment {
             .read_exact_at(&mut content, 0)
             .expect("the file has its length");
         let mut segment = Self::with_content(directory, name, &content);
-        segment.forged = source.forged;
+        segment.forged = source.forged || !source.intact;
+        segment.copy = true;
         segment
     }
 
@@ -86,6 +92,7 @@ impl WrittenSegment {
             trusted_length: 0,
             intact: false,
             forged: false,
+            copy: false,
             next_position: name.start,
             records: Vec::new(),
         };
@@ -130,6 +137,7 @@ impl WrittenSegment {
             .write_all_at(&byte, offset)
             .expect("the offset is in the file");
         self.intact = false;
+        self.forged |= self.copy;
         self.trusted_length = self.trusted_length.min(offset);
     }
 
