@@ -20,7 +20,7 @@ pub fn adapter_package(parent: &Path) -> PathBuf {
     let package = parent.join(TEST_ADAPTER);
     let manifest = format!(
         "[extension]\nid = \"{TEST_ADAPTER}\"\nname = \"Test adapter\"\nversion = \"1.0.0\"\n\
-         api = \"^0.1\"\n\n[daemon]\ncommand = \"bin/adapter\"\n\n[adapter]\n\
+         api = \"^0.1.1\"\n\n[daemon]\ncommand = \"bin/adapter\"\n\n[adapter]\n\
          tools = [\"testtool\"]\n\n[permissions]\nscopes = [\"hooks:read\", \"agent:report\"]\n"
     );
     fs::create_dir_all(package.join("bin")).expect("the package directory can be made");
