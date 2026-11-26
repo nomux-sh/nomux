@@ -1,6 +1,7 @@
 //! The event log: the last events of the host, in memory.
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use nomux_proto::wire::v1::{Event, event};
@@ -33,6 +34,8 @@ pub(crate) struct EventLog {
     inner: Mutex<Inner>,
     /// The `seq` of the newest event.
     newest: watch::Sender<u64>,
+    /// The subscriptions of clients that run.
+    subscriptions: AtomicUsize,
 }
 
 #[derive(Default)]
@@ -47,6 +50,7 @@ impl Default for EventLog {
         Self {
             inner: Mutex::default(),
             newest: watch::Sender::new(0),
+            subscriptions: AtomicUsize::new(0),
         }
     }
 }
@@ -102,9 +106,29 @@ impl EventLog {
         self.newest.subscribe()
     }
 
+    /// Counts one subscription of a client until the result is dropped.
+    pub(crate) fn count_subscription(&self) -> CountedSubscription<'_> {
+        self.subscriptions.fetch_add(1, Ordering::Relaxed);
+        CountedSubscription(&self.subscriptions)
+    }
+
+    /// `true` while a client has a subscription.
+    pub(crate) fn has_subscriptions(&self) -> bool {
+        self.subscriptions.load(Ordering::Relaxed) > 0
+    }
+
     fn inner(&self) -> MutexGuard<'_, Inner> {
         // No code panics while it holds the lock, thus the log is whole.
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// One subscription that [`EventLog::has_subscriptions`] counts.
+pub(crate) struct CountedSubscription<'a>(&'a AtomicUsize);
+
+impl Drop for CountedSubscription<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
     }
 }
 

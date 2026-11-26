@@ -13,15 +13,18 @@ pub(super) const GIT_EXTENSION: &str = "nomux.git";
 /// The method of the git extension that gives the facts.
 const FACTS_METHOD: &str = "worktree_facts";
 
-/// Asks the git extension for the facts of the repository of `directory`.
-/// The error is a text for the user that says why the facts are missing and
-/// what the user can do.
+/// Asks the git extension for the facts of the repository of `directory`,
+/// with the base branch `base_branch` of the settings. The error is a text
+/// for the user that says why the facts are missing and what the user can
+/// do.
 pub(super) async fn of_project(
     extensions: &ExtensionHost,
     directory: &Path,
+    base_branch: &str,
 ) -> Result<WorktreeFactsResponse, String> {
     let request = WorktreeFactsRequest {
         repository: directory.display().to_string(),
+        base_branch: base_branch.to_owned(),
     };
     let payload = extensions
         .call(GIT_EXTENSION, FACTS_METHOD, request.encode_to_vec())

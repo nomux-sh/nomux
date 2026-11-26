@@ -48,7 +48,11 @@
 //! - [`Client::session_memory`]: the memory that the processes of each
 //!   session use, as [`SessionMemory`] values.
 //! - [`Client::worktrees`]: the worktrees of the Projects, as
-//!   [`ProjectWorktrees`] values.
+//!   [`ProjectWorktrees`] values. [`Client::plan_clean`] and
+//!   [`Client::clean_worktrees`]: the plan of a clean and its run;
+//!   [`Client::mark_worktree`], [`Client::trash_entries`],
+//!   [`Client::restore_worktree`] and [`Client::empty_trash`]: the marks
+//!   and the trash place.
 //! - [`ClientKind`], [`Session`], [`SessionState`], [`SessionExit`],
 //!   [`RestorePolicy`], [`NewSession`], [`WindowSize`] and [`HostInfo`]: the
 //!   data of the requests and the responses.
@@ -97,6 +101,7 @@ mod window_size;
 mod workspace;
 mod workspace_requests;
 mod worktree;
+mod worktree_clean;
 
 pub use agent::{
     AgentDetails, AgentExplanation, AgentRun, AgentState, AgentStatus, AgentTree, ChildWork,
@@ -138,6 +143,10 @@ pub use terminal::{
 pub use window_size::WindowSize;
 pub use workspace::{Applied, Workspace, WorkspaceChange};
 pub use worktree::{
-    BuildOutput, MergedBy, ProjectWorktrees, Refusal, Worktree, WorktreeFlag, WorktreeSize,
+    BuildOutput, Mark, MergedBy, ProjectWorktrees, Refusal, Worktree, WorktreeFlag, WorktreeSize,
     WorktreeState,
+};
+pub use worktree_clean::{
+    CleanAction, CleanOutcome, CleanRequest, CleanResult, Cleaned, Plan, PlanItem, PlanStep,
+    TrashEntry, TrashRemoval,
 };

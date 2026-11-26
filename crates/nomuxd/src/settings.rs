@@ -3,7 +3,8 @@
 use std::time::Duration;
 
 use nomux_core::configuration::{
-    ConfigurationError, ConfigurationFile, RestorePolicy, StopSignal, default_configuration_path,
+    AutoClean, BuildOutputRule, ConfigurationError, ConfigurationFile, RestorePolicy, StopSignal,
+    default_configuration_path,
 };
 use tracing::warn;
 
@@ -33,6 +34,16 @@ const DEFAULT_STOP_SIGNALS: [StopSignal; 3] =
 /// An agent that writes its conversation to the disk needs a moment.
 const DEFAULT_STOP_WAIT: Duration = Duration::from_secs(5);
 
+/// From the design of issue #37: two weeks without a commit or a checkout.
+const DEFAULT_STALE_AFTER: Duration = Duration::from_hours(14 * 24);
+/// A cold build of a small project takes seconds, thus a day of grace is
+/// cheap.
+const DEFAULT_GRACE: Duration = Duration::from_hours(24);
+/// A size walk of a large `node_modules` takes seconds: at most one an hour.
+const DEFAULT_SIZE_TTL: Duration = Duration::from_hours(1);
+const DEFAULT_WARN_FREE: u64 = 10 << 30;
+const DEFAULT_CRITICAL_FREE: u64 = 3 << 30;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Settings {
     /// The restore policy of a session that has none: `default_policy` in
@@ -58,6 +69,49 @@ pub(crate) struct Settings {
     pub(crate) total_memory_limit: Option<u64>,
     /// When the daemon hibernates idle agent sessions.
     pub(crate) hibernation: HibernationSettings,
+    /// The rules of the worktrees: the `[worktrees]` table.
+    pub(crate) worktrees: WorktreeSettings,
+}
+
+/// The settings of the worktrees: the `[worktrees]` table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WorktreeSettings {
+    /// The cleans that the daemon runs without a command: `auto`. Empty:
+    /// the daemon only reports.
+    pub(crate) auto: Vec<AutoClean>,
+    /// A worktree without activity for this time is stale: `stale_after`.
+    pub(crate) stale_after: Duration,
+    /// How long a worktree stays in the trash place: `grace`.
+    pub(crate) grace: Duration,
+    /// A size is old after this time: `size_ttl`.
+    pub(crate) size_ttl: Duration,
+    /// The base branch of the merge rules: `base`. Empty: the rule of the
+    /// git extension.
+    pub(crate) base: String,
+    /// The free bytes below which the daemon warns: `warn_free` in
+    /// `[worktrees.disk]`.
+    pub(crate) warn_free: u64,
+    /// The free bytes below which the free space is critical:
+    /// `critical_free` in `[worktrees.disk]`.
+    pub(crate) critical_free: u64,
+    /// The build-output rules of the user: `extra` in
+    /// `[worktrees.build_output]`.
+    pub(crate) build_output_rules: Vec<BuildOutputRule>,
+}
+
+impl Default for WorktreeSettings {
+    fn default() -> Self {
+        Self {
+            auto: Vec::new(),
+            stale_after: DEFAULT_STALE_AFTER,
+            grace: DEFAULT_GRACE,
+            size_ttl: DEFAULT_SIZE_TTL,
+            base: String::new(),
+            warn_free: DEFAULT_WARN_FREE,
+            critical_free: DEFAULT_CRITICAL_FREE,
+            build_output_rules: Vec::new(),
+        }
+    }
 }
 
 /// The settings of the hibernation: the `[agents]` table.
@@ -102,6 +156,7 @@ impl Default for Settings {
             session_memory_limit: None,
             total_memory_limit: None,
             hibernation: HibernationSettings::default(),
+            worktrees: WorktreeSettings::default(),
         }
     }
 }
@@ -156,6 +211,24 @@ impl Settings {
                     .stop_signals()?
                     .unwrap_or(defaults.hibernation.stop_signals),
                 stop_wait: file.stop_wait()?.unwrap_or(defaults.hibernation.stop_wait),
+            },
+            worktrees: WorktreeSettings {
+                auto: file.worktree_auto_cleans()?.unwrap_or_default(),
+                stale_after: file
+                    .worktree_stale_after()?
+                    .unwrap_or(defaults.worktrees.stale_after),
+                grace: file.worktree_grace()?.unwrap_or(defaults.worktrees.grace),
+                size_ttl: file
+                    .worktree_size_ttl()?
+                    .unwrap_or(defaults.worktrees.size_ttl),
+                base: file.worktree_base()?.unwrap_or_default(),
+                warn_free: file
+                    .worktree_warn_free()?
+                    .unwrap_or(defaults.worktrees.warn_free),
+                critical_free: file
+                    .worktree_critical_free()?
+                    .unwrap_or(defaults.worktrees.critical_free),
+                build_output_rules: file.worktree_build_output_rules()?.unwrap_or_default(),
             },
         })
     }

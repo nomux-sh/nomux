@@ -66,7 +66,12 @@ Bare `nomux` on a terminal attaches to the most recent session (see `attach` wit
 | `group move <node> [--to <node> \| --top] [--before <node> \| --after <node>]` | Puts a Group or a Project in a different Group, at the top level, or at a different position |
 | `group rm <node>` | Removes a Group. Its content takes its place |
 | `group ls [--tree]` | Lists the Groups. With `--tree`, the full tree with the Projects |
-| `worktree ls [<node> \| --all] [--wait]` | Lists the git worktrees of a Project with their state, size and the reason why each one can or cannot be removed. The command only reads |
+| `worktree ls [<node> \| --all] [--wait] [--fetch]` | Lists the git worktrees of a Project with their state, size and the reason why each one can or cannot be removed. The command only reads, except the `git fetch --prune` of `--fetch` |
+| `worktree clean [<node> \| --all] [--build-output \| --finished \| --stale \| --prune] [--worktree <w>]... [--delete-branch] [--allow-unpushed] [--include-ignored] [--now] [--dry-run] [--yes] [--fetch]` | Removes build output and moves finished worktrees to the trash place. Without `--yes` it shows the plan, and asks on a terminal |
+| `worktree restore <name>` | Moves a worktree back from the trash place during its grace time |
+| `worktree trash ls [<node>]` | Lists the worktrees in the trash place |
+| `worktree trash empty [<id>]... [--yes]` | Removes worktrees of the trash place now |
+| `worktree mark <w> done\|keep`, `worktree unmark <w>` | Marks a worktree as finished, or to keep: no clean changes it. Removes the mark |
 | `status [--tree]` | Shows the status of each session: what works, what is done and what needs the user. With `--tree`, also the Child work and the sessions below their Groups and Projects |
 | `status set <state> [<message>]` | Reports the status of the session of this process: `working`, `done`, `blocked`, `error` or `idle`. Only inside a session |
 | `agent explain <target>` | Shows what each source says about the status of a session |
@@ -541,10 +546,55 @@ These commands change and list the workspace tree of the host: the Groups and th
 - The command only reads. It changes no file of a repository. The daemon and the git extension run no `git` command; only the CLI without a Project runs `git rev-parse --git-common-dir` to find the main worktree.
 - The table has a row for each Project and below it, indented, a row for each worktree: `WORKTREE` (the last part of its directory), `BRANCH` (`-` for a detached `HEAD`), `STATE` (`active`, `finished`, `stale` or `idle`), `SIZE` and `BUILD` (the size and the part in build output, with one letter for the unit: `K`, `M`, `G`, `T`), `AGE` (the time since the last activity) and `REASON`: `yes:` and the merge rule, or `no:` and the first reason why a removal of the directory is refused, for example `no: unpushed 2` or `no: ignored files (.env)`.
 - A size that the daemon did not measure yet is `?`, and an old size has `*` after it. The daemon measures them in the background; `--wait` waits until each size is measured.
-- On a terminal, the table fits its width: `BRANCH`, `WORKTREE` and `REASON` lose their end, then `BUILD` and `AGE` go away.
+- `TOOL` is the agent tool that probably made the worktree (`claude-code`, `codex`, `cursor`, `orca`), from its directory, or `-`.
+- On a terminal, the table fits its width: `BRANCH`, `WORKTREE` and `REASON` lose their end, then `TOOL`, `BUILD` and `AGE` go away.
+- `--fetch` runs `git fetch --prune --quiet` in the directory of each listed Project first: the only command of nomux that uses the network. Only on the local host. A fetch that fails prints a warning, and the list follows.
 - The last line has the number of worktrees, their size and build output, the worktrees that a removal can take and their size, and for one Project the free space and the age of the last fetch. Then a line for each Project or worktree without git facts.
 - `--quiet` prints the directory of each worktree.
 - A daemon that is older than this command answers with an error, and the exit code is 1.
+
+### `worktree clean`
+
+`worktree clean` asks the daemon for a plan and runs exactly the items of that plan. The Projects are as for `worktree ls`. [worktrees.md](worktrees.md#the-clean) has the sequence, the refusals and how to undo each step.
+
+| Option | Items |
+|---|---|
+| `--finished` (default) | For each finished worktree: its build output, then the move of its directory to the trash place; and the prune of the records of missing directories |
+| `--build-output` | The build output of each linked worktree. The main worktree only when `--worktree` names it |
+| `--stale` | The build output of each stale worktree |
+| `--prune` | Only the prune of the records of missing directories, or a `repair` proposal |
+| `--worktree <w>` | Only this worktree: its path, or the last part of its path. Give the option more than one time for more worktrees |
+| `--delete-branch` | At the end of the grace time, also delete the branch when the base branch has each change of it |
+| `--allow-unpushed` | Also move a worktree with commits that are not pushed. The branch keeps the commits |
+| `--include-ignored` | Also move the ignored files that are not build output. They are deleted at the end of the grace time |
+| `--now` | Remove each worktree now, without the grace time. Also a worktree without a trash place |
+| `--dry-run` | Show the plan and change nothing |
+| `--yes` | Run the plan without a question |
+| `--fetch` | `git fetch --prune` in each Project first, as for `worktree ls` |
+
+- The table has a row for each item: `WORKTREE`, `STEP` (`build output`, `to trash`, `delete now`, `prune record` or `repair`), `PATH` (relative to the worktree, or to its parent directory for the trash place), `SIZE` (an upper bound) and `REASON`: `yes:` and the rule or what happens to the branch, or `no:` and the first refusal. The last line has the number of items that run and the bytes that come back.
+- Without `--yes`, on a terminal, the command shows the plan on the standard error and asks `Clean <n> item(s), <size> (upper bound)? [y/N]`. Each answer but `y` changes nothing. Without a terminal, and with `--dry-run`, the command shows the plan and changes nothing.
+- After a clean, the table has the result of each item: `done`, `skipped:` with the reason when the facts changed after the plan, `no:` with the refusal, or `failed:` with the error. The last line has the bytes of the plan and the increase of the free space.
+- The exit code is 0 when each item ran, and 1 when an item was refused, skipped or failed. A plan without a clean (`--dry-run`) has the exit code 0.
+
+```console
+$ nomux worktree clean acme --yes
+WORKTREE    STEP          PATH                              SIZE   REASON
+acme-dirty  build output  target                            2.8M   no: uncommitted changes
+acme-dirty  to trash      .nomux-trash/acme-dirty-3dc4ed24  20.0K  no: uncommitted changes
+acme-done   build output  target                            2.8M   done
+acme-done   to trash      .nomux-trash/acme-done-078ea7a4   20.0K  done
+acme-env    to trash      .nomux-trash/acme-env-1c7fbf68    24.0K  no: ignored files (.env)
+acme-gone   prune record  -                                 -      done
+3 of 6 items done: 2.8M planned, the free space grew by 2.9M.
+```
+
+### `worktree restore`, `worktree trash`, `worktree mark`
+
+- `worktree restore <name>` moves the worktree back to its directory and unlocks it. `<name>` is the identifier of the trash entry, the directory of the worktree, or its last part when one entry has it. A directory that exists again is an error. Build output does not come back.
+- `worktree trash ls [<node>]` has a row for each entry: `ID`, `WORKTREE` (the directory before the move), `BRANCH`, `MOVED` and `REMOVED IN` (the time that is left of the grace time). `--quiet` prints the identifiers.
+- `worktree trash empty [<id>]...` removes the entries now, or each entry without an identifier, with the checks of the end of the grace time. It asks on a terminal; without a terminal it needs `--yes`. An entry that stays has a line with the reason, and the exit code is 1.
+- `worktree mark <w> done` makes a worktree finished; its branch stays unless the base branch has each change. `worktree mark <w> keep` protects a worktree from each clean. `worktree unmark <w>` removes the mark. `<w>` is the directory or its last part.
 
 ### `status`
 
@@ -747,6 +797,9 @@ With `--quiet`, a command prints only what a script needs:
 | `host ls` | One host name on each line |
 | `ext ls` | One extension identifier on each line |
 | `worktree ls` | The directory of each worktree on a line |
+| `worktree clean` | Each path that the plan deletes or moves, or that the clean deleted or moved, on a line |
+| `worktree trash ls` | One trash entry identifier on each line |
+| `worktree restore` | The directory of the restored worktree |
 | `status` | One identifier on each line of a session that needs the user |
 | `events --follow` | The lines of the text output |
 | `ext call` | The payload of the result, as without `--quiet` |
@@ -1134,6 +1187,40 @@ A node has these fields:
 | `worktrees[].ignored_user_paths` | array of strings | The ignored paths that are not build output, 32 at most |
 | `worktrees[].locked_reason` | string or `null` | The reason of the lock |
 | `worktrees[].facts_unavailable_reason` | string or `null` | Why the git facts of this worktree are not known |
+| `worktrees[].tool` | string or `null` | The agent tool that probably made the worktree |
+| `worktrees[].mark` | string or `null` | `done` or `keep` |
+| `worktrees[].trash_id` | string or `null` | The identifier of the trash entry when the worktree is in the trash place |
+
+The refusals also have `kept`, `no-trash-place` and `in-trash`.
+
+### `worktree clean`
+
+```json
+{"schema_version":1,"plan":{"id":"9f0c2a1b7d3e4f50","total_bytes":2936832,"grace_ms":86400000,"items":[{"project_id":"z4idbpqpfmpl","worktree":"/home/user/src/acme-done","step":"build-output","path":"/home/user/src/acme-done/target","rule":"cargo-target","bytes":2936832,"branch":"done","head":"5c0c3883751b9243aa7a9a0d699a3b1fb551b41e","runs":true,"refusals":[],"warnings":[],"deletes_branch":false,"branch_kept_reason":null,"ignored_user_paths":[]}]}}
+```
+
+With `--dry-run`, and when no item runs, the document has `plan`. After a clean it has `clean`: `plan_id`, `planned_bytes`, `freed_bytes` and `results[]`, each with the fields of an item and `outcome` (`done`, `changed`, `refused`, `failed`) and `message`.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `plan.id` | string | The identifier of the plan |
+| `plan.total_bytes` | number | The bytes of the items that run: an upper bound |
+| `plan.grace_ms` | number | The grace time of the trash place |
+| `items[].worktree` | string | The directory of the worktree |
+| `items[].step` | string | `build-output`, `trash`, `delete`, `prune` or `repair` |
+| `items[].path` | string or `null` | The build output directory, the path in the trash place, or the directory of a repair proposal |
+| `items[].rule` | string or `null` | The build-output rule |
+| `items[].bytes` | number | The allocated bytes that the step frees |
+| `items[].runs` | boolean | `true` when `refusals` is empty |
+| `items[].refusals` | array of strings | As in `worktree ls` |
+| `items[].warnings` | array of strings | Facts to read before a clean |
+| `items[].deletes_branch` | boolean | The end of the grace time also deletes the branch |
+| `items[].branch_kept_reason` | string or `null` | Why the branch stays with `--delete-branch` |
+| `items[].ignored_user_paths` | array of strings | The ignored files that are not build output |
+
+### `worktree trash ls`, `worktree restore`, `worktree trash empty`, `worktree mark`
+
+`worktree trash ls` has `trash`, a list of entries: `id`, `project_id`, `path`, `trash_path`, `branch`, `head`, `trashed_at`, `expires_at` (milliseconds after the Unix epoch) and `deletes_branch`. `worktree restore` has `restored`, one entry. `worktree trash empty` has `trash_emptied`, a list of entries with `removed`, `message`, `branch_deleted` and `branch_kept_reason`. `worktree mark` and `unmark` have `marked` with `path` and `mark` (`done`, `keep` or `null`).
 
 ### `status`
 

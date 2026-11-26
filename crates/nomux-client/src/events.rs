@@ -253,7 +253,11 @@ impl From<wire::Event> for HostEvent {
                 }
             }
             Some(event::Body::Snapshot(_)) => EventBody::Snapshot,
-            None => EventBody::Unknown,
+            // The events of the worktrees come to the clients in a later
+            // version.
+            Some(event::Body::WorktreeChanged(_) | event::Body::WorktreeDiskPressure(_)) | None => {
+                EventBody::Unknown
+            }
         };
         Self {
             seq: event.seq,

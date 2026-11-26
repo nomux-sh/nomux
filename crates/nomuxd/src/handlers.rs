@@ -116,6 +116,14 @@ pub(crate) async fn handle(
         request::Body::WorkspaceRename(request) => workspace::rename(&request, context),
         request::Body::WorkspaceMove(request) => workspace::move_node(&request, context),
         request::Body::WorktreeList(request) => worktree::list(&request, context).await,
+        request::Body::WorktreePlan(request) => worktree::plan(&request, context).await,
+        request::Body::WorktreeClean(request) => worktree::clean(&request, context).await,
+        request::Body::WorktreeMark(request) => worktree::mark(&request, context).await,
+        request::Body::WorktreeTrash(request) => worktree::trash(&request, context),
+        request::Body::WorktreeRestore(request) => worktree::restore(&request, context).await,
+        request::Body::WorktreeEmptyTrash(request) => {
+            worktree::empty_trash(&request, context).await
+        }
     };
     Outcome::Respond(result.unwrap_or_else(response::Result::Error))
 }

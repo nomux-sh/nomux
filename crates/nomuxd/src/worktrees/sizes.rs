@@ -17,9 +17,6 @@ use tracing::debug;
 use super::size_walk::{Measured, WalkTarget, walk_project};
 use crate::clock::now;
 
-/// A size is old after this time.
-pub(super) const SIZE_LIFETIME: Duration = Duration::from_hours(1);
-
 /// The worktrees of one Project to measure in one walk.
 pub(super) struct ProjectWalk {
     /// The directory of the Project.
@@ -30,8 +27,9 @@ pub(super) struct ProjectWalk {
     pub(super) sessions: Vec<Vec<String>>,
 }
 
-#[derive(Default)]
 pub(super) struct SizeCache {
+    /// A size is old after this time: the setting `size_ttl`.
+    lifetime: Duration,
     entries: Mutex<HashMap<PathBuf, Cached>>,
     /// The Projects whose walk waits or runs in the background.
     pending: Mutex<HashSet<PathBuf>>,
@@ -47,6 +45,20 @@ struct Cached {
 }
 
 impl SizeCache {
+    pub(super) fn new(lifetime: Duration) -> Self {
+        Self {
+            lifetime,
+            entries: Mutex::default(),
+            pending: Mutex::default(),
+            walking: tokio::sync::Mutex::default(),
+        }
+    }
+
+    /// Forgets the size of the worktree `root`: a clean changed it.
+    pub(super) fn forget(&self, root: &Path) {
+        self.entries().remove(root);
+    }
+
     /// The size of the worktree `root`, and `true` if the size is absent or
     /// old. `live_sessions` are the sessions that are not ended.
     pub(super) fn size_of(
@@ -58,7 +70,7 @@ impl SizeCache {
         let Some(cached) = entries.get(root) else {
             return (None, true);
         };
-        let lifetime = u64::try_from(SIZE_LIFETIME.as_millis()).unwrap_or(u64::MAX);
+        let lifetime = u64::try_from(self.lifetime.as_millis()).unwrap_or(u64::MAX);
         let is_old = now().0.saturating_sub(cached.measured_at_ms) > lifetime
             || cached
                 .sessions
@@ -137,7 +149,7 @@ fn wire_size(cached: &Cached, is_old: bool) -> WorktreeSize {
         .iter()
         .map(|(path, rule, bytes)| BuildOutputSize {
             path: path.clone(),
-            rule: (*rule).to_owned(),
+            rule: rule.clone(),
             bytes: *bytes,
         })
         .collect();

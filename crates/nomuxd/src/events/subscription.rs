@@ -65,6 +65,8 @@ impl Subscription {
 
     /// Sends the events to the client until it closes the connection.
     pub(crate) async fn run(mut self, mut stream: EnvelopeStream) {
+        let log = Arc::clone(&self.log);
+        let _counted = log.count_subscription();
         let mut newest = self.log.watch();
         loop {
             newest.borrow_and_update();
@@ -133,6 +135,8 @@ impl Subscription {
             Some(event::Body::SessionWoken(_)) => EventType::SessionWoken,
             Some(event::Body::SessionWakeFailed(_)) => EventType::SessionWakeFailed,
             Some(event::Body::SessionMemoryLimitReached(_)) => EventType::SessionMemoryLimitReached,
+            Some(event::Body::WorktreeChanged(_)) => EventType::WorktreeChanged,
+            Some(event::Body::WorktreeDiskPressure(_)) => EventType::WorktreeDiskPressure,
             Some(event::Body::Snapshot(_)) | None => return true,
         };
         self.types.is_empty() || self.types.contains(&kind)

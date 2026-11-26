@@ -17,6 +17,7 @@ use super::memory_human::measure_name;
 use super::memory_json::SessionsMemoryBody;
 use super::status_json::StatusBody;
 use super::workspace_json::{ProjectDocument, WorkspaceBody};
+use super::worktree_clean_json::WorktreeBody;
 use super::worktree_json::WorktreesDocument;
 use crate::exit_code;
 use crate::report::{AddedHost, HostDiagnosis, Report, ServiceFileAction, ServiceFileReport};
@@ -76,6 +77,10 @@ enum Body<'a> {
     /// `project` or `group` command.
     #[serde(untagged)]
     Workspace(WorkspaceBody<'a>),
+    /// The field of the document is the field of the body of the
+    /// `worktree` command.
+    #[serde(untagged)]
+    Worktree(WorktreeBody<'a>),
 }
 
 /// A session of `ls`, with its Project.
@@ -451,6 +456,7 @@ pub(super) fn report(report: &Report) -> String {
         ),
         Report::Workspace(report) => Body::Workspace(WorkspaceBody::of(report)),
         Report::Worktrees(listing) => Body::Worktrees(WorktreesDocument::of(listing)),
+        Report::Worktree(report) => Body::Worktree(WorktreeBody::of(report)),
         Report::SessionsMeasured { sessions, memory } => {
             Body::SessionsMemory(SessionsMemoryBody::new(sessions, memory))
         }

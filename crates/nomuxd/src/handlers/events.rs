@@ -8,6 +8,7 @@ use super::Context;
 use crate::events::Subscription;
 
 pub(super) fn subscribe(request: &EventsSubscribeRequest, context: &Context) -> Subscription {
+    context.worktrees.on_subscribe();
     Subscription::new(
         request,
         Arc::clone(&context.events),

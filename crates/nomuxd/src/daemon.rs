@@ -24,7 +24,7 @@ use crate::settings::Settings;
 use crate::shutdown::Shutdown;
 use crate::status::StatusRegistry;
 use crate::workspace::Workspace;
-use crate::worktrees::Worktrees;
+use crate::worktrees::{self, Worktrees};
 
 /// Runs the daemon until a stop is requested.
 pub(crate) async fn run(running_daemon: RunningDaemon) -> io::Result<()> {
@@ -40,9 +40,11 @@ pub(crate) async fn run(running_daemon: RunningDaemon) -> io::Result<()> {
     shutdown.trigger_on_signals()?;
     let events = Arc::new(EventLog::default());
     let status = Arc::new(StatusRegistry::new(Arc::clone(&events)));
+    let settings = Settings::load();
+    let worktree_settings = settings.worktrees.clone();
     let sessions = Arc::new(Sessions::new(
         runtime_directory,
-        Settings::load(),
+        settings,
         shutdown.clone(),
         Arc::clone(&status),
         Arc::clone(&events),
@@ -58,15 +60,18 @@ pub(crate) async fn run(running_daemon: RunningDaemon) -> io::Result<()> {
     )?;
     info!(socket = %socket_path.display(), "the daemon listens");
 
-    let workspace = Workspace::open(
-        SessionStore::locate()?.state_directory(),
+    let store = SessionStore::locate()?;
+    let workspace = Workspace::open(store.state_directory(), Arc::clone(&events));
+    let worktrees = Worktrees::new(
+        store.state_directory(),
+        worktree_settings,
         Arc::clone(&events),
     );
     let context = Arc::new(Context {
         sessions,
         status,
         workspace,
-        worktrees: Worktrees::default(),
+        worktrees,
         events,
         hooks: Arc::new(HookDelivery::new(extensions.clone())),
         extensions,
@@ -83,9 +88,11 @@ pub(crate) async fn run(running_daemon: RunningDaemon) -> io::Result<()> {
         Arc::clone(&context.sessions),
         Arc::clone(&context.events),
     ));
+    let worktree_work = tokio::task::spawn_local(worktrees::run_background(Arc::clone(&context)));
     listener::serve(listener, Arc::clone(&context)).await;
     restoring.abort();
     hibernating.abort();
+    worktree_work.abort();
 
     // A call of an extension that waits gets its answer now: the extension
     // stopped. No request starts an extension after this.
