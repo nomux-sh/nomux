@@ -31,7 +31,7 @@ use crate::input_queue::InputQueue;
 use crate::program_reports::ProgramReportStore;
 use crate::pty;
 use crate::resize_verification::ResizeVerification;
-use crate::session_environment;
+use crate::session_environment::{self, CommandEnvironment};
 use crate::session_files::SessionFiles;
 
 /// The largest number of bytes that one read moves from the terminal to the
@@ -89,7 +89,7 @@ impl Session {
         let child = ChildProcess::spawn(
             &arguments.program,
             &arguments.program_arguments,
-            session_environment::variables(
+            CommandEnvironment::of_session(
                 &arguments.session_id,
                 &arguments.runtime_directory,
                 &token,

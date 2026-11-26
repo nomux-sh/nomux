@@ -181,7 +181,25 @@ For `Session.Create` of a session with the shell of the user, the daemon first t
 If the holder does not start, the daemon removes the session state directory that the holder made. Thus a session that never ran is not a dormant session after the next start of the daemon.
 
 An empty command is the shell of the user: the `SHELL` variable of the daemon, or `/bin/sh`. Without a working directory, the command starts in the home directory. The CLI always sends a working directory.
-The command gets the environment of the daemon, and the terminal has 24 rows and 80 columns. There is no request for the environment or for the window size yet.
+The command gets the environment of "Environment of a session", and the terminal has 24 rows and 80 columns. There is no request for the window size yet.
+
+### Environment of a session
+
+A service manager gives the daemon a small environment: launchd gives a job `PATH=/usr/bin:/bin:/usr/sbin:/sbin` and no `TERM` and no `LANG`, and a systemd user service has no `TERM`. Thus the environment of a session cannot be only the environment of the daemon. The rule has one owner: the holder makes the environment of its command (`crates/nomux-holder/src/session_environment.rs`).
+
+| Source | Variables |
+|---|---|
+| The daemon | Each variable of the environment of the daemon, except the variables of the next rows. The holder gets the environment of the daemon |
+| nomux, always | `TERM=xterm-256color`, `COLORTERM=truecolor`, and `NOMUX_SESSION_ID`, `NOMUX_SOCK` and `NOMUX_TOKEN` ([holder.md](holder.md#environment-of-the-command)). A value of the daemon is replaced |
+| nomux, if the daemon has no locale | `LC_CTYPE=C.UTF-8` on Linux, `LC_CTYPE=UTF-8` on macOS: a character set of UTF-8. Only if `LC_ALL`, `LC_CTYPE` and `LANG` have no value |
+| Never passed | `COLUMNS`, `LINES`, `TERM_PROGRAM` and `TERM_PROGRAM_VERSION`: they describe the terminal of the program that started the daemon |
+| The client | Nothing in this version. `Session.Create` has no field for the environment |
+
+- **`TERM` is not the terminal of a client.** The terminal of a session is the terminal of nomux, which follows xterm ([`nomux-term`](../crates/nomux-term/README.md)), and a session has clients of different terminals at different times. tmux does the same with its option `default-terminal`, and sets `COLORTERM=truecolor` too (`environ_for_session` in `environ.c`). zellij sets `TERM=xterm-256color` and `COLORTERM=truecolor` when it starts its server.
+- **The locale.** A daemon that a client started has the locale of the terminal of that client. A daemon of a service manager can have none: then the C library uses the locale `C`, which has no characters outside ASCII. The fallback gives a character set of UTF-8 and changes no language, no format of dates and no format of numbers. To give the sessions a language, give `LANG` to the service: `EnvironmentVariables` in the launchd agent, `Environment=` in the systemd unit.
+- **Nothing from the client.** tmux copies the variables of its option `update-environment` from the client (`DISPLAY`, `SSH_AUTH_SOCK` and more) at `new-session`. The control protocol has no field for this. Thus a client with a different locale, or with variables such as `SSH_AUTH_SOCK` or `DISPLAY`, does not give them to its session. Issue [#75](https://github.com/nomux-sh/nomux/issues/75) has this gap.
+- **The holder pool.** A pooled shell gets the same environment, because no part comes from the client: each pooled shell has the environment of a new holder of the same daemon, and a session never needs a new holder for its environment. A new daemon takes no pooled holder of an earlier daemon, which can have a different environment: see "Holder pool".
+- **A restore** gets the environment of the daemon at the time of the restore, with the same rule.
 
 ### Holders of an earlier daemon
 
@@ -302,7 +320,7 @@ Each session has a restore policy:
 - An attach with a window size starts the command with that size.
 - If the command cannot start, for example because its working directory is gone, the request fails with the code 1 and the session stays dormant.
 
-The environment of the new command is the environment of the daemon at the time of the restore. The environment of the earlier command is not stored: it can have secrets.
+The environment of the new command is the environment of "Environment of a session", from the daemon at the time of the restore. The environment of the earlier command is not stored: it can have secrets.
 
 ### Ended sessions and the retention time
 
@@ -526,6 +544,7 @@ The launchd agent has the label `sh.nomux.nomuxd`, the program arguments `nomuxd
 - **`--replace`.** The daemon of the service takes the place of a daemon that a client started before. No session ends. Without the option, the service fails while such a daemon runs.
 - **`Restart=on-failure`, and `KeepAlive` with `SuccessfulExit` false.** A daemon that fails starts again. A daemon that a client stopped (`nomux daemon stop`) has the exit status 0 and stays stopped.
 - **The path of the daemon** is the path of the `nomuxd` in the directory of the `nomux` that wrote the file. After the binaries moved, write the file again.
+- **The environment.** The service manager gives the daemon no `TERM` and, with launchd, no `LANG`. A session gets `TERM` and a character set of UTF-8 from nomux: see "Environment of a session". For a language, add `LANG` to the file.
 - `uninstall-service` also removes the link `default.target.wants/nomuxd.service` that `systemctl --user enable` made. The daemon that runs continues.
 
 **Limit: the end of the user manager.** systemd stops the user manager of a user after the last logout, and the user manager then stops each process of its units: the daemon and also the holders, because `KillMode=process` applies only to a stop of the unit. `loginctl enable-linger` keeps the user manager, and thus the sessions, after a logout. A daemon that a `nomux` command started in a login session is not in a unit of the user manager. This behaviour is from the documentation of systemd: it was not examined here, because the test ends each process of the user.
@@ -614,7 +633,7 @@ These parts are not in the daemon yet:
 - **Parallel requests.** The daemon answers the requests of one connection in their sequence. A long request delays the next request of the same connection, not of other connections.
 - **State.** The daemon keeps no database. What it knows about a session after a restart comes from the holder and from the session state directory. The status of a session comes from the holder again, but `since` and `seen` start again, and the self-report and the event log are gone.
 - **Status.** The status sources of agent tools (hooks, ACP), `wait`, and notifications to the operating system.
-- **Session environment.** A session gets the environment of the daemon, thus of the client that started the daemon.
+- **Session environment.** No part of the environment of a session comes from the client: a client with a different locale, or with variables such as `SSH_AUTH_SOCK` or `DISPLAY`, does not give them to its session. A list of variables that `Session.Create` carries from the client needs a field in the control protocol, and a rule for the holder pool: a pooled shell has the variables of no client.
 - **Daemon update.** `nomuxd --replace` takes over from a daemon that runs, and the clients of that daemon lose their connection. An update that keeps the connections is not written.
 - **Service files.** The launchd agent was not loaded on a Mac. The commands do not give the file to the service manager, and they do not stop a daemon.
 - **Log rotation.** `nomuxd.log` has no size limit. With the default level it stays almost empty.

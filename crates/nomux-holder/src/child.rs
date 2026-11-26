@@ -1,6 +1,6 @@
 //! The child command of the session.
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::io;
 use std::os::fd::OwnedFd;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
@@ -9,6 +9,8 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 
 use nomux_holder_protocol::wire::{ChildSignal, ChildStatus};
 use rustix::process::{Pid, Signal, kill_process};
+
+use crate::session_environment::CommandEnvironment;
 
 /// The child command, and its exit status after it ended.
 pub(crate) struct ChildProcess {
@@ -20,19 +22,19 @@ impl ChildProcess {
     /// Starts `program` as the leader of a new session. `terminal` is the
     /// slave side of the pseudoterminal: it becomes the controlling terminal,
     /// the standard input, the standard output and the standard error of the
-    /// child. The child gets the environment of the holder and
-    /// `variables`.
+    /// child. The child gets the environment of the holder with the
+    /// changes of `environment`.
     pub(crate) fn spawn(
         program: &OsStr,
         arguments: &[impl AsRef<OsStr>],
-        variables: impl IntoIterator<Item = (&'static str, OsString)>,
+        environment: CommandEnvironment,
         working_directory: Option<&Path>,
         terminal: OwnedFd,
     ) -> io::Result<Self> {
         let mut command = Command::new(program);
+        environment.apply(&mut command);
         command
             .args(arguments)
-            .envs(variables)
             .stdin(Stdio::from(terminal.try_clone()?))
             .stdout(Stdio::from(terminal.try_clone()?))
             .stderr(Stdio::from(terminal));
