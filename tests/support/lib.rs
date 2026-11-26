@@ -7,6 +7,7 @@
 
 mod adapter_package;
 mod extension_package;
+mod git_package;
 mod key_latency;
 mod leftover_processes;
 mod process_guard;
@@ -32,6 +33,7 @@ use tempfile::TempDir;
 
 pub use crate::adapter_package::{TEST_ADAPTER, adapter_package};
 pub use crate::extension_package::extension_package;
+pub use crate::git_package::{GIT_FACTS_FILE, git_package};
 pub use crate::key_latency::{key_to_echo, latency_row};
 pub use crate::process_guard::ProcessGuard;
 pub use crate::remote_host::{RemoteHost, release_archive, release_target};

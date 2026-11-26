@@ -12,6 +12,7 @@ pub(super) fn info(context: &Context) -> response::Result {
         daemon_pid: process::id(),
         session_count: u32::try_from(context.sessions.list(false).len()).unwrap_or(u32::MAX),
         memory_limit: Some(memory_limit_support(context)),
+        sandbox: None,
     })
 }
 

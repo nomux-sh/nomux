@@ -12,6 +12,7 @@ use crate::extension_commands::ExtensionReport;
 use crate::hook_commands::HooksReport;
 use crate::status_commands::StatusReport;
 use crate::workspace_commands::WorkspaceReport;
+use crate::worktree_commands::WorktreeListing;
 
 #[derive(Debug)]
 pub(crate) enum Report {
@@ -98,6 +99,7 @@ pub(crate) enum Report {
     Hooks(HooksReport),
     Status(StatusReport),
     Workspace(WorkspaceReport),
+    Worktrees(WorktreeListing),
     ServiceFile(ServiceFileReport),
     Version,
 }

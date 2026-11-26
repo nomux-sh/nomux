@@ -441,7 +441,7 @@ fn colour(state: Option<AgentState>, style: Style) -> Option<&'static str> {
 }
 
 /// A time as a person reads it: the largest unit only.
-fn duration(milliseconds: u64) -> String {
+pub(super) fn duration(milliseconds: u64) -> String {
     let seconds = milliseconds / 1000;
     match seconds {
         0..60 => format!("{seconds}s"),
@@ -451,7 +451,7 @@ fn duration(milliseconds: u64) -> String {
     }
 }
 
-fn now_ms() -> u64 {
+pub(super) fn now_ms() -> u64 {
     let since_epoch = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();

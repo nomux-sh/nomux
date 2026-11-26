@@ -17,6 +17,7 @@ The user documentation is not here. It is in the [`docs`](https://github.com/nom
 | [memory.md](memory.md) | The memory of each session: what `nomux ls --memory` shows, how the daemon measures it, and the design of an optional memory limit | the first part in use, the limit is a design |
 | [status.md](status.md) | The agent status: the model, the sources and their sequence, the rules of the resolver and of the aggregation, the adapter source, sessions without a process, the self-report and its token | in use |
 | [adapters.md](adapters.md) | The agent adapters: the path of a hook event, how to write an adapter extension (manifest, methods, host services, the merge rule), and the hook install | in use |
+| [worktrees.md](worktrees.md) | The worktrees of the Projects: the model, the states and the flags and where each fact comes from, the build-output rules, the sizes and when the daemon measures them, the checks of `host doctor`, and what this version does not do | in use, read only |
 | [remote.md](remote.md) | Remote hosts through SSH: the SSH client, the supported `~/.ssh/config`, the trust rules, the channels, the installation on the host, the reconnect | in use |
 
 ## Status

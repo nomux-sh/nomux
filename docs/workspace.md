@@ -116,6 +116,10 @@ removed group 2j3uwgsxeje7: Client work (revision 7)
 - `group move` needs `--to <group>`, `--top`, `--before <node>` or `--after <node>`. Without `--to` and `--top`, the node goes to the Group of the sibling of `--before` or `--after`.
 - There is no `nomux tree` alias. `group ls --tree` lists the tree, and `status --tree` shows its status: one name for each function.
 
+## Worktrees
+
+The worktrees of a Project are the git worktrees of its repository, also those outside its directory. `nomux worktree ls` lists them: [worktrees.md](worktrees.md).
+
 ## Events and two clients
 
 Each change makes one `WorkspaceChanged` event with the new revision. A client keeps its copy of the tree with the procedure of the specification: `Workspace::apply` ignores an event with a revision that the copy has, applies the next revision, and returns `Applied::Missed` for a gap, for a change that does not fit the copy, and for a change that the client does not know. After `Missed` and after a snapshot, the client asks for the tree again. `events --follow --filter workspace-changed` prints the events.
@@ -133,6 +137,6 @@ The target for an idle daemon is less than 10 MB, and for a new session with the
 
 ## Open points for the next versions
 
-- The open items of the specification: the default agent and the color of a Project, a Worktree outside the directory of its Project, a field of a session with its Project, and a request that changes more than one node.
+- The open items of the specification: the default agent and the color of a Project, a field of a session with its Project, and a request that changes more than one node.
 - The group row in the sidebar of the desktop client, which opens and closes a Group and shows its status.
 - A check for the directory of a Project that went away: the Project stays in the tree.

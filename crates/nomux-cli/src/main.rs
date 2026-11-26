@@ -21,6 +21,8 @@
 //!   host.
 //! - `workspace_commands`: the `project` and `group` commands, which change
 //!   and list the workspace tree of the Groups and the Projects of a host.
+//! - `worktree_commands`: the `worktree ls` command: the worktrees of the
+//!   Projects with their state, size and refusals.
 //! - `session_commands`: the commands that start, find, change and end one
 //!   session: `new`, `attach`, `start`, `capture`, `restore-policy`,
 //!   `detach`, `kill` and `rename`.
@@ -67,6 +69,7 @@ mod session_environment;
 mod session_memory;
 mod status_commands;
 mod workspace_commands;
+mod worktree_commands;
 
 use std::io::{self, IsTerminal, Write};
 use std::process::ExitCode;

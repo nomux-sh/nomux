@@ -93,6 +93,7 @@ mod shutdown;
 mod status;
 mod stopped_sessions;
 mod workspace;
+mod worktrees;
 
 use std::env;
 use std::io;

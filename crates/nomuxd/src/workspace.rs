@@ -70,6 +70,28 @@ impl Workspace {
         }
     }
 
+    /// The identifier and the directory of the Project `id`, or of each
+    /// Project in the sequence of the tree if `id` is empty.
+    pub(crate) fn projects(&self, id: &str) -> Result<Vec<(String, PathBuf)>, Error> {
+        let current = self.current();
+        let project = |node: &Node| Some((node.id.clone(), node.directory()?.to_owned()));
+        if id.is_empty() {
+            return Ok(current
+                .tree
+                .nodes()
+                .into_iter()
+                .filter_map(project)
+                .collect());
+        }
+        let node = current.tree.get(id).ok_or_else(|| Error {
+            code: ErrorCode::NotFound.into(),
+            message: format!("no Project has the identifier {id}"),
+        })?;
+        let project =
+            project(node).ok_or_else(|| failed(format!("{id} is a Group, not a Project")))?;
+        Ok(vec![project])
+    }
+
     pub(crate) fn add_project(
         &self,
         request: WorkspaceAddProjectRequest,

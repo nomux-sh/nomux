@@ -50,7 +50,7 @@ Bare `nomux` on a terminal attaches to the most recent session (see `attach` wit
 | `host add <ssh-target> [--name <name>]` | Connects to a host through SSH, installs nomux there, starts the daemon and saves the host |
 | `host ls` | Lists the saved hosts |
 | `host rm <name>` | Removes a saved host. Nothing changes on the host |
-| `host doctor [<name>]` | Checks the connection, the platform, the binaries, the permissions and the daemon of a host, and shows if its operating system applies a memory limit |
+| `host doctor [<name>]` | Checks the connection, the platform, the binaries, the permissions and the daemon of a host, shows if its operating system applies a memory limit, and checks the free space and the build output of the worktrees. Without a name, also the local host |
 | `ext ls` | Lists the installed extensions |
 | `ext install <source> [--grant <permission>]... [--grant-all] [--yes]` | Installs an extension from a directory on the host, a release archive, an `https` address of one, or the short form of an extension of `nomux-sh/extensions` (`git`, `git@0.1.0`), with the permissions that the options approve |
 | `ext rm <id>` | Stops an extension and removes its package, its state and its data |
@@ -66,6 +66,7 @@ Bare `nomux` on a terminal attaches to the most recent session (see `attach` wit
 | `group move <node> [--to <node> \| --top] [--before <node> \| --after <node>]` | Puts a Group or a Project in a different Group, at the top level, or at a different position |
 | `group rm <node>` | Removes a Group. Its content takes its place |
 | `group ls [--tree]` | Lists the Groups. With `--tree`, the full tree with the Projects |
+| `worktree ls [<node> \| --all] [--wait]` | Lists the git worktrees of a Project with their state, size and the reason why each one can or cannot be removed. The command only reads |
 | `status [--tree]` | Shows the status of each session: what works, what is done and what needs the user. With `--tree`, also the Child work and the sessions below their Groups and Projects |
 | `status set <state> [<message>]` | Reports the status of the session of this process: `working`, `done`, `blocked`, `error` or `idle`. Only inside a session |
 | `agent explain <target>` | Shows what each source says about the status of a session |
@@ -383,7 +384,7 @@ On the local host, `daemon status` also shows the path of the global configurati
 
 ### `host doctor`
 
-`host doctor <name>` checks one host, and `host doctor` checks each host of the configuration file. The command changes nothing on a host: it installs nothing and starts no daemon.
+`host doctor <name>` checks one host, and `host doctor` checks the local host (with the name `local`: only `daemon` and the checks of the worktrees) and each host of the configuration file. The command changes nothing on a host: it installs nothing and starts no daemon.
 
 | Check | Passes if |
 |---|---|
@@ -393,6 +394,8 @@ On the local host, `daemon status` also shows the path of the global configurati
 | `permissions` | `~/.nomux`, `~/.nomux/bin`, `~/.nomux/run` and the socket belong to the user, other users cannot write to the first two, and other users have no access to the last two |
 | `daemon` | A daemon answers, or no daemon runs. It fails if the SSH server refuses connections to Unix sockets |
 | `versions` | The CLI and the daemon have a common protocol version. Only if a daemon answers |
+| `free-space` | The file systems of the Projects have 3 GiB free or more. Below 10 GiB the detail starts with `warning:`. Only if a daemon answers and the host has a Project |
+| `shared-build-output` | Always passes. The detail has the advice of [worktrees.md](worktrees.md#commands) when two or more worktrees have their own cargo target directory or their own `node_modules`, with the measured numbers. Only if a daemon answers and the host has a Project |
 
 A check that cannot run after a failure is not in the output: without a connection, the output has only `connection`.
 The exit code is 0 if each check of each host passed, and 1 if a check failed.
@@ -530,6 +533,18 @@ These commands change and list the workspace tree of the host: the Groups and th
 - A change prints one line: what changed, the identifier, the path after the change and the revision of the tree. `--quiet` prints the identifier.
 - The listings print a table: `project ls` the identifier, the path and the directory; `group ls` the identifier and the path; `group ls --tree` each node below its Group, indented two spaces for each level, with its kind, its identifier and the directory of a Project. `--quiet` prints the identifiers.
 - A daemon that is older than these commands answers with an error, and the exit code is 1.
+
+### `worktree ls`
+
+`worktree ls <node>` lists the worktrees of one Project, `worktree ls --all` of each Project. Without both, on the local host, the Project of the current directory, or else of the main worktree of its git repository: a linked worktree can be outside the directory of its Project. With `--host`, a Project or `--all` is necessary. [worktrees.md](worktrees.md) has the model, the rules and how the daemon finds each fact. The git facts come from the git extension `nomux.git`: without it, or without an approval of the directory of the Project, the Project has no rows and a line below the table says what to do.
+
+- The command only reads. It changes no file of a repository. The daemon and the git extension run no `git` command; only the CLI without a Project runs `git rev-parse --git-common-dir` to find the main worktree.
+- The table has a row for each Project and below it, indented, a row for each worktree: `WORKTREE` (the last part of its directory), `BRANCH` (`-` for a detached `HEAD`), `STATE` (`active`, `finished`, `stale` or `idle`), `SIZE` and `BUILD` (the size and the part in build output, with one letter for the unit: `K`, `M`, `G`, `T`), `AGE` (the time since the last activity) and `REASON`: `yes:` and the merge rule, or `no:` and the first reason why a removal of the directory is refused, for example `no: unpushed 2` or `no: ignored files (.env)`.
+- A size that the daemon did not measure yet is `?`, and an old size has `*` after it. The daemon measures them in the background; `--wait` waits until each size is measured.
+- On a terminal, the table fits its width: `BRANCH`, `WORKTREE` and `REASON` lose their end, then `BUILD` and `AGE` go away.
+- The last line has the number of worktrees, their size and build output, the worktrees that a removal can take and their size, and for one Project the free space and the age of the last fetch. Then a line for each Project or worktree without git facts.
+- `--quiet` prints the directory of each worktree.
+- A daemon that is older than this command answers with an error, and the exit code is 1.
 
 ### `status`
 
@@ -731,6 +746,7 @@ With `--quiet`, a command prints only what a script needs:
 | `capture` | The output lines, as without `--quiet` |
 | `host ls` | One host name on each line |
 | `ext ls` | One extension identifier on each line |
+| `worktree ls` | The directory of each worktree on a line |
 | `status` | One identifier on each line of a session that needs the user |
 | `events --follow` | The lines of the text output |
 | `ext call` | The payload of the result, as without `--quiet` |
@@ -986,7 +1002,7 @@ The command prints the document after the attach ended.
 | `doctor` | array | One object for each host that the command checked |
 | `doctor[].host` | string | The name of the host |
 | `doctor[].ok` | boolean | `true` if each check of the host passed |
-| `doctor[].checks[].name` | string | `connection`, `platform`, `binaries`, `permissions`, `daemon` or `versions` |
+| `doctor[].checks[].name` | string | `connection`, `platform`, `binaries`, `permissions`, `daemon`, `versions`, `memory-limit`, `free-space` or `shared-build-output` |
 | `doctor[].checks[].ok` | boolean | `true` if the host passed the check |
 | `doctor[].checks[].detail` | string | A text in English for a person: what the check found, or the reason and what to do. The text is not stable |
 
@@ -1088,6 +1104,36 @@ A node has these fields:
 | `kind` | string | `group` or `project` |
 | `path` | string | The names from the top level down to the node, with `/` between them. Not in an event |
 | `directory` | string | Only for a Project: its directory on the host |
+
+### `worktree ls`
+
+```json
+{"schema_version":1,"worktrees":{"projects":[{"id":"w7mdj3j7icns","path":"acme","unavailable_reason":null,"base_branch":"origin/main","last_fetch_at":1795707021434,"free_bytes":33204289536,"file_system_bytes":404729364480,"worktrees":[{"path":"/home/user/src/acme-auth","branch":"auth-flow","head":"9df43faf1fc4b1f8a7941e3ef8b47c72d820b5bf","is_main":false,"is_bare":false,"state":"finished","flags":["upstream-gone"],"sessions":[],"size":{"total_bytes":3026944,"build_output_bytes":3006464,"measured_at":1795707035291,"is_old":false,"shared_extents":"unknown","build_outputs":[{"path":"target","rule":"cargo-target","bytes":3006464}]},"last_activity_at":1795707021327,"merged_by":"ancestor","unpushed_commits":0,"removable":true,"refusals":[],"ignored_user_paths":[],"locked_reason":null,"facts_unavailable_reason":null}]}]}}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `worktrees.projects[]` | array | One object for each listed Project, in the sequence of the workspace tree |
+| `projects[].id`, `projects[].path` | string | The identifier and the path of the Project in the workspace tree |
+| `projects[].unavailable_reason` | string or `null` | Why the Project has no worktrees, and what to do. `null` when it has them |
+| `projects[].base_branch` | string or `null` | The branch of the merge rules |
+| `projects[].last_fetch_at` | number or `null` | The last fetch: milliseconds after the Unix epoch. `null`: never |
+| `projects[].free_bytes`, `projects[].file_system_bytes` | number or `null` | The free space for a user without special rights and the size of the file system of the Project directory |
+| `worktrees[].path` | string | The directory of the worktree |
+| `worktrees[].branch`, `worktrees[].head` | string or `null` | The branch (`null` for a detached `HEAD`) and the commit |
+| `worktrees[].is_main`, `worktrees[].is_bare` | boolean | The main worktree; the entry of a bare repository |
+| `worktrees[].state` | string | `active`, `finished`, `stale`, `idle` or `unknown` |
+| `worktrees[].flags` | array of strings | `dirty`, `unpushed`, `detached-commits`, `locked`, `submodule`, `ignored-user-files`, `busy`, `missing`, `other-file-system`, `upstream-gone` |
+| `worktrees[].sessions` | array of strings | The identifiers of the sessions in the worktree |
+| `worktrees[].size` | object or `null` | `null` when not measured yet. `total_bytes`, `build_output_bytes`, `measured_at` (milliseconds after the Unix epoch), `is_old`, `shared_extents` (always `unknown`: blocks shared by reflinks count in full), `build_outputs[]` (`path`, `rule`, `bytes`, the largest first) |
+| `worktrees[].last_activity_at` | number or `null` | The last activity: milliseconds after the Unix epoch |
+| `worktrees[].merged_by` | string or `null` | `ancestor`, `tree` or `upstream-gone`. `null`: not merged |
+| `worktrees[].unpushed_commits` | number | The commits that are not pushed. The count stops at 1000 |
+| `worktrees[].removable` | boolean | `true` when `refusals` is empty |
+| `worktrees[].refusals` | array of strings | Why a removal of the directory is refused, the most important first: `main-worktree`, `directory-missing`, `facts-unknown`, `active-session`, `process-running`, `uncommitted-changes`, `unpushed-commits`, `detached-commits`, `locked`, `submodule`, `ignored-user-files`, `other-file-system`, `not-finished` |
+| `worktrees[].ignored_user_paths` | array of strings | The ignored paths that are not build output, 32 at most |
+| `worktrees[].locked_reason` | string or `null` | The reason of the lock |
+| `worktrees[].facts_unavailable_reason` | string or `null` | Why the git facts of this worktree are not known |
 
 ### `status`
 

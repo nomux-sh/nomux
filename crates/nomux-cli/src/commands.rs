@@ -9,7 +9,7 @@ use crate::output::Format;
 use crate::report::Report;
 use crate::{
     attach, extension_commands, hook_commands, host_commands, selected_host, service_files,
-    session_commands, status_commands, workspace_commands,
+    session_commands, status_commands, workspace_commands, worktree_commands,
 };
 
 pub(crate) const KIND: ClientKind = ClientKind::Cli;
@@ -67,6 +67,7 @@ pub(crate) async fn run(
         | Command::Events { .. }
         | Command::Project { .. }
         | Command::Group { .. }
+        | Command::Worktree { .. }
         | Command::Version => {
             unreachable!("handled before the connection")
         }
@@ -104,6 +105,7 @@ async fn without_connection(
             workspace_commands::project(command, host_name, format).await
         }
         Command::Group { command } => workspace_commands::group(command, host_name, format).await,
+        Command::Worktree { command } => worktree_commands::run(command, host_name, format).await,
         Command::Events { filter, .. } => {
             status_commands::follow_events(&filter, host_name, format).await
         }

@@ -1,6 +1,6 @@
 # Daemon
 
-This document describes the daemon (`nomuxd`): its process model, its socket, its lifecycle, how it finds and holds the holders, how it attaches clients to the terminal of a session, what it keeps of a session without a process, how it starts such a session again, how it keeps the status of each session and its events, how it hibernates an idle agent session, how it keeps the workspace tree, and where it runs the extensions.
+This document describes the daemon (`nomuxd`): its process model, its socket, its lifecycle, how it finds and holds the holders, how it attaches clients to the terminal of a session, what it keeps of a session without a process, how it starts such a session again, how it keeps the status of each session and its events, how it hibernates an idle agent session, how it keeps the workspace tree, how it lists the worktrees of the Projects, and where it runs the extensions.
 The code is in `crates/nomuxd`. The transport is in `crates/nomux-transport`, and the client side is in `crates/nomux-client`.
 
 [architecture.md](architecture.md) shows where the daemon is in the core. [holder.md](holder.md) describes the holder and its contract with the daemon. [cli.md](cli.md) describes the commands that use the daemon. [remote.md](remote.md) describes how a client on a different computer reaches the daemon through SSH. [extensions.md](extensions.md) describes the extension host of the daemon.
@@ -533,6 +533,10 @@ One task applies the triggers of the hibernation: the count of the live agent se
 ## Workspace tree
 
 The daemon owns the workspace tree of the host: the Groups and the Projects. It serves the Workspace service (`Workspace.Tree` and the six requests that change the tree) and sends a `WorkspaceChanged` event for each change, in the event log of "Events". It stores the tree with its revision in `workspace.json` in its state directory, with a write that replaces the file in one step, and reads the file only at its start. A file that it cannot use goes aside with a warning in the log, and the daemon starts with an empty tree. The daemon also resolves the symbolic links of the working directory of each session one time, and sends the result in `Session.resolved_working_directory`: a client finds the Project of a session with it. [workspace.md](workspace.md) has the model, the file, the rules and the Project of a session. The code is in `crates/nomuxd/src/workspace.rs`, `crates/nomuxd/src/workspace` and `crates/nomuxd/src/handlers/workspace.rs`.
+
+## Worktrees
+
+The daemon serves the Worktree service (`Worktree.List`): the git worktrees of each Project with their state, flags, size and the reasons why a removal is refused. It gets the git facts from the method `worktree_facts` of the git extension `nomux.git` and has no git code of its own. It keeps only the sizes, in memory, and measures them on a thread of the blocking pool after the answer to a list whose sizes are absent or old. It has no timer for them: an idle daemon measures nothing. It changes no file of a repository. [worktrees.md](worktrees.md) has the model, the rules, the sizes and the measurements. The code is in `crates/nomuxd/src/worktrees.rs`, `crates/nomuxd/src/worktrees` and `crates/nomuxd/src/handlers/worktree.rs`.
 
 ## What survives the end of the daemon
 

@@ -15,6 +15,8 @@ mod status_json;
 mod table;
 mod workspace_human;
 mod workspace_json;
+mod worktree_human;
+mod worktree_json;
 mod wrapped_line;
 
 use std::io::{self, Write};

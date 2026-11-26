@@ -1,6 +1,6 @@
 //! The `host` commands: the remote hosts of the global configuration file.
 
-use nomux_client::{BinarySource, ClientError, Host, check_host};
+use nomux_client::{BinarySource, ClientError, Host, check_host, check_local_host};
 use nomux_core::configuration::{HostEntry, is_valid_host_name};
 
 use crate::arguments::HostCommand;
@@ -8,6 +8,9 @@ use crate::commands::KIND;
 use crate::output::Format;
 use crate::report::{AddedHost, HostDiagnosis, Report};
 use crate::selected_host::{configuration, configured_host, progress_printer};
+
+/// The name of the local host in the output of `host doctor`.
+const LOCAL_HOST: &str = "local";
 
 pub(crate) async fn run(command: HostCommand, format: Format) -> Result<Report, ClientError> {
     match command {
@@ -24,12 +27,18 @@ pub(crate) async fn run(command: HostCommand, format: Format) -> Result<Report, 
             Ok(Report::HostRemoved { name })
         }
         HostCommand::Doctor { name } => {
-            let hosts = match name {
-                Some(name) => vec![configured_host(&name)?],
+            let hosts = match &name {
+                Some(name) => vec![configured_host(name)?],
                 None => configuration()?.hosts()?,
             };
             let binaries = BinarySource::from_environment();
             let mut diagnoses = Vec::new();
+            if name.is_none() {
+                diagnoses.push(HostDiagnosis {
+                    name: LOCAL_HOST.to_owned(),
+                    checks: check_local_host(KIND).await,
+                });
+            }
             for host in hosts {
                 diagnoses.push(HostDiagnosis {
                     checks: check_host(&host.ssh, &binaries, KIND).await,

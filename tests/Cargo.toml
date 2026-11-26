@@ -48,6 +48,13 @@ name = "nomux-test-adapter"
 path = "support/test_adapter.rs"
 test = false
 
+# A test installs this program as the git extension: it gives the
+# worktree facts that the test wrote.
+[[bin]]
+name = "nomux-test-git"
+path = "support/test_git.rs"
+test = false
+
 [[example]]
 name = "attach_measurements"
 path = "measurements/attach.rs"
@@ -159,6 +166,10 @@ path = "version_mismatch.rs"
 [[test]]
 name = "workspace"
 path = "workspace.rs"
+
+[[test]]
+name = "worktrees"
+path = "worktrees.rs"
 
 [dependencies]
 nomux-core.workspace = true
