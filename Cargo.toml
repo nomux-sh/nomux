@@ -32,7 +32,7 @@ libc = "0.2.191"
 # The safe encoder and the safe decoder, without the frame format: the journal has
 # its own framing.
 lz4_flex = { version = "0.14.2", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
-nomux-extension = { version = "0.1.1", features = ["manifest"] }
+nomux-extension = { version = "0.1.3", features = ["manifest"] }
 nomux-proto = "0.12.0"
 nix = { version = "0.31.4", default-features = false }
 prost = "0.14.6"
