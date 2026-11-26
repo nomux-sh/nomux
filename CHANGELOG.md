@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [git-cliff](https://git-cliff.org) writes this file from the commit subjects.
 To see the changes that are not in a version, run `git cliff --unreleased`.
 
+## [0.5.0] - 2026-11-26
+
+### Added
+
+- Keep groups of projects in the daemon and the CLI
+- Find the project of a session by its resolved directory
+- Keep the rows above the screen as history in nomux-term
+- Choose the prefix keys of an attach and read the kitty key forms
+- Give sessions names and find a session by its name
+- Send keys to a session, follow its output and end all sessions
+- Hibernate idle agent sessions and limit their memory
+
+### Fixed
+
+- Erase the first row for ED 1 from the second row
+- Show the configuration file of the daemon and its macOS path
+- Fit each table of the CLI to a terminal of 60 columns
+- Change the directory of a pooled shell before its first prompt
+- Wait for a replacement daemon when the earlier daemon closes
+- Correct the documentation link, CI triggers and Dependabot rules
+- Keep the format of a settings file at a hooks install
+- Leave the message and location of a holder panic
 ## [0.4.0] - 2026-11-26
 
 ### Added

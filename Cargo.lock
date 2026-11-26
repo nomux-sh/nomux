@@ -1109,7 +1109,7 @@ dependencies = [
 
 [[package]]
 name = "nomux-cli"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "base64 0.23.1",
  "clap",
@@ -1125,7 +1125,7 @@ dependencies = [
 
 [[package]]
 name = "nomux-client"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "nomux-core",
  "nomux-proto",
@@ -1141,7 +1141,7 @@ dependencies = [
 
 [[package]]
 name = "nomux-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "rustix",
  "tempfile",
@@ -1150,7 +1150,7 @@ dependencies = [
 
 [[package]]
 name = "nomux-end-to-end"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "base64 0.23.1",
  "nomux-client",
@@ -1168,7 +1168,7 @@ dependencies = [
 
 [[package]]
 name = "nomux-ext-host"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "nomux-extension",
  "prost",
@@ -1192,7 +1192,7 @@ dependencies = [
 
 [[package]]
 name = "nomux-holder"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "getrandom 0.4.3",
  "libc",
@@ -1206,7 +1206,7 @@ dependencies = [
 
 [[package]]
 name = "nomux-holder-protocol"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "libc",
  "lz4_flex",
@@ -1225,11 +1225,11 @@ dependencies = [
 
 [[package]]
 name = "nomux-status"
-version = "0.4.0"
+version = "0.5.0"
 
 [[package]]
 name = "nomux-term"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "alacritty_terminal",
  "base64 0.23.1",
@@ -1239,7 +1239,7 @@ dependencies = [
 
 [[package]]
 name = "nomux-transport"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "base64 0.23.1",
  "hmac",
@@ -1253,7 +1253,7 @@ dependencies = [
 
 [[package]]
 name = "nomuxd"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "getrandom 0.4.3",
  "libc",
@@ -2652,7 +2652,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.4.0"
+version = "0.5.0"
 
 [[package]]
 name = "zeroize"
