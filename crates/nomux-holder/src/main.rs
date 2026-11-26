@@ -37,6 +37,7 @@ mod input_queue;
 mod journal;
 mod program_reports;
 mod pty;
+mod resize_verification;
 mod session;
 mod session_state_directory;
 mod shared_memory;

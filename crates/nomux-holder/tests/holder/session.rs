@@ -99,6 +99,77 @@ fn a_daemon_controls_a_shell_through_the_holder() {
     assert_eq!(scan(runtime.path()).unwrap(), []);
 }
 
+/// What the line editor of a shell does at the start of a prompt: it reads
+/// the window size and writes it back. The test resizes the window between
+/// the two calls.
+const WRITES_OLD_SIZE_BACK: &str = r#"size=$(stty size); echo size-read; read line
+stty rows "${size% *}" cols "${size#* }"; echo size-written; read line
+echo "now-$(stty size)-end""#;
+
+#[test]
+fn a_resize_stays_when_a_program_writes_the_old_size_back() {
+    let runtime = runtime_directory();
+    let command = ["/bin/sh", "-c", WRITES_OLD_SIZE_BACK];
+    let _holder = Holder::start(runtime.path(), "prompt", &[], &command);
+    let mut client = Client::connect(runtime.path());
+    assert_eq!(client.request(Request::AcquireLease), Reply::Done);
+    let larger = WindowSize {
+        rows: 40,
+        columns: 100,
+    };
+
+    client.read_until("size-read");
+    assert_eq!(client.request(Request::Resize(larger)), Reply::Done);
+    client.type_line("");
+    client.read_until("size-written");
+    client.type_line("");
+    client.read_until("-end");
+
+    let output = String::from_utf8_lossy(&client.output);
+    assert!(output.contains("now-40 100-end"), "{output:?}");
+}
+
+/// Sets a size of its own after each line of input, and reports the size
+/// that it found.
+const SETS_ITS_OWN_SIZE: &str = r#"while read line; do
+echo "now-$(stty size)-end"; stty rows 10 cols 20; echo size-set
+done"#;
+
+#[test]
+fn a_program_that_always_sets_its_own_size_keeps_it_after_a_limit() {
+    let runtime = runtime_directory();
+    let command = ["/bin/sh", "-c", SETS_ITS_OWN_SIZE];
+    let _holder = Holder::start(runtime.path(), "contest", &[], &command);
+    let mut client = Client::connect(runtime.path());
+    assert_eq!(client.request(Request::AcquireLease), Reply::Done);
+    let larger = WindowSize {
+        rows: 40,
+        columns: 100,
+    };
+    assert_eq!(client.request(Request::Resize(larger)), Reply::Done);
+
+    let mut sizes = Vec::new();
+    for _ in 0..40 {
+        client.output.clear();
+        client.type_line("");
+        client.read_until("size-set");
+        let output = String::from_utf8_lossy(&client.output).into_owned();
+        let kept = output.contains("now-10 20-end");
+        sizes.push(output);
+        if kept {
+            break;
+        }
+    }
+
+    // The holder corrected the size first, and stopped then.
+    assert!(sizes.len() > 2, "{sizes:?}");
+    assert!(sizes[1].contains("now-40 100-end"), "{sizes:?}");
+    assert!(
+        sizes[sizes.len() - 1].contains("now-10 20-end"),
+        "{sizes:?}"
+    );
+}
+
 /// Stops the holders that a failed test left in a runtime directory.
 struct StopHolders(PathBuf);
 
