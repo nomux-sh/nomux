@@ -266,3 +266,15 @@ fn the_command_gets_its_arguments_and_the_working_directory() {
     });
     assert_eq!(written.trim(), work_path.to_str().unwrap());
 }
+
+#[test]
+fn a_session_starts_in_a_home_directory_whose_socket_paths_are_too_long() {
+    // Issue #65: the sockets of `<home>/.nomux/run` do not fit the limit of
+    // 107 bytes on Linux with this home directory.
+    let sandbox = Sandbox::with_home_of_length(120);
+
+    let (id, pid) = new_session(&sandbox);
+
+    assert_eq!(listed(&sandbox), [session_document(&id, pid)]);
+    assert!(holder_is_live(&sandbox, &id));
+}

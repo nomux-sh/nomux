@@ -12,8 +12,8 @@
 //! - [`FrameReader`] and [`FrameWriter`]: the framing of the terminal
 //!   channels of an attach. [`EnvelopeStream::into_frames`] makes them from
 //!   the connection that sent the attach request.
-//! - [`LocalListener`], [`connect`] and [`default_socket_path`]: the socket
-//!   of the daemon on the local host.
+//! - [`LocalListener`] and [`connect`]: the socket of the daemon on the
+//!   local host.
 //! - [`ssh`]: the SSH client. [`ssh::SshConnection::open_unix_socket`] gives
 //!   an [`EnvelopeStream`] to the daemon of a remote host.
 //!
@@ -39,4 +39,4 @@ pub mod ssh;
 
 pub use envelope_stream::EnvelopeStream;
 pub use frame_stream::{FrameReader, FrameWriter};
-pub use local_socket::{LocalListener, SOCKET_FILE, connect, default_socket_path};
+pub use local_socket::{LocalListener, SOCKET_FILE, connect};

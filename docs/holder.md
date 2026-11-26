@@ -31,7 +31,7 @@ nomux-holder --session <identifier> [options] -- <command> [argument...]
 | Option | Default | Function |
 |---|---|---|
 | `--session <identifier>` | necessary | The session identifier: 1 to 64 characters from `A-Z`, `a-z`, `0-9`, `-` and `_` |
-| `--runtime-directory <path>` | `~/.nomux/run` | The directory for the discovery files |
+| `--runtime-directory <path>` | `~/.nomux/run` | The directory for the discovery files. The daemon gives the path of a short link if this path is too long for the sockets: see "Discovery files" |
 | `--state-directory <path>` | See "Session state directory" | The directory for the journal and the session metadata |
 | `--working-directory <path>` | the current directory | The working directory of the command |
 | `--rows <number>`, `--columns <number>` | 24, 80 | The size of the terminal window: 1 row or more, 2 columns or more, and 1048576 cells at most |
@@ -813,6 +813,8 @@ Each holder has one directory in the runtime directory of the user. The name of 
     ready                     empty; the holder writes it last
   <session identifier>.pool/  directory of a pooled holder, with the same files
 ```
+
+The path of a socket has 103 bytes at most on macOS and 107 bytes at most on Linux. The holder checks the path of `sock` before it makes the socket: a path that is too long fails with the path, its length and the limit. The daemon opens a runtime directory with a long path through a short link in `/tmp`, thus the paths of its holders fit: [daemon.md](daemon.md#length-of-the-socket-paths) has the rule.
 
 The start time tells a holder from a later process that got the same process ID.
 

@@ -27,7 +27,6 @@ mod process_identity;
 mod process_record;
 mod scan;
 
-use std::env;
 use std::path::{Path, PathBuf};
 
 pub use process_identity::ProcessIdentity;
@@ -47,14 +46,6 @@ pub const POOLED_DIRECTORY_SUFFIX: &str = ".pool";
 /// The name of the socket of the daemon in the runtime directory. A holder
 /// gives its path to the command of its session.
 pub const DAEMON_SOCKET_FILE: &str = "nomuxd.sock";
-
-/// The runtime directory of the user: `~/.nomux/run`. Returns `None` if the
-/// `HOME` variable is not set.
-#[must_use]
-pub fn default_runtime_directory() -> Option<PathBuf> {
-    let home = env::var_os("HOME").filter(|home| !home.is_empty())?;
-    Some(PathBuf::from(home).join(".nomux").join("run"))
-}
 
 /// The directory of the holder of one session.
 #[must_use]

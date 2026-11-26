@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use nomux_core::companion_binary;
+use nomux_core::{companion_binary, runtime_directory};
+use nomux_transport::SOCKET_FILE;
 use tokio::time::{Instant, sleep};
 
 use crate::{Client, ClientError, ClientKind};
@@ -24,12 +25,12 @@ pub(crate) struct LocalHost {
 
 impl LocalHost {
     pub(crate) fn of_this_user() -> Result<Self, ClientError> {
-        let socket = nomux_transport::default_socket_path().ok_or_else(|| {
-            ClientError::Failed(
-                "the HOME variable is not set, thus the daemon socket has no path".to_owned(),
-            )
-        })?;
-        Ok(Self { socket })
+        let directory = runtime_directory::locate()
+            .and_then(|directory| runtime_directory::link_socket_directory(&directory))
+            .map_err(|error| ClientError::Failed(error.to_string()))?;
+        Ok(Self {
+            socket: directory.join(SOCKET_FILE),
+        })
     }
 
     /// Connects to the daemon. Returns `None` if no daemon runs.

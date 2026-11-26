@@ -1136,6 +1136,7 @@ dependencies = [
 name = "nomux-core"
 version = "0.3.0"
 dependencies = [
+ "rustix",
  "tempfile",
  "toml_edit",
 ]
@@ -1146,6 +1147,7 @@ version = "0.3.0"
 dependencies = [
  "base64",
  "nomux-client",
+ "nomux-core",
  "nomux-extension",
  "nomux-holder-protocol",
  "nomux-proto",

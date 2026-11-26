@@ -129,7 +129,7 @@ nomux: THE HOST KEY OF vps.example.com CHANGED. /home/ada/.ssh/known_hosts line 
 ### One channel for each connection to the daemon
 
 On the local host, a client opens one Unix connection for the control requests and one Unix connection for each attach ([daemon.md](daemon.md)).
-On a remote host, each of these connections is one SSH channel of the type `direct-streamlocal@openssh.com`: the SSH server connects the channel to `~/.nomux/run/nomuxd.sock`. The daemon sees a local connection of the same user.
+On a remote host, each of these connections is one SSH channel of the type `direct-streamlocal@openssh.com`: the SSH server connects the channel to `~/.nomux/run/nomuxd.sock`, or to the socket in the short link of a long home directory ([daemon.md](daemon.md#length-of-the-socket-paths)). The client computes the path from the home directory of the host. The daemon sees a local connection of the same user.
 
 Thus the protocol on a channel is the protocol of the local socket, without a change: the handshake, the control envelopes, and after `Session.Attach` the terminal frames in the two directions.
 
