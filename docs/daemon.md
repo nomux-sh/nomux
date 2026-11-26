@@ -154,6 +154,8 @@ shell_start_files = true      # false: the pool takes only sessions in the home 
 | `pool.idle_time` | `10m` | How long the pool stays when no session starts |
 | `pool.shell_start_files` | `true` | A pooled `bash`, `zsh` or `fish` starts with a start file of nomux, which changes to the directory of the session before the first prompt. With `false`, the pool takes only sessions in the home directory: see "Holder pool" |
 
+The daemon does not read the `[attach]` table: the CLI reads it for the prefix keys of an attach on the computer of the CLI ([cli.md](cli.md#attach)).
+
 A file that is not valid does not stop the daemon, because the sessions need it. The daemon writes the problem to its log and uses the defaults.
 
 ## One daemon for each runtime directory

@@ -6,6 +6,7 @@ use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 use std::panic;
 
 use nomux_client::WindowSize;
+use nomux_core::configuration::PrefixKeys;
 use rustix::termios::{OptionalActions, Termios, isatty, tcgetattr, tcgetwinsize, tcsetattr};
 
 /// Puts the terminal into the initial state that a snapshot of a screen
@@ -52,7 +53,27 @@ pub(super) const SHOW_CONNECTION_LOST: &[u8] =
     b"\x1b[22;0t\x1b]0;nomux: connection lost, connecting again\x07";
 
 /// Gives the window its saved title back (XTWINOPS 23).
-pub(super) const HIDE_CONNECTION_LOST: &[u8] = b"\x1b[23;0t";
+pub(super) const HIDE_CONNECTION_LOST: &[u8] = RESTORE_TITLE;
+
+/// Gives the window the title that it had before the last saved title.
+pub(super) const RESTORE_TITLE: &[u8] = b"\x1b[23;0t";
+
+/// Saves the title of the window and sets a title with the keys of nomux,
+/// for the key `?` after a prefix. The screen of the session is not
+/// changed: the next key gives the title back.
+pub(super) fn show_keys(prefixes: &PrefixKeys) -> Vec<u8> {
+    let keys: Vec<String> = prefixes
+        .keys()
+        .iter()
+        .map(|prefix| {
+            let literal = prefix
+                .letter()
+                .map_or_else(String::new, |letter| format!(" or {prefix} {letter}"));
+            format!("{prefix} d: detach, {prefix} {prefix}{literal}: send {prefix}")
+        })
+        .collect();
+    format!("\x1b[22;0t\x1b]0;nomux keys: {}\x07", keys.join("; ")).into_bytes()
+}
 
 /// `true` if the standard input is a terminal.
 pub(super) fn is_available() -> bool {

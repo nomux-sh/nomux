@@ -8,6 +8,7 @@ use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser, Subcommand};
 use nomux_client::RestorePolicy;
 
+use crate::attach::PrefixOption;
 use crate::extension_commands::ExtCommand;
 use crate::hook_commands::HooksCommand;
 use crate::status_commands::{AgentCommand, EventTypeArgument, StatusCommand};
@@ -90,9 +91,16 @@ impl Arguments {
 }
 
 const ATTACH_KEYS: &str = "\
-Keys during an attach:
-  Ctrl-\\ d       Detach. The session continues
-  Ctrl-\\ Ctrl-\\  Send one Ctrl-\\ to the session
+Keys during an attach, with the default prefix keys Ctrl-a and Ctrl-\\:
+  Ctrl-a d         Detach. The session continues. Ctrl-a Ctrl-d also detaches
+  Ctrl-a Ctrl-a    Send one Ctrl-a to the session. Ctrl-a a does the same
+  Ctrl-a ?         Show the keys in the title of the window until the next key
+  Ctrl-\\ d         Detach
+  Ctrl-\\ Ctrl-\\    Send one Ctrl-\\ to the session
+
+A prefix and a different key go to the session together. --prefix, the
+variable NOMUX_PREFIX and `prefix` in [attach] of the configuration file
+choose other prefix keys: for example C-b, or none.
 
 Each other key goes to the session. The exit code is the exit status of the
 command if the session ends during the attach, and 0 after a detach.";
@@ -108,6 +116,9 @@ pub(crate) enum Command {
         /// Attach to the new session
         #[arg(long)]
         attach: bool,
+
+        #[command(flatten)]
+        prefix: PrefixOption,
 
         /// The command of the session and its arguments [default: the shell of the user].
         /// Each argument after --cmd belongs to the command, also an option of nomux
@@ -134,12 +145,15 @@ pub(crate) enum Command {
         #[arg(long)]
         memory: bool,
     },
-    /// Show a session in this terminal. To detach, press Ctrl-\ and then d.
+    /// Show a session in this terminal. To detach, press Ctrl-a and then d.
     /// A dormant session starts again
     #[command(after_help = ATTACH_KEYS)]
     Attach {
         /// The session identifier
         id: String,
+
+        #[command(flatten)]
+        prefix: PrefixOption,
     },
     /// Start the command of a dormant session again
     Start {

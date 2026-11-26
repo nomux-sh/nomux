@@ -5,7 +5,7 @@ use std::env;
 use std::path::{self, PathBuf};
 
 use nomux_client::{ClientError, ClientKind, Host, NewSession};
-use nomux_core::configuration::default_configuration_path;
+use nomux_core::configuration::{PrefixKeys, default_configuration_path};
 
 use crate::arguments::{Command, DaemonCommand};
 use crate::output::Format;
@@ -33,22 +33,27 @@ pub(crate) async fn run(
         Command::New {
             cwd,
             attach,
+            prefix,
             command,
             command_after_separator,
         } => {
+            // A setting of the keys that is not valid starts no session.
+            let prefixes = attach.then(|| prefix.prefix_keys()).transpose()?;
             // The command line has the command in one of the two forms.
             let session = NewSession {
                 command: [command, command_after_separator].concat(),
                 working_directory: working_directory(cwd, host_name.is_some())?,
             };
             let session = host.client(KIND).await?.create_session(session).await?;
-            if attach {
-                attach_to(&host, host_name, session.id).await
-            } else {
-                Ok(Report::SessionCreated(session))
+            match prefixes {
+                Some(prefixes) => attach_to(&host, host_name, session.id, prefixes).await,
+                None => Ok(Report::SessionCreated(session)),
             }
         }
-        Command::Attach { id } => attach_to(&host, host_name, id).await,
+        Command::Attach { id, prefix } => {
+            let prefixes = prefix.prefix_keys()?;
+            attach_to(&host, host_name, id, prefixes).await
+        }
         Command::Detach { id } => {
             let clients = host.client(KIND).await?.detach_session(&id).await?;
             Ok(Report::ClientsDetached { id, clients })
@@ -158,8 +163,9 @@ async fn attach_to(
     host: &Host,
     host_name: Option<&str>,
     id: String,
+    prefixes: PrefixKeys,
 ) -> Result<Report, ClientError> {
-    let end = attach::run(host, host_name, &id).await?;
+    let end = attach::run(host, host_name, &id, prefixes).await?;
     Ok(Report::AttachEnded { id, end })
 }
 
