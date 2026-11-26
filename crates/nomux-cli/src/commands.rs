@@ -70,9 +70,15 @@ pub(crate) async fn run(
             let clients = host.client(KIND).await?.detach_session(&id).await?;
             Ok(Report::ClientsDetached { id, clients })
         }
-        Command::Ls { all } => {
+        Command::Ls { all, memory: false } => {
             let sessions = host.client(KIND).await?.list_sessions(all).await?;
             Ok(Report::Sessions(sessions))
+        }
+        Command::Ls { all, memory: true } => {
+            let mut client = host.client(KIND).await?;
+            let sessions = client.list_sessions(all).await?;
+            let memory = client.session_memory().await?;
+            Ok(Report::SessionsMeasured { sessions, memory })
         }
         Command::Start { id } => {
             let session = host.client(KIND).await?.start_session(&id).await?;

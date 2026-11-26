@@ -126,6 +126,10 @@ pub(crate) enum Command {
         /// Also list the sessions whose command ended
         #[arg(long, short)]
         all: bool,
+
+        /// Show the memory that the processes of each session use now
+        #[arg(long)]
+        memory: bool,
     },
     /// Show a session in this terminal. To detach, press Ctrl-\ and then d.
     /// A dormant session starts again

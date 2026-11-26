@@ -10,6 +10,7 @@ use serde::Serialize;
 
 use super::extension_json::ExtensionBody;
 use super::human::state_name;
+use super::memory_json::SessionsMemoryBody;
 use crate::exit_code;
 use crate::report::{AddedHost, HostDiagnosis, Report, ServiceFileAction, ServiceFileReport};
 
@@ -47,6 +48,9 @@ enum Body<'a> {
     /// The field of the document is the field of the body of the extension.
     #[serde(untagged)]
     Extension(ExtensionBody<'a>),
+    /// The fields of the document are the fields of the body.
+    #[serde(untagged)]
+    SessionsMemory(SessionsMemoryBody<'a>),
 }
 
 #[derive(Serialize)]
@@ -116,7 +120,7 @@ impl<'a> From<&'a HostDiagnosis> for DiagnosisDocument<'a> {
 }
 
 #[derive(Serialize)]
-struct SessionDocument<'a> {
+pub(super) struct SessionDocument<'a> {
     id: &'a str,
     state: &'static str,
     pid: Option<u32>,
@@ -293,6 +297,9 @@ pub(super) fn report(report: &Report) -> String {
         Report::ServiceFile(service) => Body::Service(service.into()),
         Report::Sessions(sessions) => {
             Body::Sessions(sessions.iter().map(SessionDocument::from).collect())
+        }
+        Report::SessionsMeasured { sessions, memory } => {
+            Body::SessionsMemory(SessionsMemoryBody::new(sessions, memory))
         }
         Report::SessionKilled { id } => Body::Killed(id),
         Report::AttachEnded { id, end } => Body::Attach(AttachDocument::new(id, *end)),

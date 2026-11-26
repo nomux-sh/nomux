@@ -22,9 +22,19 @@ name = "nomux-test-incompatible-daemon"
 path = "support/incompatible_daemon.rs"
 test = false
 
+# The command of a session in a test of the memory of a session.
+[[bin]]
+name = "nomux-test-memory-user"
+path = "support/memory_user.rs"
+test = false
+
 [[example]]
 name = "attach_measurements"
 path = "measurements/attach.rs"
+
+[[example]]
+name = "memory_measurements"
+path = "measurements/memory.rs"
 
 [[example]]
 name = "remote_measurements"
@@ -65,6 +75,10 @@ path = "remote_host.rs"
 [[test]]
 name = "restore"
 path = "restore.rs"
+
+[[test]]
+name = "session_memory"
+path = "session_memory.rs"
 
 [[test]]
 name = "session_lifecycle"

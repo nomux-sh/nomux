@@ -3,6 +3,7 @@
 //! the host, and start a dormant session again.
 
 mod adoption;
+mod memory;
 mod restore;
 
 use std::env;

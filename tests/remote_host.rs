@@ -117,6 +117,13 @@ fn host_add_installs_the_binaries_from_the_release_archive_and_the_session_comma
     // The session is on the host and not on the local host.
     assert_eq!(remote.host.sessions().len(), 1);
     assert_eq!(remote.client.sessions(), NO_SESSIONS);
+    // The daemon of the host measures the processes of the host.
+    let measured = remote
+        .nomux_ok(&["--host", "vps", "ls", "--memory", "--json"])
+        .json();
+    assert_eq!(measured["sessions"][0]["id"], id.as_str());
+    assert_eq!(measured["sessions"][0]["memory"]["command_processes"], 1);
+    assert_eq!(measured["memory_total"]["sessions"], 1);
 
     let mut client = attach(&remote, &id);
     client.wait_for_text("READY");

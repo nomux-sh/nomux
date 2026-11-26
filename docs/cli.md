@@ -21,7 +21,7 @@ nomux [--json | --quiet] [--host <name>] <command>
 | Command | Function |
 |---|---|
 | `new [--cwd <dir>] [--attach] [-- <command> [argument...]]` | Starts a new session and prints its identifier. With `--attach`, attaches to it |
-| `ls [--all]` | Lists the sessions. With `--all`, also the sessions whose command ended |
+| `ls [--all] [--memory]` | Lists the sessions. With `--all`, also the sessions whose command ended. With `--memory`, also the memory that the processes of each session use |
 | `attach <id>` | Shows a session in the terminal of the user until the user detaches or the session ends. A dormant session starts again |
 | `start <id>` | Starts the command of a dormant session again |
 | `capture <id> [--lines <n>]` | Prints the last output lines of a session |
@@ -540,6 +540,25 @@ A field is `null`, or `command` is empty, when the daemon does not know the valu
 
 `sessions` is an array of the object that `new` gives, in the sequence of the identifiers. It is empty if there is no session. An ended session is in the array only with `--all`.
 
+### `ls --memory`
+
+```json
+{"schema_version":1,"sessions":[{"id":"k3xq2abc","state":"running","pid":41873,"command":["claude"],"cwd":"/home/user/project","rows":24,"columns":80,"started_at":1795651200,"epoch":1,"restore_policy":"on-focus","memory":{"command_bytes":537290342,"command_processes":7,"holder_bytes":621568,"measure":"pss"}},{"id":"p2rs6tuv","state":"dormant","pid":null,"command":["vim","notes.txt"],"cwd":"/home/user","rows":24,"columns":80,"started_at":1795651100,"epoch":1,"restore_policy":"on-focus","memory":null}],"memory_total":{"command_bytes":537290342,"command_processes":7,"holder_bytes":621568,"sessions":1,"measure":"pss"}}
+```
+
+The document is the document of `ls` with one more field in each session and one more field at the top. Without `--memory`, the document has neither of the two.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `sessions[].memory` | object or `null` | The memory of the processes of the session. `null` if the session has no process |
+| `sessions[].memory.command_bytes` | number | The memory of the process tree of the command in bytes, without the holder |
+| `sessions[].memory.command_processes` | number | The number of processes in that tree |
+| `sessions[].memory.holder_bytes` | number | The memory of the holder of the session in bytes |
+| `sessions[].memory.measure` | string | `pss`, `rss`, or `unknown` for a measure that the CLI does not know |
+| `memory_total.command_bytes`, `memory_total.command_processes`, `memory_total.holder_bytes` | number | The sums of the three values of the sessions that have a process |
+| `memory_total.sessions` | number | The number of sessions in the sums |
+| `memory_total.measure` | string or `null` | The measure of the sums. `null` if the sessions do not have the same measure, or if no session has a process |
+
 ### `capture`
 
 ```json
@@ -763,7 +782,7 @@ A wrong command line is not a JSON document: the argument parser writes its usag
 ## Tests
 
 - `crates/nomux-cli/src/output/json.rs` and `crates/nomux-cli/src/output/extension_json.rs` have the full text of each document. A changed field fails these tests.
-- `crates/nomux-cli/src/arguments.rs` has the rule for the arguments after `--` and `--cmd`. `crates/nomux-cli/src/attach` has the detach keys and the mode of the terminal, also after a panic.
+- `crates/nomux-cli/src/arguments.rs` has the rule for the arguments after `--` and `--cmd`, and the usage error for the two forms in one command line. `crates/nomux-cli/src/output/memory_human.rs` has the full text of the table of `ls --memory`, and `tests/session_memory.rs` has its JSON document with real processes. `crates/nomux-cli/src/attach` has the detach keys and the mode of the terminal, also after a panic.
 - `tests/` has the end-to-end tests that run the real `nomux`, `nomuxd` and `nomux-holder` and examine the exit codes. `tests/attach.rs` runs `nomux attach` in a pseudoterminal and examines the screen. `tests/remote_host.rs` runs the `host` commands and the commands with `--host` against an SSH server that the test starts. `tests/extensions.rs` runs the `ext` commands with a test extension that uses the extension SDK. `tests/restore.rs` stops each process as a restart of the host does and runs `ls`, `attach`, `start` and `restore-policy` on the dormant sessions. `tests/journal.rs` has `capture`, and `tests/daemon_service.rs` has the service file.
 - `crates/nomux-cli/src/service_files` has the content of the systemd unit and of the launchd agent, also for a path that needs quotes.
 

@@ -5,6 +5,9 @@ mod extension_human;
 mod extension_json;
 mod human;
 mod json;
+mod memory_human;
+mod memory_json;
+mod memory_size;
 
 use std::io::{self, Write};
 

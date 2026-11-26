@@ -1,5 +1,5 @@
-//! Reads the record of a process from the operating system: its start time
-//! and the name of its program.
+//! Reads the record of a process from the operating system: its start time,
+//! its parent and the name of its program.
 
 use std::io;
 
@@ -7,6 +7,8 @@ use std::io;
 pub(super) struct ProcessRecord {
     /// The start time, in the unit of the operating system.
     pub(super) start_time: u64,
+    /// The process ID of the parent.
+    pub(super) parent_pid: u32,
     /// The name of the program. Linux gives 15 bytes at most, macOS gives
     /// 32 bytes at most.
     pub(super) name: String,
@@ -46,10 +48,11 @@ pub(super) fn read(pid: u32) -> io::Result<Option<ProcessRecord>> {
 /// Parses `/proc/<pid>/stat`. The second field is the program name in
 /// parentheses, and it can contain spaces and parentheses, thus the name
 /// ends at the last `)` and the other fields are counted after it. The state
-/// is field 3 and the start time is field 22 (`proc_pid_stat(5)`).
+/// is field 3, the parent is field 4 and the start time is field 22
+/// (`proc_pid_stat(5)`).
 #[cfg(target_os = "linux")]
 fn parse_stat(stat: &str) -> io::Result<Option<ProcessRecord>> {
-    const FIELDS_FROM_STATE_TO_START_TIME: usize = 19;
+    const FIELDS_FROM_PARENT_TO_START_TIME: usize = 18;
 
     let invalid = || io::Error::new(io::ErrorKind::InvalidData, "invalid /proc stat file");
     let (before_name_end, after_name) = stat.rsplit_once(')').ok_or_else(invalid)?;
@@ -59,12 +62,17 @@ fn parse_stat(stat: &str) -> io::Result<Option<ProcessRecord>> {
     if state == "Z" || state == "X" {
         return Ok(None);
     }
+    let parent_pid = fields
+        .next()
+        .and_then(|field| field.parse().ok())
+        .ok_or_else(invalid)?;
     let start_time = fields
-        .nth(FIELDS_FROM_STATE_TO_START_TIME - 1)
+        .nth(FIELDS_FROM_PARENT_TO_START_TIME - 1)
         .and_then(|field| field.parse().ok())
         .ok_or_else(invalid)?;
     Ok(Some(ProcessRecord {
         start_time,
+        parent_pid,
         name: name.to_owned(),
     }))
 }
@@ -118,6 +126,7 @@ pub(super) fn read(pid: u32) -> io::Result<Option<ProcessRecord>> {
     };
     Ok(Some(ProcessRecord {
         start_time: info.pbi_start_tvsec * MICROSECONDS_IN_SECOND + info.pbi_start_tvusec,
+        parent_pid: info.pbi_ppid,
         name,
     }))
 }
@@ -143,6 +152,7 @@ mod tests {
                     987654 1000000 200 18446744073709551615 1 1 0 0 0 0 0 0 0 0 0 0 17 3 0 0";
         let record = parse_stat(stat).unwrap().unwrap();
         assert_eq!(record.start_time, 987_654);
+        assert_eq!(record.parent_pid, 1);
         assert_eq!(record.name, "a) b) (c");
     }
 
