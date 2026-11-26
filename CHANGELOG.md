@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [git-cliff](https://git-cliff.org) writes this file from the commit subjects.
 To see the changes that are not in a version, run `git cliff --unreleased`.
 
+## [0.4.0] - 2026-11-26
+
+### Added
+
+- Show the memory of the processes of each session
+- Give each session its identifier, the daemon socket and a token
+- Add the agent status engine
+- Keep the status of each session and serve its events
+- Add the status, agent explain and events commands
+- Add hook events, the adapter source and extension events
+- Let a pooled holder get its session with a new request
+- Keep a pool of holders with a started shell for new sessions
+- Keep the last agent run of an ended session
+
+### Fixed
+
+- Refuse --cmd together with -- in nomux new
+- Fit the tables of the text output to the terminal width
+- Keep the socket paths under the limit for a long home directory
+- Give each session a terminal type and a UTF-8 character set
+
+### Documentation
+
+- Describe the agent status in the overview documents
+- Describe the agent adapters and the hook commands
 ## [0.3.0] - 2026-11-26
 
 ### Added
@@ -18,6 +43,10 @@ To see the changes that are not in a version, run `git cliff --unreleased`.
 - Add the ext commands to the CLI
 - Read the restore policy and the retention time from config.toml
 - Restore sessions on demand and serve their journal
+
+### Fixed
+
+- Keep the size of a resize when a program writes an old size
 
 ### Documentation
 
