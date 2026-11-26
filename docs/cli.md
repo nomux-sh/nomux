@@ -67,7 +67,7 @@ nomux --host vps daemon status
 - `--cwd <dir>` is the working directory of the command. The default is the current directory of the CLI. A relative path is relative to that directory.
 - `--attach` attaches the terminal to the new session, as `attach` does. The command then prints the result of the attach and not the session identifier. Without a terminal, the command fails and starts no session.
 - `-- <command> [argument...]` is the command of the session. The default is the shell of the user.
-- `--cmd <command> [argument...]` is a second form of the same. The two forms cannot be used together.
+- `--cmd <command> [argument...]` is a second form of the same.
 
 **Each argument after `--` or `--cmd` belongs to the command of the session, also an argument that is an option of `nomux`.** Thus the options of `nomux` come before the command:
 
@@ -79,11 +79,54 @@ nomux new --cwd ~/project -- vim -u NONE notes.txt
 nomux new --attach -- htop
 ```
 
+**The two forms cannot be used together.** A command line that has `--cmd` and then `--` is a usage error with the exit code 1, and no session starts: `nomux` cannot know if the `--` is an argument of the command or the start of the second form.
+
+```console
+$ nomux new --cmd sh -- -c true
+error: the argument '--cmd <COMMAND>...' cannot be used with '--': nomux cannot know where the command of the session starts. Give the command in one form: `nomux new --cmd <command> [argument...]` or `nomux new -- <command> [argument...]`. For a command that has `--` as an argument, use the second form
+
+Usage: nomux new [OPTIONS] [-- <COMMAND>...]
+
+For more information, try '--help'.
+```
+
+Thus a command that has `--` as one of its arguments needs the second form. After the first `--`, each `--` belongs to the command:
+
+```sh
+nomux new -- git log -- notes.txt        # the second -- is an argument of git
+```
+
 The session does not need the CLI or the daemon after that.
 
 ### `ls`
 
 `ls` lists the sessions that can run: the sessions whose command runs, the dormant sessions and the damaged sessions. `ls --all` (`-a`) also lists the ended sessions, which the daemon keeps for the retention time. "Output" has the states.
+
+`ls --memory` also shows the memory that the processes of each session use at the time of the command. The daemon measures the memory for this command only: without `--memory`, `ls` measures nothing.
+
+```console
+$ nomux ls --memory
+ID        STATE    MEMORY     PROCESSES  HOLDER     MEASURE  COMMAND
+k3xq2abc  running  512.4 MiB  7          607.0 KiB  pss      claude
+p2rs6tuv  dormant  -          -          -          -        vim notes.txt
+total: 512.4 MiB in 7 processes of 1 session, and 607.0 KiB in the holders (pss)
+```
+
+| Column | Meaning |
+|---|---|
+| `MEMORY` | The memory of the process tree of the command: the command and each process that descends from it |
+| `PROCESSES` | The number of processes in that tree |
+| `HOLDER` | The memory of the holder of the session. It is not a part of `MEMORY` |
+| `MEASURE` | `pss`: the proportional set size, which counts a page that more than one process uses one time. `rss`: the resident set size, which counts such a page for each process. Linux gives `pss`, macOS gives `rss` |
+
+- A session without a process has `-` in the four columns and is not in the total line.
+- The table has no `PID` column and no `NOTE` column. `ls` without `--memory` has them.
+- A size has the unit `KiB`, `MiB` or `GiB` (1024 bytes, 1024 KiB, 1024 MiB) and one decimal place. The JSON output has the bytes.
+- If the sessions do not have the same measure, the total line says `pss and rss`: the sum then has values of the two kinds.
+- A daemon that is older than this option answers with an error, and the exit code is 1.
+- With `--host`, the daemon of the remote host measures the processes of that host.
+
+[memory.md](memory.md) says how the daemon measures, what the values do not count, and the time of the command.
 
 ### Dormant sessions: `start` and `restore-policy`
 
