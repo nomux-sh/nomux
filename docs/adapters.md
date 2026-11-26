@@ -103,7 +103,7 @@ HookInstallPlan
 - A path starts with `~/` and has no `.` or `..` part. The client refuses a plan without a path for its platform.
 - An entry names an array of the JSON settings file with a JSON pointer, and a value that the array must contain. nomux makes each object and the array on the path. A value that the array has already is not added again.
 - The command of a hook is `nomux hook <tool> <event>`. nomux never wraps or replaces the command of the tool, and never adds an option that skips the permission checks of the tool.
-- The uninstall restores the bytes of the file if the file did not change after the install, and removes only the entries of the plan if it changed.
+- The uninstall restores the bytes of the file if the file did not change after the install, and removes only the entries of the plan if it changed, with each list and object that the install made and that has no other value then. The settings file is strict JSON: Claude Code 2.1 refuses a file with a comment or with a comma after the last value, thus nomux does too.
 
 ## Test adapter
 

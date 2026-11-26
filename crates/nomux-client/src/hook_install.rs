@@ -9,20 +9,25 @@
 //!
 //! - `settings_path`: the path of the file on this platform.
 //! - `settings_document`: the JSON document and its entries.
+//! - `settings_text`: the edit of the text of the file at the positions of
+//!   its values, with `json_spans`.
 //! - `install_record`: what an uninstall needs.
 //! - `settings_diff`: the unified diff.
 //! - `settings_file`: the write of the file.
 
 mod install_record;
+mod json_spans;
 mod settings_diff;
 mod settings_document;
 mod settings_file;
 mod settings_path;
+mod settings_text;
 
 use std::path::{Path, PathBuf};
 
 use install_record::{InstallRecord, Original, RecordStore, read_optional, recorded_tools};
-use settings_document::{HookEntry, add, contains, entries_of, parse, remove, render};
+use settings_document::{contains, entries_of, parse};
+use settings_text::EMPTY_DOCUMENT;
 
 use crate::bootstrap::sha256_hex;
 use crate::{ClientError, HookInstallPlan};
@@ -117,14 +122,22 @@ pub fn plan_hook_install(
     let path = settings_path::settings_path(plan)?;
     let entries = entries_of(plan)?;
     let before = read_optional(&path)?;
-    let mut document = document_of(&path, before.as_deref())?;
+    let document = document_of(&path, before.as_deref())?;
     if entries.iter().all(|entry| contains(&document, entry)) {
         return Ok(unchanged(path, before));
     }
+    let mut text = match document_text(before.as_deref()) {
+        text if text.trim().is_empty() => EMPTY_DOCUMENT.to_owned(),
+        text => text.to_owned(),
+    };
+    let mut made = Vec::new();
     for entry in &entries {
-        add(&mut document, entry).map_err(|problem| not_changeable(&path, &problem))?;
+        let (added, pointer) =
+            settings_text::add(&text, entry).map_err(|problem| not_changeable(&path, &problem))?;
+        text = added;
+        made.extend(pointer);
     }
-    let after = render(&document);
+    let after = text.into_bytes();
     let store = RecordStore::of(tool)?;
     let earlier = store.load()?;
     let (original, original_bytes) = match &earlier {
@@ -144,6 +157,10 @@ pub fn plan_hook_install(
         settings_path: path.clone(),
         installed_sha256: sha256_hex(&after),
         original,
+        made: match &earlier {
+            None => Some(made),
+            Some(earlier) => earlier.made.clone().map(|earlier| union(earlier, made)),
+        },
         entries: union(earlier.map_or_default(|earlier| earlier.entries), entries),
     };
     Ok(SettingsChange {
@@ -178,10 +195,7 @@ pub fn plan_hook_uninstall(tool: &str) -> Result<SettingsChange, ClientError> {
     let (after, restores_original) = match (unchanged_since_install, record.original) {
         (true, Original::Absent) => (None, true),
         (true, Original::Saved) => (Some(store.original()?), true),
-        _ => (
-            without_entries(&path, before.as_deref(), &record.entries)?,
-            false,
-        ),
+        _ => (without_entries(&path, before.as_deref(), &record)?, false),
     };
     Ok(SettingsChange {
         diff: settings_diff::unified_diff(&path, before.as_deref(), after.as_deref()),
@@ -240,19 +254,27 @@ pub fn tools_with_installed_hooks() -> Result<Vec<String>, ClientError> {
 fn without_entries(
     path: &Path,
     before: Option<&[u8]>,
-    entries: &[HookEntry],
+    record: &InstallRecord,
 ) -> Result<Option<Vec<u8>>, ClientError> {
+    let entries = &record.entries;
     let Some(content) = before else {
         return Ok(None);
     };
-    let mut document = document_of(path, Some(content))?;
+    let document = document_of(path, Some(content))?;
     if !entries.iter().any(|entry| contains(&document, entry)) {
         return Ok(Some(content.to_vec()));
     }
-    for entry in entries {
-        remove(&mut document, entry);
-    }
-    Ok(Some(render(&document)))
+    let text = entries
+        .iter()
+        .fold(document_text(Some(content)).to_owned(), |text, entry| {
+            settings_text::remove(&text, entry, record.made.as_deref())
+        });
+    Ok(Some(text.into_bytes()))
+}
+
+/// The text of a settings file that [`parse`] accepted: JSON is UTF-8.
+fn document_text(content: Option<&[u8]>) -> &str {
+    std::str::from_utf8(content.unwrap_or_default()).expect("a JSON document is UTF-8")
 }
 
 fn unchanged(path: PathBuf, before: Option<Vec<u8>>) -> SettingsChange {
@@ -277,7 +299,7 @@ fn not_changeable(path: &Path, problem: &str) -> ClientError {
     ))
 }
 
-fn union(mut earlier: Vec<HookEntry>, entries: Vec<HookEntry>) -> Vec<HookEntry> {
+fn union<T: PartialEq>(mut earlier: Vec<T>, entries: Vec<T>) -> Vec<T> {
     for entry in entries {
         if !earlier.contains(&entry) {
             earlier.push(entry);

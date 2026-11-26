@@ -407,12 +407,11 @@ fn hooks_install_writes_only_with_apply_and_uninstall_restores_each_byte() {
     assert_eq!(fs::read(&file).unwrap(), original);
 
     let _ = sandbox.nomux_ok(&["hooks", "install", "testtool", "--apply"]);
-    let installed: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
-    assert_eq!(installed["theme"], "dark");
-    assert_eq!(installed["hooks"]["prompt"][0]["command"], "other");
+    // The install adds its entries with the spacing of the file, and each
+    // other byte stays.
     assert_eq!(
-        installed["hooks"]["prompt"][1]["command"],
-        "nomux hook testtool prompt"
+        String::from_utf8(fs::read(&file).unwrap()).unwrap(),
+        "{ \"theme\":\"dark\",\n\t\"hooks\": {\"prompt\": [ {\"command\": \"other\"},{\"command\":\"nomux hook testtool prompt\"} ],\"tool\":[{\"command\":\"nomux hook testtool tool\"}],\"task\":[{\"command\":\"nomux hook testtool task\"}]} }"
     );
     assert_eq!(hooks_state(&sandbox), "installed");
     let again = sandbox.nomux_ok(&["hooks", "install", "testtool", "--apply"]);
@@ -446,13 +445,12 @@ fn an_uninstall_after_a_manual_edit_removes_only_the_entries_of_nomux() {
         uninstall.stdout.contains("only the entries of nomux"),
         "{uninstall:?}"
     );
-    let after: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
-    assert_eq!(after["mine"], true);
+    // The list of `tool` had only the entry of nomux: it goes. Each other
+    // byte stays.
     assert_eq!(
-        after["hooks"]["prompt"],
-        serde_json::json!([{"command": "my own hook"}])
+        String::from_utf8(fs::read(&file).unwrap()).unwrap(),
+        r#"{"hooks":{"prompt":[{"command":"my own hook"}]},"mine":true}"#
     );
-    assert_eq!(after["hooks"]["tool"], serde_json::json!([]));
 }
 
 #[test]
