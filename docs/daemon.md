@@ -123,7 +123,15 @@ The daemon sends the capability flag `output_history` in its `Welcome`. If the `
 
 ### Configuration
 
-The daemon reads the global configuration file one time, at its start: `~/.config/nomux/config.toml`, or the path that [remote.md](remote.md) gives for the other cases. A change of the file applies after the next start of the daemon.
+The daemon reads the global configuration file one time, at its start. A change of the file applies after the next start of the daemon. The file has this path:
+
+| Host | Path |
+|---|---|
+| Each host, if `XDG_CONFIG_HOME` is an absolute path | `$XDG_CONFIG_HOME/nomux/config.toml` |
+| Linux | `~/.config/nomux/config.toml` |
+| macOS | `~/Library/Application Support/nomux/config.toml` |
+
+The daemon reads no other path. Thus on macOS, a file in `~/.config/nomux` has no effect if `XDG_CONFIG_HOME` is not set. `nomux daemon status` shows the path on the local host. The CLI reads the same file for the hosts of [remote.md](remote.md), and `nomux-core` has the one function that gives the path.
 
 ```toml
 [restore]

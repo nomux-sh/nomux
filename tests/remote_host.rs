@@ -296,6 +296,8 @@ fn a_daemon_without_a_common_protocol_version_is_replaced_and_the_session_contin
         .nomux_ok(&["--host", "vps", "daemon", "status", "--json"])
         .json();
     assert_eq!(status["daemon"]["version"], VERSION);
+    // The CLI knows only the configuration file of its own host.
+    assert!(status["daemon"].get("configuration").is_none(), "{status}");
 }
 
 #[test]

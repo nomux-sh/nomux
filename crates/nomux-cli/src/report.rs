@@ -49,8 +49,13 @@ pub(crate) enum Report {
         /// The number of clients that were attached to the session.
         clients: u32,
     },
-    /// `None`: no daemon runs.
-    DaemonStatus(Option<HostInfo>),
+    DaemonStatus {
+        /// `None`: no daemon runs.
+        info: Option<HostInfo>,
+        /// The configuration file of the daemon of the local host. `None`
+        /// for a remote host, or if `HOME` is not set.
+        configuration: Option<PathBuf>,
+    },
     DaemonStopped {
         /// `false`: no daemon ran, thus the command had nothing to stop.
         was_running: bool,
@@ -111,7 +116,7 @@ pub(crate) struct HostDiagnosis {
 impl Report {
     pub(crate) fn exit_code(&self) -> u8 {
         match self {
-            Self::DaemonStatus(None) => exit_code::NOT_FOUND,
+            Self::DaemonStatus { info: None, .. } => exit_code::NOT_FOUND,
             Self::AttachEnded { end, .. } => exit_code::of_attach_end(*end),
             Self::HostsChecked(hosts) => {
                 let all_passed = hosts

@@ -230,6 +230,7 @@ A dormant session and a damaged session have no command to end. `kill` removes s
 ### `daemon status` and `daemon stop`
 
 `daemon status` has the exit code 0 if a daemon runs and the exit code 2 if no daemon runs.
+On the local host, `daemon status` also shows the path of the global configuration file that the daemon reads at its start: [daemon.md](daemon.md#configuration). With `--host`, it does not show the path. The CLI computes the path from its own environment: a daemon that started with a different `HOME` or `XDG_CONFIG_HOME`, for example from a service file, can read a different file.
 `daemon stop` has the exit code 0 also when no daemon runs: the result is the same.
 
 ### `daemon install-service` and `daemon uninstall-service`
@@ -468,6 +469,7 @@ ID        STATE  PID  COMMAND   NOTE
 k3xq2abc  ended  -    /bin/zsh  signal 1
 $ nomux daemon status
 nomuxd 0.1.0 runs: process ID 41870, 0 sessions
+configuration file: /home/user/.config/nomux/config.toml
 $ nomux daemon stop
 nomuxd stopped
 $ nomux host add deploy@vps.example.com --name vps
@@ -711,16 +713,17 @@ The command prints the document after the attach ended.
 ### `daemon status`
 
 ```json
-{"schema_version":1,"daemon":{"running":true,"version":"0.1.0","pid":41870,"sessions":1}}
-{"schema_version":1,"daemon":{"running":false}}
+{"schema_version":1,"daemon":{"running":true,"version":"0.1.0","pid":41870,"sessions":1,"configuration":"/home/user/.config/nomux/config.toml"}}
+{"schema_version":1,"daemon":{"running":false,"configuration":"/home/user/.config/nomux/config.toml"}}
 ```
 
 | Field | Type | Meaning |
 |---|---|---|
-| `daemon.running` | boolean | `true` if a daemon runs. If it is `false`, the document has no other field of `daemon` and the exit code is 2 |
+| `daemon.running` | boolean | `true` if a daemon runs. If it is `false`, `daemon` has only `configuration` and the exit code is 2 |
 | `daemon.version` | string | The product version of the daemon |
 | `daemon.pid` | number | The process ID of the daemon |
 | `daemon.sessions` | number | The number of sessions |
+| `daemon.configuration` | string | The path of the global configuration file of the local host, also if no daemon runs. Not in the document with `--host`, in the `daemon` object of `host add`, or if `HOME` is not set |
 
 ### `daemon stop`
 

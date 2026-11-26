@@ -5,6 +5,7 @@ use std::env;
 use std::path::{self, PathBuf};
 
 use nomux_client::{ClientError, ClientKind, Host, NewSession};
+use nomux_core::configuration::default_configuration_path;
 
 use crate::arguments::{Command, DaemonCommand};
 use crate::output::Format;
@@ -85,7 +86,7 @@ pub(crate) async fn run(
             host.client(KIND).await?.kill_session(&id).await?;
             Ok(Report::SessionKilled { id })
         }
-        Command::Daemon { command } => daemon(&host, command).await,
+        Command::Daemon { command } => daemon(&host, host_name, command).await,
         Command::Host { .. }
         | Command::Ext { .. }
         | Command::Hook { .. }
@@ -163,13 +164,28 @@ async fn attach_to(
 }
 
 /// The daemon commands start no daemon.
-async fn daemon(host: &Host, command: DaemonCommand) -> Result<Report, ClientError> {
+async fn daemon(
+    host: &Host,
+    host_name: Option<&str>,
+    command: DaemonCommand,
+) -> Result<Report, ClientError> {
     let client = host.running_client(KIND).await?;
+    // The CLI knows only the path of the local host.
+    let configuration = host_name
+        .is_none()
+        .then(default_configuration_path)
+        .flatten();
     match (command, client) {
-        (DaemonCommand::Status, None) => Ok(Report::DaemonStatus(None)),
+        (DaemonCommand::Status, None) => Ok(Report::DaemonStatus {
+            info: None,
+            configuration,
+        }),
         (DaemonCommand::Status, Some(mut client)) => {
             let info = client.host_info().await?;
-            Ok(Report::DaemonStatus(Some(info)))
+            Ok(Report::DaemonStatus {
+                info: Some(info),
+                configuration,
+            })
         }
         (DaemonCommand::Stop, None) => Ok(Report::DaemonStopped { was_running: false }),
         (DaemonCommand::Stop, Some(client)) => {
