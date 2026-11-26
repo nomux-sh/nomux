@@ -47,6 +47,10 @@ nomux [--json | --quiet] [--host <name>] <command>
 | `status set <state> [<message>]` | Reports the status of the session of this process: `working`, `done`, `blocked`, `error` or `idle`. Only inside a session |
 | `agent explain <id>` | Shows what each source says about the status of a session |
 | `events --follow [--filter <type>]...` | Prints the events of the host when they come, until a signal stops the command |
+| `hook <tool> <event>` | Sends one event of a hook of an agent tool to the daemon of the session. A tool calls it from its hooks. Only inside a session |
+| `hooks install <tool> [--dry-run \| --apply]` | Prints the change that the hooks of a tool need in its settings file. Writes it only with `--apply`. Only on this computer |
+| `hooks uninstall <tool> [--dry-run \| --apply]` | Prints how the removal of the hooks of a tool changes its settings file. Writes it only with `--apply`. Only on this computer |
+| `hooks status` | Shows each tool with its adapter, and if its hooks are installed, missing or different |
 | `version` | Prints the version. `--version` and `-V` do the same |
 
 ### `--host`
@@ -377,9 +381,28 @@ The command does not check the files of the package. `ext install` also makes su
 
 `events --follow` subscribes to the events of the host and prints each event when it comes: with `--json`, one JSON document on each line (NDJSON). The command ends with the exit code 0 on `SIGINT` (Ctrl-C) or `SIGTERM`, when the daemon closes the connection, and when the reader of the standard output closes it.
 
-- `--filter <type>` prints only the events of a type: `agent-run-changed` or `agent-run-removed`. Give the option more than one time for more types. A snapshot is always printed.
+- `--filter <type>` prints only the events of a type: `agent-run-changed`, `agent-run-removed` or `extension-event`. Give the option more than one time for more types. A snapshot is always printed.
 - The command prints the events after its start. A snapshot comes when the daemon does not have the events that the command needs.
-- A text line is `<seq> <session> <state> <message>` for a change, `<seq> <session> removed` for a session that ended or was removed, and `<seq> snapshot: ...` for a snapshot.
+- A text line is `<seq> <session> <state> <message>` for a change, `<seq> <session> removed` for a session that ended or was removed, `<seq> extension <id>: <name> (<n> bytes)` for an event of an extension, and `<seq> snapshot: ...` for a snapshot.
+
+### `hook`
+
+`hook <tool> <event>` is the command that an agent tool calls from its hooks. [adapters.md](adapters.md) describes the path of an event to the adapter extension of the tool.
+
+- The command reads the data of the event from the standard input: 256 KiB at most, until its end or for 40 ms at most. A larger input goes without its data. A terminal is no input.
+- It reads `NOMUX_SESSION_ID`, `NOMUX_SOCK` and `NOMUX_TOKEN`, connects to the socket of `NOMUX_SOCK` and sends one `Hooks.Event` request. It does not start a daemon, a shell or a different process. `--host` has no effect.
+- It writes the answer of the daemon to the standard output as it is: the answer for the tool. In this version the answer is empty.
+- A hook must not block or break its tool: the exit code is always 0. Outside a session, without a daemon, and when the daemon does not answer in 80 ms after the start of the command, the command ends with no output. A refusal of the daemon, for example a wrong token, writes one line to the standard error.
+
+### `hooks install`, `hooks uninstall` and `hooks status`
+
+These commands change and show the hooks of an agent tool in the settings file of the tool on this computer. The adapter extension of the tool describes the entries that its hooks need. `--host` is not permitted: the settings file of a tool is on the computer of the tool.
+
+- `hooks install <tool>` asks the adapter for its install plan, computes the new content of the settings file and prints it as a unified diff. It writes nothing. `--dry-run` is the default and says it again. With `--apply`, the command writes the file: a temporary file in the same directory replaces it, and a symbolic link stays a link. The keys of the file keep their order. A value that the file has already is not added again.
+- `--apply` also writes a record to `hooks/<tool>/` in the data directory of nomux (`~/.local/share/nomux` on Linux, `~/Library/Application Support/nomux` on macOS): the bytes of the file before the install, the checksum of the written file and the entries.
+- `hooks uninstall <tool>` needs only the record, not the daemon. If the file did not change after the install, the file gets its bytes from before the install again, or is removed if it did not exist. If the file changed, only the entries of nomux go away. The command prints the diff and writes only with `--apply`. Exit code 2: nomux did not install the hooks of the tool.
+- `hooks status` lists each tool that has an adapter or a record: the adapter, the state of the hooks in the file (`installed`, `missing` or `different`) and the path of the file.
+- nomux never writes a settings file without `--apply`, never wraps or replaces the command of a tool, and never adds an option that skips the permission checks of a tool.
 
 ## Output
 
@@ -810,6 +833,7 @@ The document goes to the standard output also when the manifest is not valid.
 | `.status` | status | The status of the Agent run |
 | `.aggregate` | status | The most urgent status of the Agent run and of its Child work |
 | `.children[]` | list | Only with `--tree`. Each Child work: `name`, `status` (a status, or `null` if no source reports it), `aggregate` and `children` |
+| `.details` | object | Only if an adapter gave them: `model`, `provider_session_id` and `resume_command`, each a string or `null` |
 
 A status has these fields:
 
@@ -817,7 +841,7 @@ A status has these fields:
 |---|---|---|
 | `state` | string | `idle`, `working`, `done`, `needs_you`, `error`, or `unknown` for a state that the CLI does not know |
 | `kind` | string or `null` | For `needs_you`: `permission`, `question` or `auth`, or `null` if no source says it |
-| `source` | string | `program_status`, `self_report`, `session_restore`, `prompt_marks`, `foreground_program`, `none` (no source reports the work) or `unknown` |
+| `source` | string | `adapter`, `program_status`, `self_report`, `session_restore`, `prompt_marks`, `foreground_program`, `none` (no source reports the work) or `unknown` |
 | `guess` | boolean | `true` if the daemon guessed the state: the source is `prompt_marks` or `foreground_program` |
 | `since_ms` | number | When the daemon saw the state for the first time: milliseconds after the Unix epoch |
 | `seen` | boolean | For `done` and `error`: `true` if the user saw the result |
@@ -852,11 +876,44 @@ Each line is one document:
 |---|---|---|
 | `event.seq` | number | The position of the event in the event log of the daemon. The numbers start again when the daemon starts again |
 | `event.at_ms` | number | When the event occurred: milliseconds after the Unix epoch |
-| `event.type` | string | `agent_run_changed`, `agent_run_removed`, `snapshot`, or `unknown` for an event that the CLI does not know |
-| `event.session` | string | The session. Not in a snapshot |
+| `event.type` | string | `agent_run_changed`, `agent_run_removed`, `extension_event`, `snapshot`, or `unknown` for an event that the CLI does not know |
+| `event.session` | string | The session. Only in `agent_run_changed` and `agent_run_removed` |
 | `event.run` | object | Only in `agent_run_changed`: the Agent run after the change, with the fields of `explain.run` |
+| `event.extension` | object | Only in `extension_event`: `id` (the extension), `name` (the name of the event) and `payload_base64` (the payload in base64: the extension selects its encoding) |
 
 After a `snapshot`, one `agent_run_changed` event for each session gives the state of the host now. A reader discards the state that it had.
+
+### `hook`
+
+The command prints the answer for the tool, not a JSON document, also with `--json`.
+
+### `hooks install` and `hooks uninstall`
+
+```json
+{"schema_version":1,"hooks_change":{"action":"install","tool":"testtool","path":"/home/user/.testtool/settings.json","diff":"--- ...","changed":true,"applied":false,"restores_original":false}}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `hooks_change.action` | string | `install` or `uninstall` |
+| `hooks_change.path` | string | The settings file |
+| `hooks_change.diff` | string | The change as a unified diff. Empty if nothing changes |
+| `hooks_change.changed` | boolean | `true` if the diff is not empty |
+| `hooks_change.applied` | boolean | `true` with `--apply`: the command wrote the change |
+| `hooks_change.restores_original` | boolean | For `uninstall`: `true` if the file gets its bytes from before the install, `false` if only the entries of nomux go away |
+
+### `hooks status`
+
+```json
+{"schema_version":1,"hooks":[{"tool":"testtool","adapter":"nomux.test-adapter","state":"installed","path":"/home/user/.testtool/settings.json","recorded":true,"problem":null}]}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `hooks[].tool`, `.adapter` | string, string or `null` | The tool and its adapter extension. `null`: the tool has no adapter, only a record of an install |
+| `.state` | string or `null` | `installed`, `missing` or `different`. `null` if the state is not known: `problem` says why |
+| `.path` | string or `null` | The settings file |
+| `.recorded` | boolean | `true` if nomux has a record of an install: `hooks uninstall` can remove the hooks |
 
 ### `version`
 
@@ -882,7 +939,7 @@ A wrong command line is not a JSON document: the argument parser writes its usag
 
 - `crates/nomux-cli/src/output/json.rs` and `crates/nomux-cli/src/output/extension_json.rs` have the full text of each document. A changed field fails these tests.
 - `crates/nomux-cli/src/arguments.rs` has the rule for the arguments after `--` and `--cmd`, and the usage error for the two forms in one command line. `crates/nomux-cli/src/output/memory_human.rs` has the full text of the table of `ls --memory`, `crates/nomux-cli/src/output/status_human.rs` has the table of `status`, and `tests/session_memory.rs` has its JSON document with real processes. `crates/nomux-cli/src/attach` has the detach keys and the mode of the terminal, also after a panic.
-- `tests/` has the end-to-end tests that run the real `nomux`, `nomuxd` and `nomux-holder` and examine the exit codes. `tests/attach.rs` runs `nomux attach` in a pseudoterminal and examines the screen. `tests/remote_host.rs` runs the `host` commands and the commands with `--host` against an SSH server that the test starts. `tests/extensions.rs` runs the `ext` commands with a test extension that uses the extension SDK. `tests/restore.rs` stops each process as a restart of the host does and runs `ls`, `attach`, `start` and `restore-policy` on the dormant sessions. `tests/journal.rs` has `capture`, and `tests/daemon_service.rs` has the service file. `tests/status.rs` has `status`, `status set`, `agent explain` and `events --follow` with a program that reports its status.
+- `tests/` has the end-to-end tests that run the real `nomux`, `nomuxd` and `nomux-holder` and examine the exit codes. `tests/attach.rs` runs `nomux attach` in a pseudoterminal and examines the screen. `tests/remote_host.rs` runs the `host` commands and the commands with `--host` against an SSH server that the test starts. `tests/extensions.rs` runs the `ext` commands with a test extension that uses the extension SDK. `tests/restore.rs` stops each process as a restart of the host does and runs `ls`, `attach`, `start` and `restore-policy` on the dormant sessions. `tests/journal.rs` has `capture`, and `tests/daemon_service.rs` has the service file. `tests/status.rs` has `status`, `status set`, `agent explain` and `events --follow` with a program that reports its status. `tests/adapters.rs` has `hook`, the `hooks` commands and the event of an extension with the test adapter extension.
 - `crates/nomux-cli/src/service_files` has the content of the systemd unit and of the launchd agent, also for a path that needs quotes.
 
 ## Open points for the next versions
@@ -893,5 +950,6 @@ A wrong command line is not a JSON document: the argument parser writes its usag
 - A restore policy for a new session as an option of `new`.
 - The other commands of the command reference, also `ext update` and `ext pack`, and the installation of an extension from a registry.
 - `host doctor` for the local host, and a check of the agent hooks.
+- `hooks install` for a remote host, and settings files that are not JSON.
 - The context from `NOMUX_*` variables, other than for `status set`.
 - `wait` for a status, and `events` without `--follow`.

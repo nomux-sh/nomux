@@ -164,7 +164,9 @@ The host has no host service of its own. This crate applies only the scopes: the
 
 ### Events
 
-`ExtensionHost::subscribe` gives the events of all the extensions. Each event has the identifier of its extension, thus two extensions can use the same event name.
+The host gives each event of an extension to the embedder with `HostServices::event`, in the task of the extension, also without a subscriber. This call is not activity: an extension that sends events and gets no call still stops when it is idle.
+
+`ExtensionHost::subscribe` gives the events of all the extensions too. Each event has the identifier of its extension, thus two extensions can use the same event name.
 A subscriber that is slow loses the oldest events. An event without a subscriber is dropped.
 
 ### Idle stop
@@ -285,8 +287,14 @@ The daemon implements `HostServices` in `crates/nomuxd/src/extensions/host_servi
 | Method | Scope | Payload of the call | Payload of the result |
 |---|---|---|---|
 | `sessions.list` | `sessions:read` | Not read | A `SessionListResponse` message of the control protocol: the sessions of the host with their identifier, their state, the process ID of their command and their description (the command, the working directory, the window size, the start time, the epoch and the restore policy). The list has the dormant sessions and no ended session. It has no environment variable |
+| `agent.report` | `agent:report` | An `AgentReport`: the status of the Agent run of a session as an adapter sees it | An empty `AgentReportResult` |
+| `agent.child` | `agent:report` | A `ChildWorkReport`: the start, a change or the end of one Child work | An empty `AgentReportResult` |
 
-This is the only host service. The daemon gets a new service together with the official extension that needs it, and each service gets a scope of its own in this table.
+The daemon gets a new service together with the official extension that needs it, and each service gets a scope of its own in this table. The two `agent` services are for the adapter extensions of the agent tools: [adapters.md](adapters.md) describes them, the scope `hooks:read` and the methods that the daemon calls on an adapter. An error of the payload or of a report has the code `ERROR_CODE_INVALID_ARGUMENT`, and a session without a process the code `ERROR_CODE_NOT_FOUND`.
+
+### Events for the clients
+
+The daemon puts each event of an extension into its event log as an `ExtensionEvent`, with the identifier of the extension, the name and the payload. A client gets it with `Events.Subscribe` and the type `EVENT_TYPE_EXTENSION_EVENT`, as `nomux events --follow --filter extension-event` does. The event log has the limits of the status events: [daemon.md](daemon.md#events). An event with a payload of more than 64 KiB is dropped with a debug log. The daemon starts no task for this: the task of the extension gives the event to the log.
 
 ### Isolation from the sessions
 
@@ -312,10 +320,10 @@ If the daemon ends without its stop sequence (`kill -9`), each process of an ext
 
 - **File access restriction.** The process has the file access of the daemon. The restriction of the process to the approved `fs` directories with Landlock on Linux is the next work. The sandbox on macOS is not decided.
 - **Enforcement of `process` and `network`.** The host gives these permissions to the extension in `Hello` and does not enforce them.
-- **Host services.** The daemon supplies only `sessions.list`.
+- **Host services.** The daemon supplies `sessions.list` and the two `agent` services of the adapters.
 - **Installation from the registry, and signature checks.** The host installs only from a local directory.
 - **Update** of an installed extension: remove it and install the new version.
-- **Events for the clients.** The control protocol has no event of an extension, thus no client subscribes to `ExtensionHost::subscribe` yet.
+- **Events from the daemon to an extension.** An adapter gets its hook events as calls of its method `hook`.
 - **`lazy = false`.** The host starts each extension at its first call.
 - **`${worktree}`.** The host does not replace the variable. The caller of `install` gives the approved directories as absolute paths.
 - **Processes that an extension starts.** When the host ends a process, the processes that the extension started continue to run.

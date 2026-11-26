@@ -14,12 +14,13 @@ The user documentation is not here. It is in the [`docs`](https://github.com/nom
 | [cli.md](cli.md) | The CLI: commands, JSON schema, exit codes | in use |
 | [extensions.md](extensions.md) | The extension host: installed extensions, life cycle of a process, isolation, limits, and the host in the daemon with its directory, the `Ext` service and the host services | in use |
 | [memory.md](memory.md) | The memory of each session: what `nomux ls --memory` shows, how the daemon measures it, and the design of an optional memory limit | the first part in use, the limit is a design |
-| [status.md](status.md) | The agent status: the model, the sources and their sequence, the rules of the resolver and of the aggregation, sessions without a process, the self-report and its token | in use |
+| [status.md](status.md) | The agent status: the model, the sources and their sequence, the rules of the resolver and of the aggregation, the adapter source, sessions without a process, the self-report and its token | in use |
+| [adapters.md](adapters.md) | The agent adapters: the path of a hook event, how to write an adapter extension (manifest, methods, host services, the merge rule), and the hook install | in use |
 | [remote.md](remote.md) | Remote hosts through SSH: the SSH client, the supported `~/.ssh/config`, the trust rules, the channels, the installation on the host, the reconnect | in use |
 
 ## Status
 
-The directory has the architecture overview and the notes for the holder, the daemon, the CLI, the remote hosts, the extensions, the memory of each session and the agent status.
+The directory has the architecture overview and the notes for the holder, the daemon, the CLI, the remote hosts, the extensions, the memory of each session, the agent status and the agent adapters.
 The notes for a component come together with its code. The notes for the journal and the attach sequence are the next ones. Refer to the [roadmap](https://github.com/nomux-sh/docs/blob/main/src/content/docs/project/roadmap.md).
 
 ## License
