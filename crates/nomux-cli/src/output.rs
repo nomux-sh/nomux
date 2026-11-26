@@ -15,6 +15,8 @@ mod status_json;
 mod table;
 mod workspace_human;
 mod workspace_json;
+mod worktree_clean_human;
+mod worktree_clean_json;
 mod worktree_human;
 mod worktree_json;
 mod wrapped_line;
@@ -22,6 +24,9 @@ mod wrapped_line;
 use std::io::{self, Write};
 
 use nomux_client::{ClientError, HostEvent};
+
+pub(crate) use worktree_clean_human::plan_text;
+pub(crate) use worktree_human::short_size;
 
 use crate::arguments::Arguments;
 use crate::hook_commands::HooksReport;

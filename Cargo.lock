@@ -1254,9 +1254,9 @@ dependencies = [
 
 [[package]]
 name = "nomux-proto"
-version = "0.14.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "193bd0c19423bd3217a964fd475c08d7e830812f5491257576e13f95d3826504"
+checksum = "70c8874a0feb18a54ea7255dfe458878bbe66d6beff40c8153bdc42667656a2c"
 dependencies = [
  "prost",
 ]

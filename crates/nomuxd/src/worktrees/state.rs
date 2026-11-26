@@ -6,11 +6,8 @@
 use std::time::Duration;
 
 use nomux_proto::wire::v1::{
-    WorktreeFacts, WorktreeFlag, WorktreeMergedBy, WorktreeRefusal, WorktreeState,
+    WorktreeFacts, WorktreeFlag, WorktreeMark, WorktreeMergedBy, WorktreeRefusal, WorktreeState,
 };
-
-/// A worktree without activity for this time is stale.
-pub(super) const STALE_AFTER: Duration = Duration::from_hours(14 * 24);
 
 /// What the daemon sees of a worktree on the host.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -20,6 +17,12 @@ pub(super) struct HostView {
     /// The flags that the daemon finds itself: `Busy`, `OtherFileSystem`
     /// and `IgnoredUserFiles`.
     pub(super) flags: Vec<WorktreeFlag>,
+    /// The mark of the user.
+    pub(super) mark: WorktreeMark,
+    /// The worktree is in the trash place.
+    pub(super) in_trash: bool,
+    /// The parent directory of the worktree is not writable.
+    pub(super) no_trash_place: bool,
 }
 
 /// The state, the flags and the refusals of one worktree.
@@ -30,11 +33,17 @@ pub(super) struct Judgement {
     pub(super) refusals: Vec<WorktreeRefusal>,
 }
 
-/// Applies the rules to one worktree at the time `now_ms`.
-pub(super) fn judge(facts: &WorktreeFacts, view: &HostView, now_ms: u64) -> Judgement {
-    let state = state(facts, view, now_ms);
+/// Applies the rules to one worktree at the time `now_ms`. A worktree
+/// without activity for `stale_after` is stale.
+pub(super) fn judge(
+    facts: &WorktreeFacts,
+    view: &HostView,
+    now_ms: u64,
+    stale_after: Duration,
+) -> Judgement {
+    let state = state(facts, view, now_ms, stale_after);
     let flags = flags(facts, view);
-    let refusals = refusals(facts, state, &flags);
+    let refusals = refusals(facts, view, state, &flags);
     Judgement {
         state,
         flags,
@@ -42,11 +51,18 @@ pub(super) fn judge(facts: &WorktreeFacts, view: &HostView, now_ms: u64) -> Judg
     }
 }
 
-fn state(facts: &WorktreeFacts, view: &HostView, now_ms: u64) -> WorktreeState {
-    let stale_after = u64::try_from(STALE_AFTER.as_millis()).unwrap_or(u64::MAX);
+fn state(
+    facts: &WorktreeFacts,
+    view: &HostView,
+    now_ms: u64,
+    stale_after: Duration,
+) -> WorktreeState {
+    let stale_after = u64::try_from(stale_after.as_millis()).unwrap_or(u64::MAX);
     if view.has_session {
         WorktreeState::Active
-    } else if facts.merged_by() != WorktreeMergedBy::Unspecified {
+    } else if facts.merged_by() != WorktreeMergedBy::Unspecified
+        || view.mark == WorktreeMark::Finished
+    {
         WorktreeState::Finished
     } else if now_ms.saturating_sub(facts.last_activity_at_ms) > stale_after {
         WorktreeState::Stale
@@ -77,6 +93,7 @@ fn flags(facts: &WorktreeFacts, view: &HostView) -> Vec<WorktreeFlag> {
 
 fn refusals(
     facts: &WorktreeFacts,
+    view: &HostView,
     state: WorktreeState,
     flags: &[WorktreeFlag],
 ) -> Vec<WorktreeRefusal> {
@@ -111,7 +128,11 @@ fn refusals(
             has(WorktreeFlag::DetachedCommits),
             WorktreeRefusal::DetachedCommits,
         ),
-        (has(WorktreeFlag::Locked), WorktreeRefusal::Locked),
+        // The lock of the trash place is the lock of nomux.
+        (
+            has(WorktreeFlag::Locked) && !view.in_trash,
+            WorktreeRefusal::Locked,
+        ),
         (has(WorktreeFlag::Submodule), WorktreeRefusal::Submodule),
         (
             has(WorktreeFlag::IgnoredUserFiles),
@@ -121,6 +142,9 @@ fn refusals(
             has(WorktreeFlag::OtherFileSystem),
             WorktreeRefusal::OtherFileSystem,
         ),
+        (view.no_trash_place, WorktreeRefusal::NoTrashPlace),
+        (view.in_trash, WorktreeRefusal::InTrash),
+        (view.mark == WorktreeMark::Keep, WorktreeRefusal::Kept),
         (
             state != WorktreeState::Finished,
             WorktreeRefusal::NotFinished,
@@ -137,6 +161,7 @@ mod tests {
     use super::*;
 
     const NOW: u64 = 100 * 24 * 60 * 60 * 1000;
+    const STALE_AFTER: Duration = Duration::from_hours(14 * 24);
     const DAY: u64 = 24 * 60 * 60 * 1000;
 
     /// A linked worktree, merged by a merge, active yesterday.
@@ -159,8 +184,8 @@ mod tests {
 
     fn with_flags(flags: &[WorktreeFlag]) -> HostView {
         HostView {
-            has_session: false,
             flags: flags.to_vec(),
+            ..HostView::default()
         }
     }
 
@@ -174,7 +199,7 @@ mod tests {
     fn session() -> HostView {
         HostView {
             has_session: true,
-            flags: Vec::new(),
+            ..HostView::default()
         }
     }
 
@@ -188,7 +213,7 @@ mod tests {
 
     fn assert_cases(cases: Vec<Case>) {
         for (name, facts, view, state, first_refusal) in cases {
-            let judgement = judge(&facts, &view, NOW);
+            let judgement = judge(&facts, &view, NOW, STALE_AFTER);
             assert_eq!(judgement.state, state, "{name}");
             assert_eq!(judgement.refusals.first().copied(), first_refusal, "{name}");
         }
@@ -354,6 +379,51 @@ mod tests {
     }
 
     #[test]
+    fn a_mark_and_the_trash_place_change_the_state_and_the_refusals() {
+        use WorktreeRefusal as R;
+        use WorktreeState as S;
+        let view = |change: fn(&mut HostView)| {
+            let mut view = HostView::default();
+            change(&mut view);
+            view
+        };
+        let in_trash = with(|f| {
+            f.is_locked = true;
+            f.locked_reason = "nomux-trash".to_owned();
+        });
+        assert_cases(vec![
+            (
+                "marked done",
+                not_merged(),
+                view(|v| v.mark = WorktreeMark::Finished),
+                S::Finished,
+                None,
+            ),
+            (
+                "marked keep",
+                finished(),
+                view(|v| v.mark = WorktreeMark::Keep),
+                S::Finished,
+                Some(R::Kept),
+            ),
+            (
+                "in the trash: its lock is the lock of nomux",
+                in_trash,
+                view(|v| v.in_trash = true),
+                S::Finished,
+                Some(R::InTrash),
+            ),
+            (
+                "a parent that is not writable",
+                finished(),
+                view(|v| v.no_trash_place = true),
+                S::Finished,
+                Some(R::NoTrashPlace),
+            ),
+        ]);
+    }
+
+    #[test]
     fn the_flags_come_from_the_facts_and_the_host_once_in_the_sequence_of_their_values() {
         let facts = WorktreeFacts {
             is_dirty: true,
@@ -364,7 +434,7 @@ mod tests {
         };
         let view = with_flags(&[WorktreeFlag::OtherFileSystem, WorktreeFlag::Busy]);
 
-        let judgement = judge(&facts, &view, NOW);
+        let judgement = judge(&facts, &view, NOW, STALE_AFTER);
 
         assert_eq!(
             judgement.flags,

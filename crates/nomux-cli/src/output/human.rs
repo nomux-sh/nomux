@@ -12,7 +12,8 @@ use nomux_core::configuration::HostEntry;
 use super::memory_size::memory_size;
 use super::table::{Cell, Table};
 use super::{
-    extension_human, hooks_human, memory_human, status_human, workspace_human, worktree_human,
+    extension_human, hooks_human, memory_human, status_human, workspace_human,
+    worktree_clean_human, worktree_human,
 };
 use crate::report::{AddedHost, HostDiagnosis, Report, ServiceFileAction, ServiceFileReport};
 use crate::workspace_commands::node_path::path_of;
@@ -142,6 +143,7 @@ pub(super) fn report(report: &Report, style: Style, width: Option<usize>) -> Str
         Report::Status(report) => status_human::report(report, style, width),
         Report::Workspace(report) => workspace_human::report(report, width),
         Report::Worktrees(listing) => worktree_human::report(listing, width),
+        Report::Worktree(report) => worktree_clean_human::report(report, width),
         Report::ServiceFile(service) => service_file(service),
         Report::Version => format!("{}\n", nomux_core::version_line!()),
     }
@@ -166,6 +168,7 @@ pub(super) fn quiet_report(report: &Report) -> String {
         Report::Status(report) => status_human::quiet_report(report),
         Report::Workspace(report) => workspace_human::quiet_report(report),
         Report::Worktrees(listing) => worktree_human::quiet_report(listing),
+        Report::Worktree(report) => worktree_clean_human::quiet_report(report),
         Report::OutputCaptured { output, .. } => String::from_utf8_lossy(output).into_owned(),
         Report::SessionStarted(_)
         | Report::SessionHibernated(_)

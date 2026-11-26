@@ -1,7 +1,7 @@
 //! The JSON form of `worktree ls`. `docs/cli.md` has the schema.
 
 use nomux_client::{
-    BuildOutput, MergedBy, ProjectWorktrees, Refusal, Worktree, WorktreeFlag, WorktreeSize,
+    BuildOutput, Mark, MergedBy, ProjectWorktrees, Refusal, Worktree, WorktreeFlag, WorktreeSize,
 };
 use serde::Serialize;
 
@@ -81,6 +81,9 @@ struct WorktreeDocument<'a> {
     ignored_user_paths: &'a [String],
     locked_reason: Option<&'a str>,
     facts_unavailable_reason: Option<&'a str>,
+    tool: Option<&'a str>,
+    mark: Option<&'static str>,
+    trash_id: Option<&'a str>,
 }
 
 impl<'a> From<&'a Worktree> for WorktreeDocument<'a> {
@@ -107,6 +110,13 @@ impl<'a> From<&'a Worktree> for WorktreeDocument<'a> {
             ignored_user_paths: &worktree.ignored_user_paths,
             locked_reason: worktree.locked_reason.as_deref(),
             facts_unavailable_reason: worktree.facts_unavailable_reason.as_deref(),
+            tool: worktree.tool.as_deref(),
+            mark: match worktree.mark {
+                Mark::None => None,
+                Mark::Finished => Some("done"),
+                Mark::Keep => Some("keep"),
+            },
+            trash_id: worktree.trash_id.as_deref(),
         }
     }
 }
@@ -183,7 +193,7 @@ fn merged_by_name(merged_by: MergedBy) -> Option<&'static str> {
     }
 }
 
-fn refusal_name(refusal: Refusal) -> &'static str {
+pub(super) fn refusal_name(refusal: Refusal) -> &'static str {
     match refusal {
         Refusal::MainWorktree => "main-worktree",
         Refusal::DirectoryMissing => "directory-missing",
@@ -198,6 +208,9 @@ fn refusal_name(refusal: Refusal) -> &'static str {
         Refusal::IgnoredUserFiles => "ignored-user-files",
         Refusal::OtherFileSystem => "other-file-system",
         Refusal::NotFinished => "not-finished",
+        Refusal::Kept => "kept",
+        Refusal::NoTrashPlace => "no-trash-place",
+        Refusal::InTrash => "in-trash",
         Refusal::Unknown => "unknown",
     }
 }

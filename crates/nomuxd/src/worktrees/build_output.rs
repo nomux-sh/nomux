@@ -1,7 +1,8 @@
 //! The rules that decide which ignored directory of a worktree is build
 //! output: a directory that a build or an install makes again.
 //!
-//! The rules are data: [`RULES`]. A directory is build output only if git
+//! The rules are data: [`RULES`], and the rules of the user in
+//! `[worktrees.build_output]`. A directory is build output only if git
 //! ignores all of it (the git extension gives it as one ignored path) and a
 //! rule accepts it. Each other ignored path is a file of the user, for
 //! example `.env` or a local database.
@@ -9,6 +10,10 @@
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
+
+use nomux_core::configuration::BuildOutputRule;
+use rustix::fs::{FlockOperation, flock};
+use rustix::io::Errno;
 
 /// The first line of a valid `CACHEDIR.TAG` file.
 const CACHE_DIRECTORY_SIGNATURE: &str = "Signature: 8a477f597d28d172789f06886806bc55";
@@ -67,25 +72,94 @@ const RULES: &[Rule] = &[
     },
 ];
 
-/// The identifier of the rule that accepts the ignored path `ignored` of the
-/// worktree `worktree` as build output. `None` for a file of the user. An
-/// ignored directory ends with `/`.
-pub(super) fn rule_of(worktree: &Path, ignored: &str) -> Option<&'static str> {
-    let relative = ignored.strip_suffix('/')?;
-    let directory = worktree.join(relative);
-    let name = directory.file_name()?.to_str()?;
-    let accepted = RULES.iter().find(|rule| {
-        rule.names.contains(&name)
-            && (rule.markers.is_empty()
-                || rule
-                    .markers
-                    .iter()
-                    .any(|marker| marker.is_present(&directory)))
+/// The name of the lock file that cargo holds in a profile directory, for
+/// example `target/debug/.cargo-lock`, while it builds.
+const CARGO_LOCK: &str = ".cargo-lock";
+
+/// The rules of the daemon and the rules of the user.
+#[derive(Debug, Default)]
+pub(super) struct BuildOutputRules {
+    user: Vec<BuildOutputRule>,
+}
+
+impl BuildOutputRules {
+    pub(super) fn new(user: Vec<BuildOutputRule>) -> Self {
+        Self { user }
+    }
+
+    /// The identifier of the rule that accepts the ignored path `ignored` of
+    /// the worktree `worktree` as build output. `None` for a file of the
+    /// user. An ignored directory ends with `/`.
+    pub(super) fn rule_of(&self, worktree: &Path, ignored: &str) -> Option<String> {
+        let relative = ignored.strip_suffix('/')?;
+        let directory = worktree.join(relative);
+        let name = directory.file_name()?.to_str()?;
+        let accepted = RULES.iter().find(|rule| {
+            rule.names.contains(&name)
+                && (rule.markers.is_empty()
+                    || rule
+                        .markers
+                        .iter()
+                        .any(|marker| marker.is_present(&directory)))
+        });
+        if let Some(rule) = accepted {
+            return Some(rule.id.to_owned());
+        }
+        if has_cache_directory_tag(&directory) {
+            return Some(CACHE_DIRECTORY_RULE.to_owned());
+        }
+        self.user
+            .iter()
+            .find(|rule| {
+                rule.names.iter().any(|rule_name| rule_name == name)
+                    && user_markers_present(rule, &directory)
+            })
+            .map(|rule| rule.id.clone())
+    }
+}
+
+fn user_markers_present(rule: &BuildOutputRule, directory: &Path) -> bool {
+    let beside = rule.beside.iter().any(|name| {
+        directory
+            .parent()
+            .is_some_and(|parent| is_file(&parent.join(name)))
     });
-    match accepted {
-        Some(rule) => Some(rule.id),
-        None if has_cache_directory_tag(&directory) => Some(CACHE_DIRECTORY_RULE),
-        None => None,
+    let inside = rule
+        .inside
+        .iter()
+        .any(|name| is_file(&directory.join(name)));
+    (rule.beside.is_empty() && rule.inside.is_empty()) || beside || inside
+}
+
+/// `true` when a build holds a lock in the build output directory
+/// `directory`: cargo holds `<profile>/.cargo-lock` and
+/// `<target>/<profile>/.cargo-lock` while it builds. The test takes a shared
+/// lock that does not wait, and gives it back at once.
+pub(super) fn holds_build_lock(directory: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            return false;
+        }
+        is_locked(&path.join(CARGO_LOCK))
+            || fs::read_dir(&path).is_ok_and(|inner| {
+                inner
+                    .flatten()
+                    .any(|entry| is_locked(&entry.path().join(CARGO_LOCK)))
+            })
+    })
+}
+
+fn is_locked(lock_file: &Path) -> bool {
+    let Ok(file) = fs::File::open(lock_file) else {
+        return false;
+    };
+    match flock(&file, FlockOperation::NonBlockingLockShared) {
+        Ok(()) => false,
+        Err(error) => error == Errno::WOULDBLOCK,
     }
 }
 
@@ -131,6 +205,41 @@ mod tests {
     }
 
     #[test]
+    fn a_rule_of_the_user_needs_its_name_and_one_of_its_markers() {
+        let directory = tempfile::tempdir().unwrap();
+        let worktree = directory.path();
+        file(&worktree.join("web/package.json"), "{}");
+        fs::create_dir_all(worktree.join("web/dist")).unwrap();
+        fs::create_dir_all(worktree.join("docs/dist")).unwrap();
+        fs::create_dir_all(worktree.join("cache")).unwrap();
+        let rules = BuildOutputRules::new(vec![
+            BuildOutputRule {
+                id: "javascript-dist".to_owned(),
+                names: vec!["dist".to_owned()],
+                beside: vec!["package.json".to_owned()],
+                inside: Vec::new(),
+            },
+            BuildOutputRule {
+                id: "any-cache".to_owned(),
+                names: vec!["cache".to_owned()],
+                beside: Vec::new(),
+                inside: Vec::new(),
+            },
+        ]);
+
+        assert_eq!(
+            rules.rule_of(worktree, "web/dist/").as_deref(),
+            Some("javascript-dist")
+        );
+        assert_eq!(rules.rule_of(worktree, "docs/dist/"), None);
+        assert_eq!(
+            rules.rule_of(worktree, "cache/").as_deref(),
+            Some("any-cache")
+        );
+        assert_eq!(rules.rule_of(worktree, "cache"), None);
+    }
+
+    #[test]
     fn a_rule_needs_its_name_and_a_marker_and_each_other_ignored_path_is_user_data() {
         let directory = tempfile::tempdir().unwrap();
         let worktree = directory.path();
@@ -154,7 +263,7 @@ mod tests {
         );
         fs::create_dir_all(worktree.join("dist")).unwrap();
 
-        let rules: Vec<(&str, Option<&str>)> = [
+        let rules: Vec<(&str, Option<String>)> = [
             "target/",
             "web/node_modules/",
             "web/.next/",
@@ -169,11 +278,14 @@ mod tests {
             "local.db",
         ]
         .into_iter()
-        .map(|path| (path, rule_of(worktree, path)))
+        .map(|path| (path, BuildOutputRules::default().rule_of(worktree, path)))
         .collect();
 
         assert_eq!(
-            rules,
+            rules
+                .iter()
+                .map(|(path, rule)| (*path, rule.as_deref()))
+                .collect::<Vec<_>>(),
             [
                 ("target/", Some("cargo-target")),
                 ("web/node_modules/", Some("node-modules")),

@@ -63,6 +63,25 @@ pub struct Worktree {
     pub locked_reason: Option<String>,
     /// Why the daemon does not know the git facts of the worktree.
     pub facts_unavailable_reason: Option<String>,
+    /// The agent tool that probably made the worktree, for example
+    /// `claude-code`. A guess.
+    pub tool: Option<String>,
+    /// The mark of the user.
+    pub mark: Mark,
+    /// The identifier of the trash entry when the worktree is in the trash
+    /// place.
+    pub trash_id: Option<String>,
+}
+
+/// A mark that the user set on a worktree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mark {
+    /// No mark.
+    None,
+    /// The work is done: the worktree is finished.
+    Finished,
+    /// No clean changes the worktree.
+    Keep,
 }
 
 /// The size of a worktree.
@@ -177,6 +196,13 @@ pub enum Refusal {
     OtherFileSystem,
     /// The worktree is not finished.
     NotFinished,
+    /// The user marked the worktree to keep.
+    Kept,
+    /// The parent directory is not writable: the worktree has no trash
+    /// place.
+    NoTrashPlace,
+    /// The worktree is in the trash place.
+    InTrash,
     /// A reason from a later protocol version.
     Unknown,
 }
@@ -249,6 +275,13 @@ impl From<wire::WorktreeInfo> for Worktree {
             ignored_user_paths: worktree.ignored_user_paths,
             locked_reason: text(worktree.locked_reason),
             facts_unavailable_reason: text(worktree.facts_unavailable_reason),
+            tool: text(worktree.tool),
+            mark: match wire::WorktreeMark::try_from(worktree.mark) {
+                Ok(wire::WorktreeMark::Finished) => Mark::Finished,
+                Ok(wire::WorktreeMark::Keep) => Mark::Keep,
+                Ok(wire::WorktreeMark::Unspecified) | Err(_) => Mark::None,
+            },
+            trash_id: text(worktree.trash_id),
         }
     }
 }
@@ -273,7 +306,7 @@ impl From<wire::WorktreeSize> for WorktreeSize {
     }
 }
 
-fn text(value: String) -> Option<String> {
+pub(crate) fn text(value: String) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
@@ -317,7 +350,7 @@ fn merged_by(value: i32) -> MergedBy {
     }
 }
 
-fn refusal(value: i32) -> Refusal {
+pub(crate) fn refusal(value: i32) -> Refusal {
     match wire::WorktreeRefusal::try_from(value) {
         Ok(wire::WorktreeRefusal::MainWorktree) => Refusal::MainWorktree,
         Ok(wire::WorktreeRefusal::DirectoryMissing) => Refusal::DirectoryMissing,
@@ -332,6 +365,9 @@ fn refusal(value: i32) -> Refusal {
         Ok(wire::WorktreeRefusal::IgnoredUserFiles) => Refusal::IgnoredUserFiles,
         Ok(wire::WorktreeRefusal::OtherFileSystem) => Refusal::OtherFileSystem,
         Ok(wire::WorktreeRefusal::NotFinished) => Refusal::NotFinished,
+        Ok(wire::WorktreeRefusal::Kept) => Refusal::Kept,
+        Ok(wire::WorktreeRefusal::NoTrashPlace) => Refusal::NoTrashPlace,
+        Ok(wire::WorktreeRefusal::InTrash) => Refusal::InTrash,
         Ok(wire::WorktreeRefusal::Unspecified) | Err(_) => Refusal::Unknown,
     }
 }

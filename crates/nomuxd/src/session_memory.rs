@@ -6,7 +6,7 @@
 //! holder, and the daemon needs only the identity of the holder, which the
 //! `pid` file of the holder has. `docs/memory.md` has the rules.
 
-mod process_list;
+pub(crate) mod process_list;
 mod process_memory;
 mod process_table;
 

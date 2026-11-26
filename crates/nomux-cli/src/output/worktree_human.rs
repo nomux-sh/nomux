@@ -23,9 +23,10 @@ const OLD: &str = "*";
 /// The column with the name of a worktree.
 const NAME: usize = 0;
 const BRANCH: usize = 1;
-const BUILD: usize = 4;
-const AGE: usize = 5;
-const REASON: usize = 6;
+const TOOL: usize = 2;
+const BUILD: usize = 5;
+const AGE: usize = 6;
+const REASON: usize = 7;
 
 pub(super) fn report(listing: &WorktreeListing, width: Option<usize>) -> String {
     if listing.projects.is_empty() {
@@ -33,10 +34,10 @@ pub(super) fn report(listing: &WorktreeListing, width: Option<usize>) -> String 
     }
     let now = now_ms();
     let mut table = Table::new(&[
-        "WORKTREE", "BRANCH", "STATE", "SIZE", "BUILD", "AGE", "REASON",
+        "WORKTREE", "BRANCH", "TOOL", "STATE", "SIZE", "BUILD", "AGE", "REASON",
     ])
     .shorten(&[BRANCH, NAME, REASON])
-    .omit(&[BUILD, AGE]);
+    .omit(&[TOOL, BUILD, AGE]);
     let mut notes = Vec::new();
     for project in &listing.projects {
         let name = path_of(&listing.workspace.tree, &project.project_id);
@@ -84,6 +85,7 @@ fn worktree_row(worktree: &Worktree, now: u64) -> Vec<Cell> {
     vec![
         Cell::new(format!("{INDENT}{name}")),
         Cell::new(worktree.branch.as_deref().unwrap_or(NONE)),
+        Cell::new(worktree.tool.as_deref().unwrap_or(NONE)),
         Cell::new(state_name(worktree.state)),
         Cell::new(size_cell(size, |size| size.total_bytes)),
         Cell::new(size_cell(size, |size| size.build_output_bytes)),
@@ -117,7 +119,7 @@ fn size_cell(size: Option<&WorktreeSize>, bytes: impl Fn(&WorktreeSize) -> u64) 
 /// `bytes` in the largest binary unit that gives a value of 1 or more, with
 /// one decimal place, and one letter for the unit. The value is cut, not
 /// rounded.
-fn short_size(bytes: u64) -> String {
+pub(crate) fn short_size(bytes: u64) -> String {
     const UNITS: [(u64, char); 4] = [
         (1 << 40, 'T'),
         (1 << 30, 'G'),
@@ -137,27 +139,40 @@ fn reason(worktree: &Worktree) -> String {
         return format!("yes: {}", merged_name(worktree.merged_by));
     };
     let text = match refusal {
-        Refusal::MainWorktree => "main worktree".to_owned(),
-        Refusal::DirectoryMissing => "directory missing".to_owned(),
-        Refusal::FactsUnknown => "git facts not known".to_owned(),
-        Refusal::ActiveSession => "session running".to_owned(),
-        Refusal::ProcessRunning => "process running".to_owned(),
-        Refusal::UncommittedChanges => "uncommitted changes".to_owned(),
         Refusal::UnpushedCommits => format!("unpushed {}", worktree.unpushed_commits),
-        Refusal::DetachedCommits => "detached commits".to_owned(),
         Refusal::Locked => match &worktree.locked_reason {
             Some(reason) => format!("locked ({reason})"),
             None => "locked".to_owned(),
         },
-        Refusal::Submodule => "submodule".to_owned(),
         Refusal::IgnoredUserFiles => {
             format!("ignored files ({})", worktree.ignored_user_paths.join(", "))
         }
-        Refusal::OtherFileSystem => "other file system".to_owned(),
-        Refusal::NotFinished => "not merged".to_owned(),
-        Refusal::Unknown => "unknown reason".to_owned(),
+        refusal => refusal_name(*refusal).to_owned(),
     };
     format!("no: {text}")
+}
+
+/// The short text of a refusal.
+pub(super) fn refusal_name(refusal: Refusal) -> &'static str {
+    match refusal {
+        Refusal::MainWorktree => "main worktree",
+        Refusal::DirectoryMissing => "directory missing",
+        Refusal::FactsUnknown => "git facts not known",
+        Refusal::ActiveSession => "session running",
+        Refusal::ProcessRunning => "process running",
+        Refusal::UncommittedChanges => "uncommitted changes",
+        Refusal::UnpushedCommits => "unpushed commits",
+        Refusal::DetachedCommits => "detached commits",
+        Refusal::Locked => "locked",
+        Refusal::Submodule => "submodule",
+        Refusal::IgnoredUserFiles => "ignored files",
+        Refusal::OtherFileSystem => "other file system",
+        Refusal::NotFinished => "not merged",
+        Refusal::Kept => "marked keep",
+        Refusal::NoTrashPlace => "no trash place",
+        Refusal::InTrash => "in the trash",
+        Refusal::Unknown => "unknown reason",
+    }
 }
 
 fn merged_name(merged_by: MergedBy) -> &'static str {
@@ -227,7 +242,7 @@ fn total_line(projects: &[ProjectWorktrees], now: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use nomux_client::{NodeKind, Workspace, WorkspaceTree};
+    use nomux_client::{Mark, NodeKind, Workspace, WorkspaceTree};
     use nomux_core::workspace_tree::Node;
 
     use super::super::table::assert_fits;
@@ -267,6 +282,9 @@ mod tests {
             ],
             locked_reason: Some("claude agent agent-a1b2c3d4 (pid 4242)".to_owned()),
             facts_unavailable_reason: None,
+            tool: Some("claude-code".to_owned()),
+            mark: Mark::None,
+            trash_id: None,
         }
     }
 

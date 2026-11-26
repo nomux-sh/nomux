@@ -4,8 +4,8 @@
 //! hosts in `[hosts.<name>]`, `default_policy` in `[restore]`,
 //! `ended_retention`, `memory_limit` and `total_memory_limit` in
 //! `[sessions]`, `size`, `idle_time` and `shell_start_files` in `[pool]`,
-//! the hibernation settings in `[agents]`, and `prefix` in `[attach]`,
-//! which only the CLI reads. It writes only the hosts, and it keeps each
+//! the hibernation settings in `[agents]`, the worktree settings in
+//! `[worktrees]`, and `prefix` in `[attach]`, which only the CLI reads. It writes only the hosts, and it keeps each
 //! other part of the file, also the comments, when it writes the file.
 
 mod duration_text;
@@ -16,6 +16,7 @@ mod prefix_keys;
 mod restore_policy;
 mod size_text;
 mod stop_signal;
+mod worktree_settings;
 
 use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{self, Write};
@@ -31,6 +32,7 @@ pub use self::location::default_configuration_path;
 pub use self::prefix_keys::{PrefixKey, PrefixKeys};
 pub use self::restore_policy::{RestorePolicy, UnknownRestorePolicy};
 pub use self::stop_signal::StopSignal;
+pub use self::worktree_settings::{AutoClean, BuildOutputRule};
 
 const HOSTS: &str = "hosts";
 const SSH: &str = "ssh";
@@ -101,6 +103,14 @@ impl ConfigurationFile {
         file.hibernate_on_pressure()?;
         file.stop_signals()?;
         file.stop_wait()?;
+        file.worktree_auto_cleans()?;
+        file.worktree_stale_after()?;
+        file.worktree_grace()?;
+        file.worktree_size_ttl()?;
+        file.worktree_base()?;
+        file.worktree_warn_free()?;
+        file.worktree_critical_free()?;
+        file.worktree_build_output_rules()?;
         Ok(file)
     }
 

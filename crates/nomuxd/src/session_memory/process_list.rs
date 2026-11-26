@@ -4,7 +4,7 @@ use std::io;
 
 /// The process ID of each process that this user can see.
 #[cfg(target_os = "linux")]
-pub(super) fn pids() -> io::Result<Vec<u32>> {
+pub(crate) fn pids() -> io::Result<Vec<u32>> {
     let mut pids = Vec::new();
     for entry in std::fs::read_dir("/proc")? {
         // `/proc` also has entries that are not processes.
@@ -22,7 +22,7 @@ pub(super) fn pids() -> io::Result<Vec<u32>> {
 /// The process ID of each process that runs on the host.
 #[cfg(target_os = "macos")]
 #[expect(unsafe_code)]
-pub(super) fn pids() -> io::Result<Vec<u32>> {
+pub(crate) fn pids() -> io::Result<Vec<u32>> {
     /// Processes that start between the two calls.
     const SPARE_ENTRIES: usize = 64;
 

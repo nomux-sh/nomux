@@ -149,7 +149,7 @@ idle_time = "10m"             # a number with the unit s, m, h or d
 shell_start_files = true      # false: the pool takes only sessions in the home directory
 ```
 
-The memory limits (`memory_limit` and `total_memory_limit` in `[sessions]`) and the settings of the hibernation (the `[agents]` table) are in [memory.md](memory.md#settings).
+The memory limits (`memory_limit` and `total_memory_limit` in `[sessions]`) and the settings of the hibernation (the `[agents]` table) are in [memory.md](memory.md#settings). The settings of the worktrees (the `[worktrees]` table) are in [worktrees.md](worktrees.md#settings).
 
 | Key | Default | Function |
 |---|---|---|
@@ -536,7 +536,7 @@ The daemon owns the workspace tree of the host: the Groups and the Projects. It 
 
 ## Worktrees
 
-The daemon serves the Worktree service (`Worktree.List`): the git worktrees of each Project with their state, flags, size and the reasons why a removal is refused. It gets the git facts from the method `worktree_facts` of the git extension `nomux.git` and has no git code of its own. It keeps only the sizes, in memory, and measures them on a thread of the blocking pool after the answer to a list whose sizes are absent or old. It has no timer for them: an idle daemon measures nothing. It changes no file of a repository. [worktrees.md](worktrees.md) has the model, the rules, the sizes and the measurements. The code is in `crates/nomuxd/src/worktrees.rs`, `crates/nomuxd/src/worktrees` and `crates/nomuxd/src/handlers/worktree.rs`.
+The daemon serves the Worktree service: `Worktree.List` gives the git worktrees of each Project with their state, flags, size and the reasons why a removal is refused, `Worktree.Plan` and `Worktree.Clean` make and run the plan of a clean, and `Worktree.Mark`, `Worktree.Trash`, `Worktree.Restore` and `Worktree.EmptyTrash` keep the marks and the trash place. It gets the git facts from the method `worktree_facts` of the git extension `nomux.git` and makes each change of git with the methods of that extension; it has no git code of its own. It deletes build output directories itself. It keeps the sizes in memory and measures them on a thread of the blocking pool after the answer to a list whose sizes are absent or old, and keeps the marks and the trash entries in `worktrees.json` in its state directory. It has a timer only for the grace time of a trash entry and, while a client has a subscription, for the free space: an idle daemon with an empty trash place measures nothing and wakes for nothing. By default it changes no file of a repository without a command. [worktrees.md](worktrees.md) has the model, the rules, the sizes and the measurements. The code is in `crates/nomuxd/src/worktrees.rs`, `crates/nomuxd/src/worktrees` and `crates/nomuxd/src/handlers/worktree.rs`.
 
 ## What survives the end of the daemon
 

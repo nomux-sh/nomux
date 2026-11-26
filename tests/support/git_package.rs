@@ -10,6 +10,11 @@ use crate::binary;
 /// extension gives: an encoded `WorktreeFactsResponse`.
 pub const GIT_FACTS_FILE: &str = "worktree-facts.pb";
 
+/// The file in the home directory where the test git extension writes the
+/// arguments of each `git` that a change of a clean runs, one call on a
+/// line.
+pub const GIT_CHANGES_FILE: &str = "git-changes.log";
+
 /// Makes the package of the test git extension in `parent` and returns its
 /// directory.
 ///

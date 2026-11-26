@@ -30,7 +30,7 @@ pub(super) struct WalkTarget {
     pub(super) root: PathBuf,
     /// The build output directories, relative to `root`, with the identifier
     /// of their rule.
-    pub(super) build_outputs: Vec<(String, &'static str)>,
+    pub(super) build_outputs: Vec<(String, String)>,
 }
 
 /// The size of one worktree.
@@ -39,7 +39,7 @@ pub(super) struct Measured {
     pub(super) total_bytes: u64,
     /// Each build output directory: its relative path, its rule and its
     /// bytes, in the sequence of `WalkTarget::build_outputs`.
-    pub(super) build_outputs: Vec<(String, &'static str, u64)>,
+    pub(super) build_outputs: Vec<(String, String, u64)>,
 }
 
 /// Measures each target. The result has one entry for each target, in the
@@ -70,7 +70,7 @@ impl Walk<'_> {
             build_outputs: target
                 .build_outputs
                 .iter()
-                .map(|(path, rule)| (path.clone(), *rule, 0))
+                .map(|(path, rule)| (path.clone(), rule.clone(), 0))
                 .collect(),
         };
         let Ok(root) = fs::symlink_metadata(&target.root) else {
@@ -182,7 +182,7 @@ mod tests {
             root: root.to_owned(),
             build_outputs: build_outputs
                 .iter()
-                .map(|(path, rule)| ((*path).to_owned(), *rule))
+                .map(|(path, rule)| ((*path).to_owned(), (*rule).to_owned()))
                 .collect(),
         }
     }
@@ -246,7 +246,7 @@ mod tests {
         assert_eq!(measured[0].total_bytes, 0);
         assert_eq!(
             measured[0].build_outputs,
-            [("target".to_owned(), "cargo-target", 0)]
+            [("target".to_owned(), "cargo-target".to_owned(), 0)]
         );
     }
 }

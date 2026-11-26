@@ -12,7 +12,7 @@ use crate::extension_commands::ExtensionReport;
 use crate::hook_commands::HooksReport;
 use crate::status_commands::StatusReport;
 use crate::workspace_commands::WorkspaceReport;
-use crate::worktree_commands::WorktreeListing;
+use crate::worktree_commands::{WorktreeListing, WorktreeReport};
 
 #[derive(Debug)]
 pub(crate) enum Report {
@@ -100,6 +100,7 @@ pub(crate) enum Report {
     Status(StatusReport),
     Workspace(WorkspaceReport),
     Worktrees(WorktreeListing),
+    Worktree(WorktreeReport),
     ServiceFile(ServiceFileReport),
     Version,
 }
@@ -160,6 +161,7 @@ impl Report {
                 }
             }
             Self::Extension(report) => report.exit_code(),
+            Self::Worktree(report) => report.exit_code(),
             Self::SessionsKilled {
                 failure: Some(code),
                 ..
