@@ -3,11 +3,14 @@
 /// A source of a status. The variants are in the sequence in which the
 /// sources decide: a source decides before each source after it.
 ///
-/// A later version adds sources, for example the events of an agent tool.
-/// The resolver needs no change for a new source: it uses only the
-/// sequence. A new variant goes to its place in the sequence.
+/// A later version adds sources. The resolver needs no change for a new
+/// source: it uses only the sequence. A new variant goes to its place in
+/// the sequence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Source {
+    /// An adapter extension reported the status from the events of the
+    /// agent tool, for example from its hooks.
+    Adapter,
     /// A program reported the status in the terminal stream of the session:
     /// the Program Status Protocol (OSC 7501).
     ProgramStatus,

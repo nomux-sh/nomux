@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use crate::agent_run::{AgentRun, ChildWork, MAX_CHILD_WORK, MAX_DEPTH};
 use crate::observation::{Observation, SourceReport};
 use crate::source::{Source, Sourced};
+use crate::state::State;
 use crate::status::{Status, Timestamp};
 
 /// What the sources say about one item, in the sequence in which the
@@ -15,7 +16,9 @@ type Candidates<'report> = Vec<(Source, &'report Observation)>;
 ///
 /// - The sources decide in the sequence of [`Source`]. The sequence of
 ///   `reports` has no effect.
-/// - The first source that reports an item gives its state. The message and
+/// - The first source that reports an item gives its state. A soft
+///   working state does not decide when a later source reports that the
+///   item needs the user. The message and
 ///   the progress come from the first source that has them and that reports
 ///   the same state: a text of a different state describes a different
 ///   state. The title and the name of the tool come from the first source
@@ -69,7 +72,7 @@ fn child_candidates<'report>(
 
 /// The status of one item from its candidates.
 fn merge(candidates: &Candidates<'_>, previous: Option<&Status>, now: Timestamp) -> Status {
-    let Some((source, decisive)) = candidates.first() else {
+    let Some((source, decisive)) = decisive(candidates) else {
         return match previous {
             Some(previous) if previous.source.is_none() => previous.clone(),
             _ => Status::unreported(now),
@@ -92,6 +95,27 @@ fn merge(candidates: &Candidates<'_>, previous: Option<&Status>, now: Timestamp)
         title: first(candidates, |observation| observation.title.clone()),
         tool: first(candidates, |observation| observation.tool.clone()),
     }
+}
+
+/// The candidate that gives the state: the first one, but a soft working
+/// state yields to a later candidate that needs the user. A tool event
+/// can come after the tool asked the user, and it does not answer the
+/// question.
+fn decisive<'candidate, 'report>(
+    candidates: &'candidate Candidates<'report>,
+) -> Option<&'candidate (Source, &'report Observation)> {
+    let needs_you_after = |index: usize| {
+        candidates[index + 1..]
+            .iter()
+            .any(|(_, later)| matches!(later.state, State::NeedsYou(_)))
+    };
+    candidates
+        .iter()
+        .enumerate()
+        .find(|(index, (_, observation))| {
+            !(observation.is_soft_working() && needs_you_after(*index))
+        })
+        .map(|(_, candidate)| candidate)
 }
 
 /// The value of the first candidate that has one, with its source.

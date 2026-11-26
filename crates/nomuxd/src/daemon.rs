@@ -12,6 +12,7 @@ use crate::arguments::RunningDaemon;
 use crate::events::EventLog;
 use crate::extensions;
 use crate::handlers::Context;
+use crate::hooks::HookDelivery;
 use crate::in_flight_requests::InFlightRequests;
 use crate::instance_lock::InstanceLock;
 use crate::listener;
@@ -46,13 +47,18 @@ pub(crate) async fn run(running_daemon: RunningDaemon) -> io::Result<()> {
     // its answer after the daemon has the sessions of the earlier daemon
     // and of the earlier start of the host.
     sessions.adopt_existing().await?;
-    let extensions = extensions::open(Arc::clone(&sessions))?;
+    let extensions = extensions::open(
+        Arc::clone(&sessions),
+        Arc::clone(&status),
+        Arc::clone(&events),
+    )?;
     info!(socket = %socket_path.display(), "the daemon listens");
 
     let context = Arc::new(Context {
         sessions,
         status,
         events,
+        hooks: Arc::new(HookDelivery::new(extensions.clone())),
         extensions,
         shutdown,
         in_flight_requests: InFlightRequests::default(),

@@ -116,10 +116,14 @@ pub(super) async fn call(
         }),
         Err(error) => return Err(call_failure(&request.ext, &error)),
     };
-    let result = response::Result::ExtCall(ExtCallResponse {
+    fitting_envelope(response::Result::ExtCall(ExtCallResponse {
         answer: Some(answer),
-    });
-    // A frame of an extension can be larger than an envelope.
+    }))
+}
+
+/// `result` if it goes into one envelope. A frame of an extension can be
+/// larger than an envelope.
+pub(super) fn fitting_envelope(result: response::Result) -> Result<response::Result, Error> {
     let length = result.encoded_len();
     if length > MAX_ENVELOPE_LENGTH - ENVELOPE_OVERHEAD {
         return Err(failed(format!(
@@ -196,7 +200,7 @@ fn state_failure(id: &str, error: &StateError) -> Error {
 }
 
 /// The failure of a call that the extension did not answer.
-fn call_failure(id: &str, error: &CallError) -> Error {
+pub(super) fn call_failure(id: &str, error: &CallError) -> Error {
     let code = match error {
         CallError::NotInstalled => return not_installed(id),
         CallError::Timeout => ErrorCode::Timeout,
@@ -215,7 +219,7 @@ fn not_installed(id: &str) -> Error {
     }
 }
 
-fn failed(message: String) -> Error {
+pub(super) fn failed(message: String) -> Error {
     Error {
         code: ErrorCode::Failed.into(),
         message,

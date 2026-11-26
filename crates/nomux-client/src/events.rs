@@ -17,6 +17,8 @@ pub enum EventType {
     AgentRunChanged,
     /// [`EventBody::AgentRunRemoved`].
     AgentRunRemoved,
+    /// [`EventBody::ExtensionEvent`].
+    ExtensionEvent,
 }
 
 /// One event of a host.
@@ -40,6 +42,15 @@ pub enum EventBody {
     AgentRunRemoved {
         /// The identifier of the session.
         session_id: String,
+    },
+    /// The daemon part of an extension sent an event.
+    ExtensionEvent {
+        /// The identifier of the extension.
+        extension_id: String,
+        /// The name that the extension gave to the event.
+        name: String,
+        /// The payload. The extension selects its encoding.
+        payload: Vec<u8>,
     },
     /// The daemon does not have the events that the subscription asked
     /// for. The state of the host now follows: discard the state that you
@@ -121,6 +132,7 @@ impl From<EventType> for wire::EventType {
         match kind {
             EventType::AgentRunChanged => Self::AgentRunChanged,
             EventType::AgentRunRemoved => Self::AgentRunRemoved,
+            EventType::ExtensionEvent => Self::ExtensionEvent,
         }
     }
 }
@@ -135,6 +147,11 @@ impl From<wire::Event> for HostEvent {
             }
             Some(event::Body::AgentRunRemoved(removed)) => EventBody::AgentRunRemoved {
                 session_id: removed.session_id,
+            },
+            Some(event::Body::ExtensionEvent(extension_event)) => EventBody::ExtensionEvent {
+                extension_id: extension_event.extension_id,
+                name: extension_event.name,
+                payload: extension_event.payload,
             },
             Some(event::Body::Snapshot(_)) => EventBody::Snapshot,
             None => EventBody::Unknown,

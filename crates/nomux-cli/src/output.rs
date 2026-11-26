@@ -3,6 +3,8 @@
 
 mod extension_human;
 mod extension_json;
+mod hooks_human;
+mod hooks_json;
 mod human;
 mod json;
 mod memory_human;
@@ -16,6 +18,7 @@ use std::io::{self, Write};
 use nomux_client::{ClientError, HostEvent};
 
 use crate::arguments::Arguments;
+use crate::hook_commands::HooksReport;
 use crate::report::Report;
 
 /// The form of the output.
@@ -40,6 +43,10 @@ impl Format {
 }
 
 pub(crate) fn print_report(report: &Report, format: Format) -> io::Result<()> {
+    // The answer of a hook is for its tool, in the form that the tool reads.
+    if let Report::Hooks(HooksReport::Answered { output }) = report {
+        return io::stdout().lock().write_all(output);
+    }
     if let (Some(payload), Format::Human | Format::Quiet) = (report.call_payload(), format) {
         return io::stdout().lock().write_all(payload);
     }

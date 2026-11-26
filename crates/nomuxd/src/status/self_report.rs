@@ -1,12 +1,9 @@
 //! The self-report: what a program in a session reports about its session
 //! with a request to the daemon.
 
-use std::error::Error;
-use std::fmt;
-
 use nomux_status::{Observation, State};
 
-use super::holder_sources::MAX_MESSAGE_LENGTH;
+use super::report_text::one_line;
 
 /// A self-report of a request, after its checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,56 +22,20 @@ impl SelfReport {
     ///
     /// Returns the reason if `message` is not one short line of text.
     pub(crate) fn new(state: State, message: &str) -> Result<Self, String> {
-        if message.len() > MAX_MESSAGE_LENGTH {
-            return Err(format!(
-                "the message has {} bytes: {MAX_MESSAGE_LENGTH} at most",
-                message.len()
-            ));
-        }
-        if message.chars().any(char::is_control) {
-            return Err(
-                "the message must be one line of text without a control character".to_owned(),
-            );
-        }
+        let message = one_line("message", message)?;
         if state == State::Idle {
             return Ok(Self::Withdrawn);
         }
         Ok(Self::Status(Observation {
-            message: (!message.is_empty()).then(|| message.to_owned()),
+            message,
             ..Observation::of(state)
         }))
     }
 }
 
-/// Why the daemon did not take a self-report: the request did not prove
-/// that it comes from the session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SelfReportRefused {
-    /// The token of the request is not the token of the session.
-    WrongToken,
-    /// The holder of the session is too old to make a token.
-    HolderWithoutToken,
-    /// The session has no process, thus no process can report for it.
-    NoProcess,
-}
-
-impl fmt::Display for SelfReportRefused {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::WrongToken => "the token of the request is not the token of the session",
-            Self::HolderWithoutToken => {
-                "the holder of the session is from an earlier nomux version and has no token: \
-                 the session cannot report its status until it starts again"
-            }
-            Self::NoProcess => "the session has no process that the daemon knows",
-        })
-    }
-}
-
-impl Error for SelfReportRefused {}
-
 #[cfg(test)]
 mod tests {
+    use super::super::holder_sources::MAX_MESSAGE_LENGTH;
     use super::*;
 
     #[test]

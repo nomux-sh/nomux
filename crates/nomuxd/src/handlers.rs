@@ -4,6 +4,7 @@
 mod agent;
 mod events;
 mod ext;
+mod hooks;
 mod host;
 mod session;
 mod session_memory;
@@ -17,6 +18,7 @@ use nomux_proto::wire::v1::{Error, ErrorCode, request, response};
 use crate::attachment::Attachment;
 use crate::events::{EventLog, Subscription};
 use crate::handshake::ClientFeatures;
+use crate::hooks::HookDelivery;
 use crate::in_flight_requests::InFlightRequests;
 use crate::sessions::Sessions;
 use crate::shutdown::Shutdown;
@@ -28,6 +30,7 @@ pub(crate) struct Context {
     pub(crate) status: Arc<StatusRegistry>,
     pub(crate) events: Arc<EventLog>,
     pub(crate) extensions: ExtensionHost,
+    pub(crate) hooks: Arc<HookDelivery>,
     pub(crate) shutdown: Shutdown,
     pub(crate) in_flight_requests: InFlightRequests,
 }
@@ -87,6 +90,9 @@ pub(crate) async fn handle(
         request::Body::EventsSubscribe(request) => {
             return Outcome::Subscribe(events::subscribe(&request, context));
         }
+        request::Body::HookEvent(request) => hooks::event(request, context),
+        request::Body::HooksPlan(request) => hooks::plan(request, context).await,
+        request::Body::HooksAdapters(_) => Ok(hooks::adapters_of_tools(context)),
     };
     Outcome::Respond(result.unwrap_or_else(response::Result::Error))
 }

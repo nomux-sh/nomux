@@ -16,6 +16,8 @@
 //!   a tree with [`MAX_DEPTH`] levels of Child work at most.
 //! - [`Urgency`] and [`most_urgent`]: the aggregation rules.
 //! - [`carried_over`]: the rule for a session that lost its process.
+//! - [`AdapterSource`]: what an adapter extension reported, with the rules
+//!   for a soft working report and for the tree of its Child work.
 //!
 //! `docs/status.md` has each rule with its reason.
 //!
@@ -27,6 +29,7 @@
 //!   collects it and gives it to this crate.
 //! - This crate depends on no other nomux crate.
 
+mod adapter_source;
 mod agent_run;
 mod aggregation;
 mod observation;
@@ -36,6 +39,7 @@ mod source;
 mod state;
 mod status;
 
+pub use adapter_source::{AdapterRefusal, AdapterSource, ChildChange};
 pub use agent_run::{AgentRun, ChildWork, MAX_CHILD_WORK, MAX_DEPTH};
 pub use aggregation::{Urgency, most_urgent};
 pub use observation::{ChildObservation, Observation, SourceReport};

@@ -7,7 +7,7 @@ use std::io::{self, IsTerminal};
 use nomux_client::{AttachEnd, ExitStatus, HostInfo, Session, SessionState};
 use nomux_core::configuration::HostEntry;
 
-use super::{extension_human, memory_human, status_human};
+use super::{extension_human, hooks_human, memory_human, status_human};
 use crate::report::{AddedHost, HostDiagnosis, Report, ServiceFileAction, ServiceFileReport};
 
 pub(super) const RED: &str = "\x1b[31m";
@@ -72,6 +72,7 @@ pub(super) fn report(report: &Report, style: Style) -> String {
         Report::HostsChecked(hosts) if hosts.is_empty() => "no hosts\n".to_owned(),
         Report::HostsChecked(hosts) => hosts.iter().map(host_diagnosis).collect(),
         Report::Extension(report) => extension_human::report(report),
+        Report::Hooks(report) => hooks_human::report(report),
         Report::Status(report) => status_human::report(report, style),
         Report::ServiceFile(service) => service_file(service),
         Report::Version => format!("{}\n", nomux_core::version_line!()),
@@ -93,6 +94,7 @@ pub(super) fn quiet_report(report: &Report) -> String {
             .flat_map(|host| [host.name.as_str(), "\n"])
             .collect(),
         Report::Extension(report) => extension_human::quiet_report(report),
+        Report::Hooks(report) => hooks_human::quiet_report(report),
         Report::Status(report) => status_human::quiet_report(report),
         Report::OutputCaptured { output, .. } => String::from_utf8_lossy(output).into_owned(),
         Report::SessionStarted(_)

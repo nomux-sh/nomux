@@ -37,6 +37,9 @@ pub enum NeedsYouKind {
 pub enum StatusSource {
     /// No source reports a status.
     None,
+    /// An adapter extension reported it from the events of the agent tool,
+    /// for example from its hooks.
+    Adapter,
     /// A program reported it in the terminal stream (OSC 7501).
     ProgramStatus,
     /// A program in the session reported it with
@@ -107,6 +110,18 @@ pub struct ChildWork {
     pub children: Vec<ChildWork>,
 }
 
+/// What an adapter extension says about the Agent run of a session,
+/// beyond its status. The source is always [`StatusSource::Adapter`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentDetails {
+    /// The model that the agent uses.
+    pub model: Option<String>,
+    /// The identifier of the session of the agent tool.
+    pub provider_session_id: Option<String>,
+    /// A command that continues the session of the agent tool.
+    pub resume_command: Option<String>,
+}
+
 /// The status of what runs in one session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRun {
@@ -119,6 +134,9 @@ pub struct AgentRun {
     pub aggregate: AgentStatus,
     /// The Child work of the Agent run, in the sequence of their names.
     pub children: Vec<ChildWork>,
+    /// What the adapter of the agent tool says about the Agent run. `None`
+    /// if no adapter gave details.
+    pub details: Option<AgentDetails>,
 }
 
 /// The status of each session of a host.
@@ -206,6 +224,7 @@ fn needs_you_kind(kind: i32) -> Option<NeedsYouKind> {
 fn source_of(source: i32) -> StatusSource {
     match wire::StatusSource::try_from(source) {
         Ok(wire::StatusSource::None) => StatusSource::None,
+        Ok(wire::StatusSource::Adapter) => StatusSource::Adapter,
         Ok(wire::StatusSource::ProgramStatus) => StatusSource::ProgramStatus,
         Ok(wire::StatusSource::SelfReport) => StatusSource::SelfReport,
         Ok(wire::StatusSource::SessionRestore) => StatusSource::SessionRestore,
@@ -263,6 +282,18 @@ impl From<wire::AgentRun> for AgentRun {
             status: status_or_unknown(run.status),
             aggregate: status_or_unknown(run.aggregate),
             children: run.children.into_iter().map(ChildWork::from).collect(),
+            details: run.details.map(AgentDetails::from),
+        }
+    }
+}
+
+impl From<wire::AgentDetails> for AgentDetails {
+    fn from(details: wire::AgentDetails) -> Self {
+        let text = |text: String| (!text.is_empty()).then_some(text);
+        Self {
+            model: text(details.model),
+            provider_session_id: text(details.provider_session_id),
+            resume_command: text(details.resume_command),
         }
     }
 }

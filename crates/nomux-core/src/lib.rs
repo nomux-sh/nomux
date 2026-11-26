@@ -19,12 +19,17 @@
 //! the lookup of a binary of the same installation, and the parts of the
 //! global configuration file that the core uses ([`configuration`]): the
 //! hosts, the default restore policy and the retention time of an ended
-//! session. The glossary types, the error type and the other parts of the
+//! session. It also has the data directory of nomux ([`data_directory`])
+//! and the rules of a hook event that the CLI and the
+//! daemon share ([`hook_event`]). The glossary types, the error type and the other parts of the
 //! configuration model are not written yet.
 
 mod companion_binary;
 pub mod configuration;
+mod data_directory;
+pub mod hook_event;
 mod version;
 
 pub use companion_binary::companion_binary;
+pub use data_directory::data_directory;
 pub use version::version_only_main;

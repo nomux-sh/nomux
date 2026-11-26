@@ -8,7 +8,7 @@ use nomux_proto::wire::v1::{
 
 use super::Context;
 use crate::session_error::SessionError;
-use crate::status::{SelfReport, SelfReportRefused, reported_state};
+use crate::status::{SelfReport, TokenRefused, reported_state};
 
 pub(super) fn tree(request: AgentTreeRequest, context: &Context) -> response::Result {
     let ids = listed_sessions(context);
@@ -56,7 +56,7 @@ fn listed_sessions(context: &Context) -> Vec<SessionId> {
 }
 
 /// The session `id`, if it is not ended.
-fn find(context: &Context, id: &str) -> Result<SessionId, SessionError> {
+pub(super) fn find(context: &Context, id: &str) -> Result<SessionId, SessionError> {
     listed_sessions(context)
         .into_iter()
         .find(|listed| listed.as_str() == id)
@@ -67,7 +67,7 @@ fn find(context: &Context, id: &str) -> Result<SessionId, SessionError> {
         })
 }
 
-fn refused_error(id: &SessionId, refused: SelfReportRefused) -> Error {
+fn refused_error(id: &SessionId, refused: TokenRefused) -> Error {
     Error {
         code: ErrorCode::PermissionDenied.into(),
         message: format!("the status of session {id} did not change: {refused}"),

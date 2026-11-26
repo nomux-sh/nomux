@@ -17,6 +17,7 @@ mod release_archive;
 use nomux_transport::ssh::{CommandOutput, SshConnection};
 
 pub use self::binaries::BinarySource;
+pub(crate) use self::binaries::sha256_hex;
 use self::binaries::{Binaries, read_directory};
 pub(crate) use self::platform::RemotePlatform;
 pub(crate) use self::probe::probe;

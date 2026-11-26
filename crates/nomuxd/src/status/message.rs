@@ -6,9 +6,15 @@ use nomux_status::{
     AgentRun, ChildWork, NeedsYouKind, Source, SourceReport, Sourced, State, Status,
 };
 
-/// The Agent run of the session `id`. Without `include_children`, the
-/// Agent run has no Child work, and its aggregate still includes them.
-pub(crate) fn agent_run(id: &SessionId, run: &AgentRun, include_children: bool) -> wire::AgentRun {
+/// The Agent run of the session `id` with the `details` of its adapter.
+/// Without `include_children`, the Agent run has no Child work, and its
+/// aggregate still includes them.
+pub(crate) fn agent_run(
+    id: &SessionId,
+    run: &AgentRun,
+    details: Option<&wire::AgentDetails>,
+    include_children: bool,
+) -> wire::AgentRun {
     wire::AgentRun {
         session_id: id.to_string(),
         status: Some(status(&run.status)),
@@ -18,6 +24,7 @@ pub(crate) fn agent_run(id: &SessionId, run: &AgentRun, include_children: bool) 
         } else {
             Vec::new()
         },
+        details: details.cloned(),
     }
 }
 
@@ -71,12 +78,25 @@ pub(crate) fn source_report(report: &SourceReport) -> wire::SourceReport {
 /// The state of a self-report. `None` for a value that is not a state.
 /// The self-report does not say what work waits for.
 pub(crate) fn reported_state(state: i32) -> Option<State> {
+    reported_state_and_kind(state, wire::NeedsYouKind::Unspecified.into())
+}
+
+/// The state of a report with the kind of a state that needs the user.
+/// `None` for a value that is not a state. A kind that the daemon does not
+/// know is no kind.
+pub(crate) fn reported_state_and_kind(state: i32, kind: i32) -> Option<State> {
+    let kind = match wire::NeedsYouKind::try_from(kind) {
+        Ok(wire::NeedsYouKind::Permission) => Some(NeedsYouKind::Permission),
+        Ok(wire::NeedsYouKind::Question) => Some(NeedsYouKind::Question),
+        Ok(wire::NeedsYouKind::Auth) => Some(NeedsYouKind::Auth),
+        Ok(wire::NeedsYouKind::Unspecified) | Err(_) => None,
+    };
     match wire::AgentState::try_from(state).ok()? {
         wire::AgentState::Unspecified => None,
         wire::AgentState::Idle => Some(State::Idle),
         wire::AgentState::Working => Some(State::Working),
         wire::AgentState::Done => Some(State::Done),
-        wire::AgentState::NeedsYou => Some(State::NeedsYou(None)),
+        wire::AgentState::NeedsYou => Some(State::NeedsYou(kind)),
         wire::AgentState::Error => Some(State::Error),
     }
 }
@@ -108,6 +128,7 @@ fn state(state: State) -> (wire::AgentState, wire::NeedsYouKind) {
 
 fn source(source: Source) -> wire::StatusSource {
     match source {
+        Source::Adapter => wire::StatusSource::Adapter,
         Source::ProgramStatus => wire::StatusSource::ProgramStatus,
         Source::SelfReport => wire::StatusSource::SelfReport,
         Source::SessionRestore => wire::StatusSource::SessionRestore,

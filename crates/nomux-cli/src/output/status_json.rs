@@ -1,9 +1,12 @@
 //! The JSON form of the report of a status command and of an event.
 //! `docs/cli.md` has the schema.
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use nomux_client::{
-    AgentExplanation, AgentRun, AgentState, AgentStatus, AgentTree, ChildWork, EventBody,
-    HostEvent, NeedsYouKind, ReportedState, Session, SourceExplanation, Sourced, StatusSource,
+    AgentDetails, AgentExplanation, AgentRun, AgentState, AgentStatus, AgentTree, ChildWork,
+    EventBody, HostEvent, NeedsYouKind, ReportedState, Session, SourceExplanation, Sourced,
+    StatusSource,
 };
 use serde::Serialize;
 
@@ -90,6 +93,26 @@ struct RunDocument<'a> {
     aggregate: StatusDocument<'a>,
     #[serde(skip_serializing_if = "Option::is_none")]
     children: Option<Vec<ChildDocument<'a>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    details: Option<DetailsDocument<'a>>,
+}
+
+/// What the adapter of the agent tool says about the Agent run.
+#[derive(Serialize)]
+struct DetailsDocument<'a> {
+    model: Option<&'a str>,
+    provider_session_id: Option<&'a str>,
+    resume_command: Option<&'a str>,
+}
+
+impl<'a> From<&'a AgentDetails> for DetailsDocument<'a> {
+    fn from(details: &'a AgentDetails) -> Self {
+        Self {
+            model: details.model.as_deref(),
+            provider_session_id: details.provider_session_id.as_deref(),
+            resume_command: details.resume_command.as_deref(),
+        }
+    }
 }
 
 impl<'a> RunDocument<'a> {
@@ -100,6 +123,7 @@ impl<'a> RunDocument<'a> {
             status: (&run.status).into(),
             aggregate: (&run.aggregate).into(),
             children: with_children.then(|| run.children.iter().map(ChildDocument::from).collect()),
+            details: run.details.as_ref().map(DetailsDocument::from),
         }
     }
 }
@@ -240,10 +264,22 @@ pub(super) struct EventDocument<'a> {
     session: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     run: Option<RunDocument<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extension: Option<ExtensionEventDocument<'a>>,
+}
+
+/// An event of an extension. The payload is base64: the extension selects
+/// its encoding, and it is not always text.
+#[derive(Serialize)]
+struct ExtensionEventDocument<'a> {
+    id: &'a str,
+    name: &'a str,
+    payload_base64: String,
 }
 
 impl<'a> From<&'a HostEvent> for EventDocument<'a> {
     fn from(event: &'a HostEvent) -> Self {
+        let mut extension = None;
         let (kind, session, run) = match &event.body {
             EventBody::AgentRunChanged(run) => (
                 "agent_run_changed",
@@ -252,6 +288,18 @@ impl<'a> From<&'a HostEvent> for EventDocument<'a> {
             ),
             EventBody::AgentRunRemoved { session_id } => {
                 ("agent_run_removed", Some(session_id.as_str()), None)
+            }
+            EventBody::ExtensionEvent {
+                extension_id,
+                name,
+                payload,
+            } => {
+                extension = Some(ExtensionEventDocument {
+                    id: extension_id,
+                    name,
+                    payload_base64: STANDARD.encode(payload),
+                });
+                ("extension_event", None, None)
             }
             EventBody::Snapshot => ("snapshot", None, None),
             EventBody::Unknown => ("unknown", None, None),
@@ -262,6 +310,7 @@ impl<'a> From<&'a HostEvent> for EventDocument<'a> {
             kind,
             session,
             run,
+            extension,
         }
     }
 }
@@ -289,6 +338,7 @@ fn kind_name(state: AgentState) -> Option<&'static str> {
 fn source_name(source: StatusSource) -> &'static str {
     match source {
         StatusSource::None => "none",
+        StatusSource::Adapter => "adapter",
         StatusSource::ProgramStatus => "program_status",
         StatusSource::SelfReport => "self_report",
         StatusSource::SessionRestore => "session_restore",

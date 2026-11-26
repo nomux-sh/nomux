@@ -97,6 +97,8 @@ pub(crate) struct Connection<Owner> {
     extension_id: String,
     limits: Limits,
     events: broadcast::Sender<ExtensionEvent>,
+    /// The host services of the embedder. It gets each event.
+    embedder: Arc<dyn HostServices>,
     pending: PendingCalls,
     services: ServiceCalls,
     health: HealthCheck,
@@ -128,6 +130,7 @@ impl<Owner: Send + 'static> Connection<Owner> {
             request_ids: request_ids.clone(),
             extension_id: setup.identity.extension_id.clone(),
             events: setup.events,
+            embedder: Arc::clone(&setup.services),
             pending: PendingCalls::default(),
             services: ServiceCalls::new(
                 setup.services,
@@ -344,18 +347,19 @@ impl<Owner: Send + 'static> Connection<Owner> {
         Ok(())
     }
 
-    /// Gives an event to the subscribers. An event that a subscriber gets
-    /// is activity: the host does not stop an extension whose events are in
-    /// use.
+    /// Gives an event to the embedder and to the subscribers. An event that
+    /// a subscriber gets is activity: the host does not stop an extension
+    /// whose events are in use. The embedder alone is not activity.
     fn publish(&mut self, event: Event) {
-        if self.events.receiver_count() == 0 {
-            return;
-        }
         let event = ExtensionEvent {
             extension_id: self.extension_id.clone(),
             name: event.name,
             payload: event.payload,
         };
+        self.embedder.event(&event);
+        if self.events.receiver_count() == 0 {
+            return;
+        }
         // The last subscriber can go away at each moment.
         let _ = self.events.send(event);
         if let Some(idle_since) = &mut self.idle_since {
