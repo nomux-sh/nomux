@@ -8,7 +8,8 @@
 //! records at most with a limit for each field, the adapter source and the
 //! resolver keep [`nomux_status::MAX_CHILD_WORK`] Child work at most, and a
 //! text has [`MAX_MESSAGE_LENGTH`](super::holder_sources::MAX_MESSAGE_LENGTH)
-//! bytes at most. Only a session of the session registry gets an entry.
+//! bytes at most. Only a session of the session registry gets an entry,
+//! and [`MAX_KEPT_RUNS`] ended sessions keep one at most.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -19,7 +20,8 @@ use nomux_proto::wire::v1::{
     AgentDetails, AgentExplainResponse, AgentRunChanged, AgentRunRemoved, AgentTreeResponse, event,
 };
 use nomux_status::{
-    AdapterSource, AgentRun, Observation, Source, SourceReport, carried_over, most_urgent, resolve,
+    AdapterSource, AgentRun, Observation, Source, SourceReport, Timestamp, carried_over,
+    most_urgent, resolve,
 };
 
 use super::adapter_report::{AdapterReportRefused, ChildReport, RunReport};
@@ -32,6 +34,10 @@ use crate::clock;
 use crate::events::EventLog;
 use crate::holder::HolderFacts;
 
+/// The largest number of ended sessions that keep their last Agent run.
+/// With the limits of one Agent run, the kept runs use a few MiB at most.
+pub(crate) const MAX_KEPT_RUNS: usize = 64;
+
 /// The status of each session.
 pub(crate) struct StatusRegistry {
     entries: Mutex<HashMap<SessionId, Entry>>,
@@ -43,6 +49,9 @@ struct Entry {
     run: AgentRun,
     /// The holder of the session. `None` if the session has no process.
     holder: Option<HolderFacts>,
+    /// When the command of the session ended. `Some` only for the kept run
+    /// of an ended session.
+    ended: Option<Timestamp>,
     sources: Sources,
 }
 
@@ -167,27 +176,58 @@ impl StatusRegistry {
     /// dormant now. Nothing changes if a newer holder has the session.
     pub(crate) fn lost_process(&self, id: &SessionId, facts: HolderFacts) {
         let mut entries = self.entries();
-        let Some(entry) = entries.get_mut(id) else {
-            return;
-        };
-        let is_current = entry
-            .holder
-            .is_some_and(|known| known.child_pid == facts.child_pid && known.token == facts.token);
-        if !is_current {
-            return;
+        if let Some(entry) = Self::current(&mut entries, id, facts) {
+            entry.keep_what_stays();
+            self.resolve_and_publish(id, entry);
         }
-        entry.holder = None;
-        // The details stay: a resume command continues the work of the
-        // lost process.
-        entry.sources = Sources {
-            carried_over: carried_over(&entry.run),
-            details: entry.sources.details.take(),
-            ..Sources::default()
-        };
-        self.resolve_and_publish(id, entry);
     }
 
-    /// The session `id` ended or was removed.
+    /// The command of the session `id`, which the holder `facts` ran,
+    /// ended. The session keeps what stays of its Agent run, as a dormant
+    /// session does, until the session is removed. If more than
+    /// [`MAX_KEPT_RUNS`] ended sessions keep a run, the oldest one loses it.
+    pub(crate) fn ended(&self, id: &SessionId, facts: HolderFacts) {
+        let mut entries = self.entries();
+        let Some(entry) = Self::current(&mut entries, id, facts) else {
+            return;
+        };
+        entry.keep_what_stays();
+        if entry.sources.carried_over.is_none() && entry.sources.details.is_none() {
+            drop(entries);
+            self.remove(id);
+            return;
+        }
+        entry.ended = Some(clock::now());
+        self.resolve_and_publish(id, entry);
+        let kept = entries.values().filter(|entry| entry.ended.is_some());
+        if kept.count() > MAX_KEPT_RUNS
+            && let Some(oldest) = Self::oldest_kept(&entries)
+        {
+            drop(entries);
+            self.remove(&oldest);
+        }
+    }
+
+    /// The sessions `ids` that are not ended, and each ended session that
+    /// keeps a run, in the sequence of their identifiers.
+    pub(crate) fn with_kept_runs(&self, mut ids: Vec<SessionId>) -> Vec<SessionId> {
+        let entries = self.entries();
+        let kept = entries.iter().filter(|(_, entry)| entry.ended.is_some());
+        ids.extend(kept.map(|(id, _)| id.clone()));
+        ids.sort_unstable_by(|first, second| first.as_str().cmp(second.as_str()));
+        ids
+    }
+
+    /// The kept run of the ended session `id` and what each source said.
+    /// Returns `None` if the session keeps no run.
+    pub(crate) fn explain_kept(&self, id: &SessionId) -> Option<AgentExplainResponse> {
+        let entries = self.entries();
+        let entry = entries.get(id).filter(|entry| entry.ended.is_some())?;
+        Some(entry.explanation(id))
+    }
+
+    /// The session `id` has no Agent run any more: it was removed, it
+    /// ended without a run to keep, or its kept run is the oldest one.
     pub(crate) fn remove(&self, id: &SessionId) {
         if self.entries().remove(id).is_some() {
             self.events
@@ -229,11 +269,7 @@ impl StatusRegistry {
     /// The status of the session `id` and what each source says.
     pub(crate) fn explain(&self, id: &SessionId) -> AgentExplainResponse {
         let mut entries = self.entries();
-        let entry = Self::read(&mut entries, id);
-        AgentExplainResponse {
-            run: Some(entry.message(id, true)),
-            sources: entry.reports().iter().map(message::source_report).collect(),
-        }
+        Self::read(&mut entries, id).explanation(id)
     }
 
     /// The Agent run of each of the sessions `ids` and the `seq` of the
@@ -295,6 +331,28 @@ impl StatusRegistry {
         Ok(())
     }
 
+    /// The entry of the session `id` if the holder `facts` is its current
+    /// holder.
+    fn current<'entries>(
+        entries: &'entries mut HashMap<SessionId, Entry>,
+        id: &SessionId,
+        facts: HolderFacts,
+    ) -> Option<&'entries mut Entry> {
+        entries.get_mut(id).filter(|entry| {
+            entry.holder.is_some_and(|known| {
+                known.child_pid == facts.child_pid && known.token == facts.token
+            })
+        })
+    }
+
+    fn oldest_kept(entries: &HashMap<SessionId, Entry>) -> Option<SessionId> {
+        entries
+            .iter()
+            .filter_map(|(id, entry)| Some((entry.ended?, id)))
+            .min_by_key(|(ended, id)| (*ended, id.as_str()))
+            .map(|(_, id)| id.clone())
+    }
+
     fn check_token(entry: &Entry, token: &str) -> Result<(), TokenRefused> {
         let holder = entry.holder.ok_or(TokenRefused::NoProcess)?;
         let known = holder.token.ok_or(TokenRefused::HolderWithoutToken)?;
@@ -333,8 +391,28 @@ impl Entry {
         Self {
             run: AgentRun::unreported(clock::now()),
             holder: None,
+            ended: None,
             sources: Sources::default(),
         }
+    }
+
+    fn explanation(&self, id: &SessionId) -> AgentExplainResponse {
+        AgentExplainResponse {
+            run: Some(self.message(id, true)),
+            sources: self.reports().iter().map(message::source_report).collect(),
+        }
+    }
+
+    /// The session has no process now. What stays of its Agent run is the
+    /// report of the session restore. The details stay: a resume command
+    /// continues the work of the lost process.
+    fn keep_what_stays(&mut self) {
+        self.holder = None;
+        self.sources = Sources {
+            carried_over: carried_over(&self.run),
+            details: self.sources.details.take(),
+            ..Sources::default()
+        };
     }
 
     /// The report of each source, in the sequence in which they decide.
@@ -564,6 +642,31 @@ mod tests {
         registry.connected(&id, holder(Some(token(2)), NO_PROCESS - 1));
         let run = registry.explain(&id).run.unwrap();
         assert_eq!(run.details, None);
+    }
+
+    #[test]
+    fn the_oldest_kept_run_goes_when_more_ended_sessions_keep_one_than_the_limit() {
+        let registry = registry();
+        let ids: Vec<SessionId> = (0..=MAX_KEPT_RUNS)
+            .map(|number| format!("s{number}").parse().unwrap())
+            .collect();
+        for (number, id) in ids.iter().enumerate() {
+            let facts = holder(Some(token(1)), NO_PROCESS - u32::try_from(number).unwrap());
+            registry.connected(id, facts);
+            registry.program_reports(id, &working(ProgramState::Working));
+            registry.ended(id, facts);
+        }
+
+        let kept = registry.with_kept_runs(Vec::new());
+        assert_eq!(kept.len(), MAX_KEPT_RUNS);
+        assert!(!kept.contains(&ids[0]), "the oldest kept run is gone");
+        assert!(registry.explain_kept(&ids[0]).is_none());
+        let run = registry
+            .explain_kept(&ids[MAX_KEPT_RUNS])
+            .unwrap()
+            .run
+            .unwrap();
+        assert_eq!(run.status.unwrap().source(), StatusSource::SessionRestore);
     }
 
     #[test]

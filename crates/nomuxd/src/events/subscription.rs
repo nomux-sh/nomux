@@ -104,12 +104,10 @@ impl Subscription {
     /// `EventsSnapshot` and the Agent run of each session. They have the
     /// `seq` of the newest event that they include.
     fn snapshot(&mut self) -> Vec<Event> {
-        let ids: Vec<_> = self
-            .sessions
-            .list(false)
-            .into_iter()
-            .map(|listed| listed.record.id)
-            .collect();
+        let ids = self.sessions.list(false).into_iter();
+        let ids = self
+            .status
+            .with_kept_runs(ids.map(|listed| listed.record.id).collect());
         let (last_seq, runs) = self.status.snapshot(&ids);
         let at_ms = clock::now().0;
         let marker = event::Body::Snapshot(EventsSnapshot {});

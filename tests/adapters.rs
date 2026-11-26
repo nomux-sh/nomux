@@ -226,6 +226,44 @@ fn a_hook_event_of_a_session_becomes_the_adapter_status_by_the_merge_table() {
 }
 
 #[test]
+fn an_ended_session_keeps_its_last_agent_run_with_its_resume_command() {
+    // Issue #73: the command of the session is the agent tool, and the
+    // session ends with it.
+    let (sandbox, id) = sandbox_with_adapter();
+    hook_in_session(&sandbox, &id, "prompt", r#"{"session":"s-1"}"#);
+    hook_in_session(
+        &sandbox,
+        &id,
+        "task",
+        r#"{"id":"a1","phase":"start","title":"explore"}"#,
+    );
+    wait_for_run(&sandbox, &id, "the Child work runs", |run| {
+        run["status"]["state"] == "working" && run["children"][0]["status"]["state"] == "working"
+    });
+
+    type_line(&sandbox, &id, "exit");
+    let run = wait_for_run(&sandbox, &id, "the run of the ended session", |run| {
+        run["status"]["source"] == "session_restore"
+    });
+    assert_eq!(run["status"]["state"], "done");
+    assert_eq!(run["status"]["seen"], false);
+    assert_eq!(run["children"][0]["status"]["state"], "done");
+    assert_eq!(run["details"]["resume_command"], "testtool --resume s-1");
+
+    let tree = sandbox.nomux_ok(&["status", "--tree"]).stdout;
+    assert!(tree.contains(&id) && tree.contains("a1"), "{tree}");
+
+    let explained = sandbox.nomux_ok(&["agent", "explain", &id]).stdout;
+    assert!(explained.contains("session restore"), "{explained}");
+    assert!(explained.contains("testtool --resume s-1"), "{explained}");
+    let run = wait_for_run(&sandbox, &id, "the run after the explanation", |_| true);
+    assert_eq!(
+        run["status"]["seen"], false,
+        "an explanation changes nothing"
+    );
+}
+
+#[test]
 fn a_hook_event_with_a_wrong_or_missing_token_is_refused() {
     let (sandbox, id) = sandbox_with_adapter();
     let token = token_of(&sandbox, &id);

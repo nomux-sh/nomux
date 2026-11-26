@@ -24,7 +24,8 @@ pub(crate) async fn tree(
 ) -> Result<Report, ClientError> {
     let host = selected_host::connect(host_name, format).await?;
     let mut client = host.client(KIND).await?;
-    let sessions = client.list_sessions(false).await?;
+    // An ended session can keep its last Agent run.
+    let sessions = client.list_sessions(true).await?;
     let tree = client.agent_tree(with_children).await?;
     Ok(StatusReport::Tree {
         tree,
