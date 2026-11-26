@@ -8,7 +8,7 @@ This repository is a part of [nomux](https://github.com/nomux-sh), a native and 
 
 In development. Versions earlier than 1.0.0 are pre-releases: interfaces can change between minor versions.
 
-The repository now has the Cargo workspace, the developer tools, CI and the first version of the holder ([docs/holder.md](docs/holder.md)), of the daemon ([docs/daemon.md](docs/daemon.md)) and of the CLI ([docs/cli.md](docs/cli.md)). The CLI creates, lists and ends sessions, attaches a terminal to a session and detaches it, and a session continues when the daemon stops. Each session keeps its output in a journal on disk: a client reads the scrollback from it, and after a restart of the host a session starts again when it is opened. The same commands work on a remote host through SSH ([docs/remote.md](docs/remote.md)). The daemon runs extensions that the user installs from a directory ([docs/extensions.md](docs/extensions.md)). Refer to the [roadmap](https://github.com/nomux-sh/docs/blob/main/src/content/docs/project/roadmap.md) for the next work.
+The repository now has the Cargo workspace, the developer tools, CI and the first version of the holder ([docs/holder.md](docs/holder.md)), of the daemon ([docs/daemon.md](docs/daemon.md)) and of the CLI ([docs/cli.md](docs/cli.md)). The CLI creates, lists and ends sessions, attaches a terminal to a session and detaches it, and a session continues when the daemon stops. Each session keeps its output in a journal on disk: a client reads the scrollback from it, and after a restart of the host a session starts again when it is opened. The same commands work on a remote host through SSH ([docs/remote.md](docs/remote.md)). The daemon runs extensions that the user installs from a directory ([docs/extensions.md](docs/extensions.md)). `nomux status` shows what runs in each session and what waits for the user, with the source of each status ([docs/status.md](docs/status.md)). Refer to the [roadmap](https://github.com/nomux-sh/docs/blob/main/src/content/docs/project/roadmap.md) for the next work.
 
 ## Quick start
 
@@ -126,6 +126,20 @@ An extension is a package in a directory: a manifest (`extension.toml`) and the 
 
 An extension runs as a separate process. If it fails, the caller gets an error, and the daemon and the sessions continue. `nomux ext rm nomux.git` removes it, and `nomux ext validate <directory>` checks a manifest without a daemon. [docs/cli.md](docs/cli.md) has the `ext` commands, and [docs/extensions.md](docs/extensions.md) describes the extension host and its limits.
 
+### What waits for you
+
+A tool in a session reports its status in the terminal stream (OSC 7501), as Claude Code, Codex and Qwen Code do, or with `nomux status set`. `nomux status` shows each session:
+
+```console
+$ nomux status
+  SESSION   COMMAND  STATE                  FOR  MESSAGE
+! k3xq2abc  claude   needs you: permission  2m   run tests?
+* p7wz4def  make     working (guess)        14s
+$ nomux agent explain k3xq2abc
+```
+
+A guess of the daemon says `(guess)`: a guess is never shown as a fact. `nomux status --tree` also shows the subagents, `nomux events --follow` prints each change, and an attach marks a result as seen. A script in a session reports with `nomux status set working "tests run"`.
+
 ## Install
 
 Each release has one archive for each target and a `SHA256SUMS` file. An archive contains `nomux`, `nomuxd`, `nomux-holder`, this file and the two license files.
@@ -197,7 +211,7 @@ The binaries are not signed and not notarized. Code signing and notarization sta
 | `crates/nomux-holder-protocol` | library | Contract between a holder and the daemon: control messages, ring buffer layout, redraw memory, discovery files | in use by the holder |
 | `crates/nomux-holder` | binary `nomux-holder` | Session holder: owns the PTY of one session. No async runtime | first version: PTY, ring buffer, screen state, control socket, discovery files |
 | `crates/nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows | first version: the Unix socket of the local host, the SSH client for a remote host, the control channel and the terminal channels of an attach |
-| `crates/nomux-status` | library | Agent status resolver, rules, aggregation | structure only |
+| `crates/nomux-status` | library | Agent status resolver, rules, aggregation | in use by the daemon: the status model, the source sequence, the Child work tree, the aggregation and the rule for a session without a process |
 | `crates/nomux-ext-host` | library | Extension host of the daemon | first version: installed extensions, a process for each extension in use, calls, events, isolation of failures. The daemon does not use it yet |
 | `crates/nomuxd` | binary `nomuxd` | Daemon | first version: creates, lists and ends sessions, finds the holders after a restart, attaches clients to a session |
 | `crates/nomux-client` | library | Protocol client for the CLI, the desktop client and the mobile clients | first version: the local host and remote hosts, the installation on a remote host, handshake, requests for sessions and for the daemon, attach with reconnect |

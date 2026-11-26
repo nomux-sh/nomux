@@ -3,7 +3,7 @@
 This document shows the components of the nomux core and the responsibility of each component.
 It is an overview. The protocol specifications are in the [`proto`](https://github.com/nomux-sh/proto) repository.
 
-The holder, the daemon, the client library and the CLI have their first version, with attach, with remote hosts through SSH, with the journal of each session, with the restore of a session after a restart of the host and with extensions: [holder.md](holder.md), [daemon.md](daemon.md), [cli.md](cli.md), [remote.md](remote.md) and [extensions.md](extensions.md) describe them. The other components are not implemented yet.
+The holder, the daemon, the client library and the CLI have their first version, with attach, with remote hosts through SSH, with the journal of each session, with the restore of a session after a restart of the host, with extensions and with the agent status engine: [holder.md](holder.md), [daemon.md](daemon.md), [cli.md](cli.md), [remote.md](remote.md), [extensions.md](extensions.md) and [status.md](status.md) describe them. The other components are not implemented yet.
 The "State" section shows what exists and where the plan is.
 
 ## Components
@@ -65,7 +65,7 @@ One daemon runs on each host.
 
 Responsibilities:
 
-The first version creates, lists and ends sessions, finds the holders again after a restart, takes their lease and attaches clients to the terminal of a session. It gives a client the output of the journal that the ring buffer has no more, and the scrollback. It keeps a session whose holder is gone as a dormant session, and it starts the command of that session again when a client opens it. It installs extensions from a directory, starts the daemon part of an extension at its first call and stops it when it is idle. [daemon.md](daemon.md) and [extensions.md](extensions.md) have the details and the parts that are open.
+The first version creates, lists and ends sessions, finds the holders again after a restart, takes their lease and attaches clients to the terminal of a session. It gives a client the output of the journal that the ring buffer has no more, and the scrollback. It keeps a session whose holder is gone as a dormant session, and it starts the command of that session again when a client opens it. It installs extensions from a directory, starts the daemon part of an extension at its first call and stops it when it is idle. It keeps the status of each session from its sources, with one task for each session that waits on the holder, and it sends the changes as events to the clients that subscribe. [daemon.md](daemon.md) and [extensions.md](extensions.md) have the details and the parts that are open.
 
 - **Sessions:** Find the holders from their discovery files and connect to them, also after a daemon restart. Take the single-writer lease. Send terminal data to the clients. Keep a small pool of holders that already have a shell (warm pool), thus a new session starts immediately.
 - **State:** Keep the data model, the status resolver and the event log in SQLite (WAL mode).
@@ -111,11 +111,11 @@ Rules:
 | `nomux-holder-protocol` | library | Contract between a holder and the daemon: control messages, ring buffer layout, redraw memory, discovery files | in use by the holder |
 | `nomux-holder` | binary | The holder. No async runtime | owns the PTY, the ring buffer, the screen state, the control socket and the discovery files |
 | `nomux-transport` | library | Unix socket, SSH channels, QUIC streams, credit windows | in use: the Unix socket of the local host, the SSH client with its channels to the socket of a remote daemon, the framing of the control channel and the framing of the terminal channels of an attach |
-| `nomux-status` | library | Status resolver, rules, aggregation. Pure code without I/O | structure only |
+| `nomux-status` | library | Status resolver, rules, aggregation. Pure code without I/O | in use by the daemon: the status model, the source sequence, the Child work tree, the aggregation and the rule for a session without a process. [status.md](status.md) describes it |
 | `nomux-ext-host` | library | Extension host of the daemon | in use by the daemon: the installed extensions, a process for each extension in use, calls, events and the isolation of failures. [extensions.md](extensions.md) describes it |
-| `nomuxd` | binary | The daemon | creates, lists and ends sessions; finds the holders after a restart; attaches clients to a session; reads the journal and the state directory of a session; keeps dormant and ended sessions and starts a dormant session again; installs, removes and calls extensions; supplies the host service `sessions.list`; measures the memory of the processes of each session when a client asks |
-| `nomux-client` | library | Protocol client for the CLI, the desktop client and the mobile clients | in use: the local host and remote hosts, the bootstrap of a remote host, the handshake, the requests for sessions, for extensions and for the daemon, the attach with its reconnect, the scrollback, and the checks of a host |
-| `nomux-cli` | binary `nomux` | The CLI | `new`, `ls` (with `--memory`), `attach`, `start`, `capture`, `restore-policy`, `detach`, `kill`, `daemon status`, `daemon stop`, `daemon install-service`, `daemon uninstall-service`, `host add`, `host ls`, `host rm`, `host doctor`, `ext ls`, `ext install`, `ext rm`, `ext enable`, `ext disable`, `ext call`, `ext validate`, `version`, and the `--host` option |
+| `nomuxd` | binary | The daemon | creates, lists and ends sessions; finds the holders after a restart; attaches clients to a session; reads the journal and the state directory of a session; keeps dormant and ended sessions and starts a dormant session again; installs, removes and calls extensions; supplies the host service `sessions.list`; measures the memory of the processes of each session when a client asks; keeps the status of each session and the event log |
+| `nomux-client` | library | Protocol client for the CLI, the desktop client and the mobile clients | in use: the local host and remote hosts, the bootstrap of a remote host, the handshake, the requests for sessions, for extensions, for the status of the sessions and for the daemon, the events of a host, the attach with its reconnect, the scrollback, and the checks of a host |
+| `nomux-cli` | binary `nomux` | The CLI | `new`, `ls` (with `--memory`), `attach`, `start`, `capture`, `restore-policy`, `detach`, `kill`, `daemon status`, `daemon stop`, `daemon install-service`, `daemon uninstall-service`, `host add`, `host ls`, `host rm`, `host doctor`, `ext ls`, `ext install`, `ext rm`, `ext enable`, `ext disable`, `ext call`, `ext validate`, `status`, `status set`, `agent explain`, `events --follow`, `version`, and the `--host` option |
 | `nomux-end-to-end` (in `tests`) | tests | End-to-end tests with the three binaries | in use |
 
 Planned direction of the dependencies:
@@ -128,7 +128,7 @@ Planned direction of the dependencies:
 - `nomux-client` uses `nomux-core`, `nomux-term` and `nomux-transport`.
 - `nomux-cli` uses `nomux-client` and `nomux-core`. It uses no type of `nomux-proto`. It uses the manifest validator of the `nomux-extension` crate.
 
-Now the holder depends on `nomux-core`, `nomux-holder-protocol` and `nomux-term`. The daemon depends on `nomux-core`, `nomux-holder-protocol`, `nomux-transport` and `nomux-ext-host`. The client library depends on `nomux-core` and `nomux-transport`, and the CLI depends on the client library, `nomux-core` and, for the check of a manifest, `nomux-extension`. The client library does not use `nomux-term` yet: it gives the bytes of the terminal to its user. `nomux-term` depends on the VT library. `nomux-ext-host` depends on the `nomux-extension` crate, which the `extension-api` repository publishes. The daemon is its only user. `nomux-status` has no dependencies and no users.
+Now the holder depends on `nomux-core`, `nomux-holder-protocol` and `nomux-term`. The daemon depends on `nomux-core`, `nomux-holder-protocol`, `nomux-transport`, `nomux-status` and `nomux-ext-host`. The client library depends on `nomux-core` and `nomux-transport`, and the CLI depends on the client library, `nomux-core` and, for the check of a manifest, `nomux-extension`. The client library does not use `nomux-term` yet: it gives the bytes of the terminal to its user. `nomux-term` depends on the VT library. `nomux-ext-host` depends on the `nomux-extension` crate, which the `extension-api` repository publishes. The daemon is its only user. `nomux-status` has no dependencies, and the daemon is its only user.
 `nomux-transport` contains the SSH library (`russh`), which uses the `tokio` runtime. Only the client side calls it: the daemon uses the socket and the framing of the crate, and the release build removes the SSH code from `nomuxd`. `nomux-core` has a TOML library for the configuration file and no runtime.
 A crate gets a dependency when its code uses it.
 
@@ -143,7 +143,7 @@ The work comes in this sequence:
 1. The warm pool, the restore of a workspace layout, the state database of the daemon and the selection of the VT library.
 2. The rest of the remote hosts: a second way for SSH servers and configurations that the SSH client does not support, and the local echo for a slow connection.
 3. The rest of the extension host: the restriction of the file access of an extension, more host services, the installation from a registry, and the UI parts.
-4. The agent status engine.
+4. The agent status engine: the sources of the agent tools (hooks, ACP) from extensions, `wait`, and the notifications.
 5. The QUIC transport and port forwarding.
 6. The `uniffi` feature of `nomux-client` for the mobile clients.
 
