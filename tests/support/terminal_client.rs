@@ -284,8 +284,14 @@ impl TerminalClient {
 }
 
 impl TerminalClient {
+    /// Applies the output to the screen. The terminal answers the queries
+    /// in the output, as the terminal of a user does.
     fn keep(&mut self, output: &[u8]) {
         self.screen.feed(output, |_osc| {});
+        let replies = self.screen.take_replies();
+        if !replies.is_empty() {
+            self.type_keys(&replies);
+        }
         self.raw_output.extend_from_slice(output);
     }
 }

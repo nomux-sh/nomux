@@ -263,7 +263,7 @@ nomux send --no-enter api 'draft' && nomux send -k api Enter
 
 1. The session gets the window size of the terminal.
 2. The terminal shows the current screen of the session. A program that already drew its screen, for example an editor, is visible immediately. For a dormant session, the terminal first shows the end of the output from before, then the line `--- nomux: the session started again. The output before this line is from the command that stopped ---`, and then the screen of the new command. The old output and the line are in the scrollback of the terminal after that.
-3. Each key goes to the session, and the terminal shows each byte that the session writes. The terminal is in raw mode: `Ctrl-C` and `Ctrl-Z` go to the programs of the session.
+3. Each key goes to the session, and the terminal shows each byte that the session writes, except the queries that the session answers itself (for example `CSI c` and `CSI 6 n`): the terminal does not answer them a second time. The terminal is in raw mode: `Ctrl-C` and `Ctrl-Z` go to the programs of the session.
 4. When the window gets a different size, the session gets the new size.
 
 `<session>` in a message is the name of the session with its identifier, `api (m4ab5ghi)`, or only the identifier of a session without a name.
