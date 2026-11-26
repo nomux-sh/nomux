@@ -1,0 +1,128 @@
+# The modes for the mouse, the paste data and the focus, which the client encodes.
+
+case DEC mode 1006 alone sets the encoding without a tracking mode
+follows xterm ctlseqs "SGR (1006)": the encoding and the tracking mode are separate modes
+input \e[?1006h
+screen
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,0
+modes +MOUSE_SGR
+
+case DEC mode 1015 selects the urxvt mouse encoding
+follows xterm ctlseqs "URXVT (1015)"
+input \e[?1000h\e[?1015h
+gap DEC mode 1015 is not handled. A client sends the mouse events in the X10 encoding
+screen
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,0
+modes +MOUSE_CLICK +MOUSE_URXVT
+library
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,0
+modes +MOUSE_CLICK
+
+case DEC mode 9 selects X10 mouse reports of the button presses
+follows xterm ctlseqs "X10 compatibility mode (9)"
+input \e[?9h
+gap DEC mode 9 is not handled. A client sends no mouse event
+screen
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,0
+modes +MOUSE_X10
+library
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,0
+
+case DEC mode 1004 is reset by RIS
+follows xterm ctlseqs "ESC c": full reset
+input \e[?1004h\ec
+screen
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,0
+
+case bracketed paste stays set in the alternate screen
+follows xterm: DEC mode 2004 is not a state of a screen
+input \e[?2004h\e[?1049h\e[?1049l
+screen
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,0
+modes +BRACKETED_PASTE
+
+case DECSTR resets the modes and keeps the screen
+follows DEC STD 070 DECSTR; xterm ctlseqs "CSI ! p"
+input abc\e[4h\e[?6h\e[?7l\e[?25l\e[!p
+gap DECSTR is not handled: the insert mode, the origin mode, the autowrap and the hidden cursor stay
+screen
+|abc                 |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,0
+library
+|abc                 |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,0 hidden
+modes +ORIGIN +INSERT -AUTOWRAP
+
+case DECSCNM shows the screen in reverse video
+follows DEC STD 070 DECSCNM; xterm ctlseqs "CSI ? 5 h"
+input \e[?5h
+gap DEC mode 5 is not handled
+screen
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,0
+modes +REVERSE_VIDEO
+library
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,0
+
+case text after DEC mode 2026 is visible at once
+follows Synchronized output (DEC mode 2026): nomux-term applies each byte at once, see ADR-0003
+input \e[?2026hframe
+screen
+|frame               |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,5

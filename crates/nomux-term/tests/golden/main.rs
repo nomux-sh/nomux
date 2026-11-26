@@ -9,8 +9,12 @@
 //! The expected screens come from the DEC VT documentation and from the
 //! xterm and kitty specifications of the sequences. `tests/redraw.rs` has the
 //! contract of the redraw sequence: these tests do not repeat it.
+//!
+//! `conformance.rs` runs the conformance cases of the directory `cases`,
+//! which are data: the sequence and the screen of xterm.
 
 mod alternate_screen;
+mod conformance;
 mod cursor_motion;
 mod erase;
 mod insert_and_delete;

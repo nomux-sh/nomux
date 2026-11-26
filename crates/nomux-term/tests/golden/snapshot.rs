@@ -56,6 +56,16 @@ fn new_terminal() -> Terminal {
     Terminal::new(Size::new(ROWS, COLUMNS).expect("the size is not zero"))
 }
 
+/// The snapshot of the screen after the parts of the output, one call of
+/// `Terminal::feed` for each part.
+pub(crate) fn screen_after<'a>(parts: impl IntoIterator<Item = &'a [u8]>) -> String {
+    let mut terminal = new_terminal();
+    for part in parts {
+        terminal.feed(part, |_| {});
+    }
+    screen_text(&terminal.screen())
+}
+
 fn terminal_after(output: &str) -> Terminal {
     let mut terminal = new_terminal();
     terminal.feed(output.as_bytes(), |_| {});

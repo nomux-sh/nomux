@@ -1,0 +1,133 @@
+# Cursor motion against the margins of the scroll region, and the saved cursor.
+
+case CUP without parameters goes to the first cell
+follows ECMA-48 8.3.21 CUP, default 1;1; vttest "cursor movements"
+input \e[3;5HX\e[HY
+screen
+|Y                   |
+|                    |
+|    X               |
+|                    |
+|                    |
+cursor 0,1
+
+case CUU stops at the top margin inside the scroll region
+follows DEC STD 070 CUU; xterm ctlseqs "CSI Ps A"
+input \e[2;4r\e[3;1H\e[9AX
+gap CUU ignores the top margin and stops at the first row of the screen
+screen
+|                    |
+|X                   |
+|                    |
+|                    |
+|                    |
+cursor 1,1
+library
+|X                   |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,1
+
+case CUU above the scroll region stops at the first row
+follows DEC STD 070 CUU; xterm ctlseqs "CSI Ps A"
+input \e[3;5r\e[2;1H\e[9AX
+screen
+|X                   |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,1
+
+case CUD stops at the bottom margin inside the scroll region
+follows DEC STD 070 CUD; xterm ctlseqs "CSI Ps B"
+input \e[2;3r\e[2;1H\e[9BX
+gap CUD ignores the bottom margin and stops at the last row of the screen
+screen
+|                    |
+|                    |
+|X                   |
+|                    |
+|                    |
+cursor 2,1
+library
+|                    |
+|                    |
+|                    |
+|                    |
+|X                   |
+cursor 4,1
+
+case CUD below the scroll region stops at the last row
+follows DEC STD 070 CUD; xterm ctlseqs "CSI Ps B"
+input \e[1;2r\e[4;1H\e[9BX
+screen
+|                    |
+|                    |
+|                    |
+|                    |
+|X                   |
+cursor 4,1
+
+case HPA, HPR and VPR move in one coordinate
+follows ECMA-48 8.3.57 HPA, 8.3.59 HPR, 8.3.160 VPR; xterm ctlseqs "CSI Pm `", "CSI Pm a", "CSI Pm e"
+input \e[5`A\e[2aB\e[2eC
+screen
+|    A  B            |
+|                    |
+|        C           |
+|                    |
+|                    |
+cursor 2,9
+
+case DECRC without DECSC goes to the first cell
+follows xterm ctlseqs "ESC 8": the default saved cursor is the home position
+input \e[3;5H\e8X
+screen
+|X                   |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,1
+
+case DECRC gives back the origin mode
+follows DEC STD 070 DECSC: the saved cursor has the state of DECOM
+input \e[2;4r\e[?6h\e7\e[?6l\e8\e[HX
+gap DECSC does not save the origin mode. DECRC keeps DECOM reset, and CUP goes to the first row of the screen
+screen
+|                    |
+|X                   |
+|                    |
+|                    |
+|                    |
+cursor 1,1
+modes +ORIGIN
+library
+|X                   |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,1
+
+case DECSET 1048 saves and restores the cursor
+follows xterm ctlseqs "CSI ? 1048 h"
+input \e[2;3H\e[?1048h\e[H\e[?1048lX
+gap DEC mode 1048 is not handled: the cursor stays
+screen
+|                    |
+|  X                 |
+|                    |
+|                    |
+|                    |
+cursor 1,3
+library
+|X                   |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,1

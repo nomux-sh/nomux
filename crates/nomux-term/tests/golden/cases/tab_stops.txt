@@ -1,0 +1,34 @@
+# Tab stops: the stops that are not in the default set.
+
+case TBC 3 then HT goes to the last column
+follows ECMA-48 8.3.154 TBC; xterm ctlseqs "CSI 3 g"
+input \e[3g\tX
+screen
+|                   X|
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,19
+
+case CBT in the first column stays in the first column
+follows ECMA-48 8.3.7 CBT; xterm ctlseqs "CSI Ps Z"
+input \e[2;1H\e[ZX
+screen
+|                    |
+|X                   |
+|                    |
+|                    |
+|                    |
+cursor 1,1
+
+case HTS in the alternate screen is also a stop of the primary screen
+follows xterm: the two screens have one set of tab stops
+input \e[?1049h\e[1;4H\eH\e[?1049l\r\tX
+screen
+|   X                |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,4
