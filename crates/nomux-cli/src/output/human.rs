@@ -7,14 +7,14 @@ use std::io::{self, IsTerminal};
 use nomux_client::{AttachEnd, ExitStatus, HostInfo, Session, SessionState};
 use nomux_core::configuration::HostEntry;
 
-use super::{extension_human, memory_human};
+use super::{extension_human, memory_human, status_human};
 use crate::report::{AddedHost, HostDiagnosis, Report, ServiceFileAction, ServiceFileReport};
 
-const RED: &str = "\x1b[31m";
-const GREEN: &str = "\x1b[32m";
-const YELLOW: &str = "\x1b[33m";
-const BLUE: &str = "\x1b[34m";
-const RESET: &str = "\x1b[0m";
+pub(super) const RED: &str = "\x1b[31m";
+pub(super) const GREEN: &str = "\x1b[32m";
+pub(super) const YELLOW: &str = "\x1b[33m";
+pub(super) const BLUE: &str = "\x1b[34m";
+pub(super) const RESET: &str = "\x1b[0m";
 
 /// If the text has colour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +72,7 @@ pub(super) fn report(report: &Report, style: Style) -> String {
         Report::HostsChecked(hosts) if hosts.is_empty() => "no hosts\n".to_owned(),
         Report::HostsChecked(hosts) => hosts.iter().map(host_diagnosis).collect(),
         Report::Extension(report) => extension_human::report(report),
+        Report::Status(report) => status_human::report(report, style),
         Report::ServiceFile(service) => service_file(service),
         Report::Version => format!("{}\n", nomux_core::version_line!()),
     }
@@ -92,6 +93,7 @@ pub(super) fn quiet_report(report: &Report) -> String {
             .flat_map(|host| [host.name.as_str(), "\n"])
             .collect(),
         Report::Extension(report) => extension_human::quiet_report(report),
+        Report::Status(report) => status_human::quiet_report(report),
         Report::OutputCaptured { output, .. } => String::from_utf8_lossy(output).into_owned(),
         Report::SessionStarted(_)
         | Report::RestorePolicySet { .. }

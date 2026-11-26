@@ -10,7 +10,7 @@ The code is in `crates/nomux-cli`. The CLI is a thin client: it reads the comman
 - Each command accepts `--json`, `--quiet` and `--host <name>`. `--json` and `--quiet` cannot be used together.
 - Without `--host`, a command uses the daemon of the local host. With `--host <name>`, it uses the daemon of the remote host `<name>` of `nomux host ls`, through SSH: see "`--host`".
 - A command that needs the daemon starts it when no daemon answers. The CLI runs `nomuxd --detach` and waits for 5 seconds at most until the socket answers. The `daemon` commands start no daemon.
-- The text output has colour only for the state of a session, only when the standard output is a terminal, and only when the `NO_COLOR` variable is not set. The JSON output and the quiet output never have colour.
+- The text output has colour only for the state of a session or of its status, only when the standard output is a terminal, and only when the `NO_COLOR` variable is not set. The JSON output and the quiet output never have colour.
 
 ## Commands
 
@@ -43,6 +43,10 @@ nomux [--json | --quiet] [--host <name>] <command>
 | `ext disable <id>` | Disables an extension and stops its process |
 | `ext call <id> <method> [--payload <text> \| --payload @<file>]` | Calls a method of an extension and writes the payload of its result to the standard output |
 | `ext validate <directory>` | Checks the `extension.toml` of a directory on this computer. The command needs no daemon |
+| `status [--tree]` | Shows the status of each session: what works, what is done and what needs the user. With `--tree`, also the Child work |
+| `status set <state> [<message>]` | Reports the status of the session of this process: `working`, `done`, `blocked`, `error` or `idle`. Only inside a session |
+| `agent explain <id>` | Shows what each source says about the status of a session |
+| `events --follow [--filter <type>]...` | Prints the events of the host when they come, until a signal stops the command |
 | `version` | Prints the version. `--version` and `-V` do the same |
 
 ### `--host`
@@ -346,6 +350,37 @@ $ nomux ext call nomux.echo echo --payload @request.bin > response.bin
 
 The command does not check the files of the package. `ext install` also makes sure that the package has the program of its daemon part.
 
+### `status`
+
+`status` prints one row for each session that is not ended: a mark of the state, the session identifier, the command, the state, the time in the state and the message. [status.md](status.md) has the model and the sources of a status.
+
+- The state of a row is the most urgent status of the session and of its Child work. `needs you` has the kind of the wait if a source says it: `needs you: permission`.
+- A status that the daemon guessed has `(guess)`: the prompt marks of the shell or the foreground program of the terminal, and no report of a program.
+- A result that the user saw has `(seen)`. An attach to a session marks its results as seen.
+- The mark: `!` needs you, `x` error, `+` done, `*` working, and no mark for idle.
+- With `--tree`, each Child work is a row below its session, indented two spaces for each level. A Child work that no source reports has `-` as its state.
+
+### `status set`
+
+`status set <working|done|blocked|error|idle> [<message>]` reports the status of the session that the command runs in. A script or a tool that does not send OSC 7501 uses it.
+
+- The command reads `NOMUX_SESSION_ID`, `NOMUX_SOCK` and `NOMUX_TOKEN`, which the holder gives to each process of a session. It connects to the socket of `NOMUX_SOCK`, and it does not start a daemon. `--host` is not permitted.
+- `blocked` is the state `needs you`. `idle` takes the report back.
+- The message is one line of 512 bytes at most, without a control character.
+- Exit code 4: a variable is not set (the command does not run in a session), the token is wrong, the session has no process, or its holder is too old to make a token.
+
+### `agent explain`
+
+`agent explain <id>` prints the status of a session with its source, and then each source in the sequence in which they decide, with what it says and why: the note of the source. A source that reports nothing is in the list too.
+
+### `events --follow`
+
+`events --follow` subscribes to the events of the host and prints each event when it comes: with `--json`, one JSON document on each line (NDJSON). The command ends with the exit code 0 on `SIGINT` (Ctrl-C) or `SIGTERM`, when the daemon closes the connection, and when the reader of the standard output closes it.
+
+- `--filter <type>` prints only the events of a type: `agent-run-changed` or `agent-run-removed`. Give the option more than one time for more types. A snapshot is always printed.
+- The command prints the events after its start. A snapshot comes when the daemon does not have the events that the command needs.
+- A text line is `<seq> <session> <state> <message>` for a change, `<seq> <session> removed` for a session that ended or was removed, and `<seq> snapshot: ...` for a snapshot.
+
 ## Output
 
 ### Text
@@ -475,9 +510,11 @@ With `--quiet`, a command prints only what a script needs:
 | `capture` | The output lines, as without `--quiet` |
 | `host ls` | One host name on each line |
 | `ext ls` | One extension identifier on each line |
+| `status` | One identifier on each line of a session that needs the user |
+| `events --follow` | The lines of the text output |
 | `ext call` | The payload of the result, as without `--quiet` |
 | `version` | The version number |
-| `new --attach`, `attach`, `start`, `restore-policy`, `detach`, `kill`, `daemon status`, `daemon stop`, `daemon install-service`, `daemon uninstall-service`, `host add`, `host rm`, `host doctor`, `ext install`, `ext rm`, `ext enable`, `ext disable`, `ext validate` | Nothing. The exit code is the result |
+| `new --attach`, `attach`, `start`, `restore-policy`, `detach`, `kill`, `daemon status`, `daemon stop`, `daemon install-service`, `daemon uninstall-service`, `host add`, `host rm`, `host doctor`, `ext install`, `ext rm`, `ext enable`, `ext disable`, `ext validate`, `status set`, `agent explain` | Nothing. The exit code is the result |
 
 ### Errors
 
@@ -492,7 +529,7 @@ A wrong command line prints the usage message of the argument parser and has the
 | 1 | `error` | An error that has no other code, also a wrong command line, an SSH connection that cannot be made, a host key that is not trusted, a check of `host doctor` that failed, a dormant session that cannot start, a manifest that is not valid, and an extension that failed |
 | 2 | `not_found` | The item does not exist: no session has the identifier, the command of the session ended, no host has the name, no extension has the identifier, or no daemon runs (`daemon status`) |
 | 3 | `timeout` | An operation did not complete in the permitted time: the daemon did not answer after its start, a session was not ready, a command did not end, or an extension did not answer |
-| 4 | `no_permission` | The user does not have permission, for example for the socket of the daemon, or a remote host accepted no key of the user. Also: `ext install` without an approval of the permissions, and an extension that does not have a permission |
+| 4 | `no_permission` | The user does not have permission, for example for the socket of the daemon, or a remote host accepted no key of the user. Also: `ext install` without an approval of the permissions, an extension that does not have a permission, and a `status set` that cannot prove its session |
 | 5 | `version_mismatch` | The CLI and the daemon have no common protocol version. Update the older of the two |
 
 The codes 1 to 5 are the values of `ErrorCode` in the control protocol.
@@ -759,6 +796,68 @@ If the extension answered with an error, the standard error has the error docume
 
 The document goes to the standard output also when the manifest is not valid.
 
+### `status`
+
+```json
+{"schema_version":1,"status":{"attention":{"session":"k3xq2abc","status":{"state":"needs_you","kind":"permission","source":"program_status","guess":false,"since_ms":1795670000000,"seen":false,"message":{"text":"run tests?","source":"program_status"},"title":null,"progress":null,"tool":null}},"sessions":[{"id":"k3xq2abc","command":["claude"],"status":{...},"aggregate":{...}}]}}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `status.attention` | object or `null` | The session with the most urgent status, and that status. `null` if the host has no session |
+| `status.sessions[]` | list | One Agent run for each session that is not ended, in the sequence of the identifiers |
+| `.id`, `.command` | string, list of strings | The session and its command |
+| `.status` | status | The status of the Agent run |
+| `.aggregate` | status | The most urgent status of the Agent run and of its Child work |
+| `.children[]` | list | Only with `--tree`. Each Child work: `name`, `status` (a status, or `null` if no source reports it), `aggregate` and `children` |
+
+A status has these fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `state` | string | `idle`, `working`, `done`, `needs_you`, `error`, or `unknown` for a state that the CLI does not know |
+| `kind` | string or `null` | For `needs_you`: `permission`, `question` or `auth`, or `null` if no source says it |
+| `source` | string | `program_status`, `self_report`, `session_restore`, `prompt_marks`, `foreground_program`, `none` (no source reports the work) or `unknown` |
+| `guess` | boolean | `true` if the daemon guessed the state: the source is `prompt_marks` or `foreground_program` |
+| `since_ms` | number | When the daemon saw the state for the first time: milliseconds after the Unix epoch |
+| `seen` | boolean | For `done` and `error`: `true` if the user saw the result |
+| `message`, `title`, `tool` | object or `null` | `{"text": ..., "source": ...}`: the text and its own source |
+| `progress` | object or `null` | `{"percent": ..., "source": ...}` |
+
+### `status set`
+
+```json
+{"schema_version":1,"status_set":{"session":"k3xq2abc","state":"working"}}
+```
+
+### `agent explain`
+
+```json
+{"schema_version":1,"explain":{"session":"k3xq2abc","run":{"id":"k3xq2abc","status":{...},"aggregate":{...},"children":[]},"sources":[{"source":"program_status","guess":false,"reported":true,"state":"working","kind":null,"message":"reading files","note":"1 program status records in the terminal stream"}]}}
+```
+
+`explain.run` has the fields of an entry of `status.sessions` with its Child work, without `command`. `explain.sources` has each source in the sequence in which they decide. `reported` is `false` for a source that says nothing: then `state`, `kind` and `message` are `null`, and `note` says why. The text of a note is not stable.
+
+### `events --follow`
+
+Each line is one document:
+
+```json
+{"schema_version":1,"event":{"seq":12,"at_ms":1795670000000,"type":"agent_run_changed","session":"k3xq2abc","run":{...}}}
+{"schema_version":1,"event":{"seq":13,"at_ms":1795670004000,"type":"agent_run_removed","session":"k3xq2abc"}}
+{"schema_version":1,"event":{"seq":13,"at_ms":1795670005000,"type":"snapshot"}}
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `event.seq` | number | The position of the event in the event log of the daemon. The numbers start again when the daemon starts again |
+| `event.at_ms` | number | When the event occurred: milliseconds after the Unix epoch |
+| `event.type` | string | `agent_run_changed`, `agent_run_removed`, `snapshot`, or `unknown` for an event that the CLI does not know |
+| `event.session` | string | The session. Not in a snapshot |
+| `event.run` | object | Only in `agent_run_changed`: the Agent run after the change, with the fields of `explain.run` |
+
+After a `snapshot`, one `agent_run_changed` event for each session gives the state of the host now. A reader discards the state that it had.
+
 ### `version`
 
 ```json
@@ -782,8 +881,8 @@ A wrong command line is not a JSON document: the argument parser writes its usag
 ## Tests
 
 - `crates/nomux-cli/src/output/json.rs` and `crates/nomux-cli/src/output/extension_json.rs` have the full text of each document. A changed field fails these tests.
-- `crates/nomux-cli/src/arguments.rs` has the rule for the arguments after `--` and `--cmd`, and the usage error for the two forms in one command line. `crates/nomux-cli/src/output/memory_human.rs` has the full text of the table of `ls --memory`, and `tests/session_memory.rs` has its JSON document with real processes. `crates/nomux-cli/src/attach` has the detach keys and the mode of the terminal, also after a panic.
-- `tests/` has the end-to-end tests that run the real `nomux`, `nomuxd` and `nomux-holder` and examine the exit codes. `tests/attach.rs` runs `nomux attach` in a pseudoterminal and examines the screen. `tests/remote_host.rs` runs the `host` commands and the commands with `--host` against an SSH server that the test starts. `tests/extensions.rs` runs the `ext` commands with a test extension that uses the extension SDK. `tests/restore.rs` stops each process as a restart of the host does and runs `ls`, `attach`, `start` and `restore-policy` on the dormant sessions. `tests/journal.rs` has `capture`, and `tests/daemon_service.rs` has the service file.
+- `crates/nomux-cli/src/arguments.rs` has the rule for the arguments after `--` and `--cmd`, and the usage error for the two forms in one command line. `crates/nomux-cli/src/output/memory_human.rs` has the full text of the table of `ls --memory`, `crates/nomux-cli/src/output/status_human.rs` has the table of `status`, and `tests/session_memory.rs` has its JSON document with real processes. `crates/nomux-cli/src/attach` has the detach keys and the mode of the terminal, also after a panic.
+- `tests/` has the end-to-end tests that run the real `nomux`, `nomuxd` and `nomux-holder` and examine the exit codes. `tests/attach.rs` runs `nomux attach` in a pseudoterminal and examines the screen. `tests/remote_host.rs` runs the `host` commands and the commands with `--host` against an SSH server that the test starts. `tests/extensions.rs` runs the `ext` commands with a test extension that uses the extension SDK. `tests/restore.rs` stops each process as a restart of the host does and runs `ls`, `attach`, `start` and `restore-policy` on the dormant sessions. `tests/journal.rs` has `capture`, and `tests/daemon_service.rs` has the service file. `tests/status.rs` has `status`, `status set`, `agent explain` and `events --follow` with a program that reports its status.
 - `crates/nomux-cli/src/service_files` has the content of the systemd unit and of the launchd agent, also for a path that needs quotes.
 
 ## Open points for the next versions
@@ -794,4 +893,5 @@ A wrong command line is not a JSON document: the argument parser writes its usag
 - A restore policy for a new session as an option of `new`.
 - The other commands of the command reference, also `ext update` and `ext pack`, and the installation of an extension from a registry.
 - `host doctor` for the local host, and a check of the agent hooks.
-- The context from `NOMUX_*` variables.
+- The context from `NOMUX_*` variables, other than for `status set`.
+- `wait` for a status, and `events` without `--follow`.

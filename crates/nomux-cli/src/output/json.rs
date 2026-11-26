@@ -4,13 +4,14 @@ use std::borrow::Cow;
 use std::path::Path;
 
 use nomux_client::{
-    AttachEnd, ClientError, ExitStatus, HostInfo, RestorePolicy, Session, SessionExit,
+    AttachEnd, ClientError, ExitStatus, HostEvent, HostInfo, RestorePolicy, Session, SessionExit,
 };
 use serde::Serialize;
 
 use super::extension_json::ExtensionBody;
 use super::human::state_name;
 use super::memory_json::SessionsMemoryBody;
+use super::status_json::StatusBody;
 use crate::exit_code;
 use crate::report::{AddedHost, HostDiagnosis, Report, ServiceFileAction, ServiceFileReport};
 
@@ -51,6 +52,10 @@ enum Body<'a> {
     /// The fields of the document are the fields of the body.
     #[serde(untagged)]
     SessionsMemory(SessionsMemoryBody<'a>),
+    /// The field of the document is the field of the body of the status
+    /// command.
+    #[serde(untagged)]
+    Status(Box<StatusBody<'a>>),
 }
 
 #[derive(Serialize)]
@@ -324,9 +329,18 @@ pub(super) fn report(report: &Report) -> String {
             Body::Doctor(hosts.iter().map(DiagnosisDocument::from).collect())
         }
         Report::Extension(report) => Body::Extension(report.into()),
+        Report::Status(report) => match StatusBody::of(report) {
+            Some(body) => Body::Status(Box::new(body)),
+            None => return String::new(),
+        },
         Report::Version => Body::Version(env!("CARGO_PKG_VERSION")),
     };
     line(body)
+}
+
+/// One line of `events --follow --json`: one document for each event.
+pub(super) fn event(event: &HostEvent) -> String {
+    line(Body::Status(Box::new(StatusBody::event(event))))
 }
 
 pub(super) fn error(error: &ClientError, code: u8) -> String {

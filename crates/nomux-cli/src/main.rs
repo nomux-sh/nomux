@@ -16,6 +16,9 @@
 //!   remote hosts of the global configuration file.
 //! - `extension_commands`: the `ext` commands, which install, list, remove
 //!   and call the extensions of a host and check a manifest.
+//! - `status_commands`: the `status`, `status set`, `agent explain` and
+//!   `events` commands: the status of the sessions and the events of a
+//!   host.
 //! - `attach`: the `attach` command, which uses the terminal of the user.
 //! - `service_files`: the file that starts the daemon at login.
 //! - `session_memory`: the memory of the sessions of `ls --memory`.
@@ -35,7 +38,8 @@
 //! `restore-policy`, `detach`, `kill`, `daemon status`, `daemon stop`,
 //! `daemon install-service`, `daemon uninstall-service`, `host add`,
 //! `host ls`, `host rm`, `host doctor`, `ext ls`, `ext install`, `ext rm`,
-//! `ext enable`, `ext disable`, `ext call`, `ext validate` and `version`,
+//! `ext enable`, `ext disable`, `ext call`, `ext validate`, `status`,
+//! `status set`, `agent explain`, `events --follow` and `version`,
 //! and the `--host`
 //! option. The other commands are not written yet.
 
@@ -50,6 +54,7 @@ mod report;
 mod selected_host;
 mod service_files;
 mod session_memory;
+mod status_commands;
 
 use std::io;
 use std::process::ExitCode;
