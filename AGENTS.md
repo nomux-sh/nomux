@@ -8,7 +8,7 @@ Rules for coding agents and for people who work in this repository. `CLAUDE.md` 
 
 | Path | Responsibility |
 |---|---|
-| `crates/nomux-core` | Types that more than one crate uses. Now: the `--version` output of the three binaries, the lookup of a binary of the same installation, the parts of the global configuration file (`config.toml`) that the core reads: the hosts, the default restore policy, the retention time of an ended session and the size and the idle time of the holder pool, the data directory of nomux, and the rules of a hook event that the CLI and the daemon share. |
+| `crates/nomux-core` | Types that more than one crate uses. Now: the `--version` output of the three binaries, the lookup of a binary of the same installation, the parts of the global configuration file (`config.toml`) that the core reads: the hosts, the default restore policy, the retention time of an ended session and the size and the idle time of the holder pool, the data directory of nomux, the runtime directory with the rule for the paths of the sockets, and the rules of a hook event that the CLI and the daemon share. |
 | `crates/nomux-term` | Abstraction over the VT library (`alacritty_terminal`): screen state, redraw sequence, OSC sequences. |
 | `crates/nomux-holder-protocol` | Contract between a holder and the daemon: control messages, ring buffer layout, discovery files. |
 | `crates/nomux-holder` | Binary `nomux-holder`: owns the PTY of one session. |

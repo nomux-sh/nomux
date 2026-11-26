@@ -78,6 +78,15 @@ The daemon listens on the Unix stream socket `~/.nomux/run/nomuxd.sock`.
 | Socket | Mode 0600 |
 | Peer | The daemon reads the user ID of the peer and closes a connection from a different user |
 
+### Length of the socket paths
+
+The path of a Unix socket has 103 bytes at most on macOS and 107 bytes at most on Linux: `sun_path` has 104 and 108 bytes with the closing zero. The longest socket path in the runtime directory is the control socket of a pooled holder, `<runtime directory>/<session identifier>.pool/sock`: 19 bytes after the runtime directory. Thus a home directory of more than 73 bytes makes this path too long for macOS.
+
+- **The rule.** If the longest socket path of `~/.nomux/run` has more than 103 bytes, nomux opens the runtime directory through the link `/tmp/nomux-<hash>`: `<hash>` is the FNV-1a hash of 64 bits of the path of the runtime directory, in 16 hexadecimal digits. The rule uses the limit of macOS on each host, thus a client knows the socket of a remote host from its home directory only. `nomux_core::runtime_directory::socket_directory` has the rule, and each component uses it: the daemon, the holders that it starts, the CLI and the client of a remote host.
+- **The files stay in `~/.nomux/run`.** The link gives them a short path only. The daemon gives the holders the path of the link, thus `NOMUX_SOCK` of a session has the short path.
+- **The link is checked.** `/tmp` is open to each user. The daemon and the CLI make the link if it does not exist. A file at its path that is not a link of this user to the runtime directory is an error with the path, and nomux does not remove it. A program that removed the link, for example a cleanup of `/tmp`, does not stop the daemon: the next client or daemon start makes the link again.
+- **A path that does not fit.** A holder checks the path of its control socket before `bind`. A path that is too long, for example from a long `--runtime-directory` or a long session identifier, fails with `the socket path <path> has <n> bytes, and the limit on this system is <limit> bytes`.
+
 The protocol on the socket is the control protocol of the [`proto`](https://github.com/nomux-sh/proto) repository. Each message is one `Envelope` with a varint length prefix. An envelope has 1 MiB at most.
 
 1. The first request of a connection is `Hello` with the protocol version of the client, the oldest version that it supports and its capability flags.

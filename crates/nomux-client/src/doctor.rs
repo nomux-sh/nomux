@@ -9,7 +9,7 @@ mod permissions;
 use nomux_transport::ssh::{SshConnection, SshEnvironment, SshError, SshTarget};
 
 use self::permissions::check_permissions;
-use crate::bootstrap::{BinarySource, RemotePlatform, VERSION, probe, remote_shell};
+use crate::bootstrap::{BinarySource, RemotePlatform, VERSION, daemon_socket, probe, remote_shell};
 use crate::ssh_host::daemon_process_runs;
 use crate::{Client, ClientError, ClientKind};
 
@@ -92,7 +92,7 @@ pub async fn check_host(
     checks.push(HostCheck::of("binaries", installed));
     checks.push(HostCheck::of("permissions", permissions(&connection).await));
 
-    let socket = format!("{}/.nomux/run/nomuxd.sock", probe.home);
+    let socket = daemon_socket(&probe.home);
     let (daemon, versions) = daemon(&connection, &socket, kind).await;
     checks.push(HostCheck::of("daemon", daemon));
     checks.extend(versions.map(|versions| HostCheck::of("versions", versions)));

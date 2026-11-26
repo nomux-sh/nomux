@@ -130,6 +130,7 @@ name = "version_mismatch"
 path = "version_mismatch.rs"
 
 [dependencies]
+nomux-core.workspace = true
 nomux-extension.workspace = true
 nomux-holder-protocol.workspace = true
 nomux-proto.workspace = true

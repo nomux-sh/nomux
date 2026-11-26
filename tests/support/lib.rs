@@ -21,6 +21,7 @@ use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use nomux_core::runtime_directory;
 use nomux_holder_protocol::discovery::{
     DiscoveredHolder, HolderState, PID_FILE, ProcessIdentity, scan,
 };
@@ -180,6 +181,9 @@ impl From<Output> for CliRun {
 #[derive(Debug)]
 pub struct Sandbox {
     home: TempDir,
+    /// The `HOME` of the processes: the temporary directory, or a
+    /// directory in it.
+    home_directory: PathBuf,
     /// The variables that each `nomux` process of the sandbox gets.
     variables: Vec<(OsString, OsString)>,
 }
@@ -205,9 +209,25 @@ impl Sandbox {
             .tempdir_in("/tmp")
             .expect("a temporary directory can be made");
         Self {
+            home_directory: home.path().to_owned(),
             home,
             variables: Vec::new(),
         }
+    }
+
+    /// Makes an empty home directory whose path has `length` bytes.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the directory cannot be made.
+    #[must_use]
+    pub fn with_home_of_length(length: usize) -> Self {
+        let mut sandbox = Self::new();
+        let base = sandbox.home.path().as_os_str().len();
+        let name = "h".repeat(length - base - 1);
+        sandbox.home_directory = sandbox.home.path().join(name);
+        std::fs::create_dir(&sandbox.home_directory).expect("the home directory can be made");
+        sandbox
     }
 
     /// Gives each `nomux` process that starts after this call the variable
@@ -224,7 +244,7 @@ impl Sandbox {
     ///
     /// Panics if the file cannot be written.
     pub fn write_configuration(&mut self, text: &str) {
-        let directory = self.home.path().join("config");
+        let directory = self.home_directory.join("config");
         std::fs::create_dir_all(directory.join("nomux")).expect("the directory can be made");
         std::fs::write(directory.join("nomux").join("config.toml"), text)
             .expect("the configuration file can be written");
@@ -245,7 +265,7 @@ impl Sandbox {
             ".local/state"
         };
         let id = id.parse().expect("a session identifier");
-        session_state_directory(&self.home.path().join(state_home).join("nomux"), &id)
+        session_state_directory(&self.home_directory.join(state_home).join("nomux"), &id)
     }
 
     /// Stops each holder and the daemon of this home directory with
@@ -276,7 +296,7 @@ impl Sandbox {
     /// The runtime directory in this home directory.
     #[must_use]
     pub fn runtime_directory(&self) -> PathBuf {
-        self.home.path().join(".nomux").join("run")
+        self.home_directory.join(".nomux").join("run")
     }
 
     /// Runs `nomux` with `arguments` in this home directory.
@@ -322,7 +342,7 @@ impl Sandbox {
         let mut command = Command::new(binary("nomux"));
         command
             .args(arguments)
-            .env("HOME", self.home.path())
+            .env("HOME", &self.home_directory)
             .env("SHELL", "/bin/sh")
             .env_remove("NOMUX_LOG")
             // The configuration file, the SSH keys and the binaries for a
@@ -332,7 +352,7 @@ impl Sandbox {
             .env_remove("NOMUX_BOOTSTRAP_BINARIES")
             .env_remove("NOMUX_RELEASE_DOWNLOAD_URL")
             .envs(self.variables.iter().map(|(name, value)| (name, value)))
-            .current_dir(self.home.path());
+            .current_dir(&self.home_directory);
         command
     }
 
@@ -340,7 +360,7 @@ impl Sandbox {
     /// there.
     #[must_use]
     pub fn home(&self) -> &Path {
-        self.home.path()
+        &self.home_directory
     }
 
     /// The socket of the daemon of this home directory.
@@ -417,6 +437,11 @@ impl Sandbox {
 impl Drop for Sandbox {
     fn drop(&mut self) {
         let _ = self.nomux(&["daemon", "stop"]);
+        let runtime_directory = self.runtime_directory();
+        let socket_directory = runtime_directory::socket_directory(&runtime_directory);
+        if socket_directory != runtime_directory {
+            let _ = std::fs::remove_file(socket_directory);
+        }
         for holder in scan(&self.runtime_directory()).unwrap_or_default() {
             if holder.state != HolderState::Live && holder.state != HolderState::Starting {
                 continue;
@@ -424,7 +449,7 @@ impl Drop for Sandbox {
             let holder_pid = self.holder_pid(holder.session_id.as_str());
             let _ = rustix::process::kill_process(raw_pid(holder_pid), Signal::KILL);
         }
-        let problem = match leftover_processes::stop_leftover_processes(self.home.path()) {
+        let problem = match leftover_processes::stop_leftover_processes(&self.home_directory) {
             Ok(leftover) if leftover.is_empty() => return,
             Ok(leftover) => format!(
                 "the test left processes behind, which are stopped now:\n{}",

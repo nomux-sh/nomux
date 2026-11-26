@@ -14,6 +14,10 @@ mod platform;
 mod probe;
 mod release_archive;
 
+use std::path::Path;
+
+use nomux_core::runtime_directory;
+use nomux_transport::SOCKET_FILE;
 use nomux_transport::ssh::{CommandOutput, SshConnection};
 
 pub use self::binaries::BinarySource;
@@ -104,12 +108,23 @@ pub(crate) async fn ensure_installed(
     }
     Ok(Installation {
         target: platform.target.to_owned(),
-        daemon_socket: format!("{}/.nomux/run/nomuxd.sock", probe.home),
+        daemon_socket: daemon_socket(&probe.home),
         installed_now: !probe.installed,
         system: probe.system,
         machine: probe.machine,
         label,
     })
+}
+
+/// The socket of the daemon of a host whose home directory is `home`. The
+/// rule of `nomux_core::runtime_directory` is the same on each host, thus
+/// the path needs no other fact of the host.
+pub(crate) fn daemon_socket(home: &str) -> String {
+    let runtime_directory = runtime_directory::home_runtime_directory(Path::new(home));
+    runtime_directory::socket_directory(&runtime_directory)
+        .join(SOCKET_FILE)
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Wraps a script for the POSIX shell of the host. The login shell of the

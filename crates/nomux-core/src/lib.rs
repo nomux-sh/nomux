@@ -21,13 +21,15 @@
 //! hosts, the default restore policy and the retention time of an ended
 //! session. It also has the data directory of nomux ([`data_directory`])
 //! and the rules of a hook event that the CLI and the
-//! daemon share ([`hook_event`]). The glossary types, the error type and the other parts of the
+//! daemon share ([`hook_event`]), and the runtime directory with the rule
+//! for the paths of the sockets ([`runtime_directory`]). The glossary types, the error type and the other parts of the
 //! configuration model are not written yet.
 
 mod companion_binary;
 pub mod configuration;
 mod data_directory;
 pub mod hook_event;
+pub mod runtime_directory;
 mod version;
 
 pub use companion_binary::companion_binary;

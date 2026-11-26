@@ -8,6 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 
+use nomux_core::runtime_directory::check_socket_path;
 use nomux_holder_protocol::wire::{ChildStatus, ErrorCode, Frame, Hello, Reply, Request};
 
 use super::connection::{Answer, Connection, PendingWait, PendingWaits, send_answer};
@@ -35,6 +36,7 @@ impl ControlServer {
     /// Makes the socket at `path`. The directory of `path` must be private
     /// to the user.
     pub(crate) fn bind(path: &Path, ring: OwnedFd) -> io::Result<Self> {
+        check_socket_path(path)?;
         let listener = UnixListener::bind(path)?;
         fs::set_permissions(path, Permissions::from_mode(OWNER_READ_WRITE))?;
         listener.set_nonblocking(true)?;

@@ -21,8 +21,7 @@ const OWNER_READ_WRITE: u32 = 0o600;
 /// Its standard error goes to the log file, because a detached process has
 /// no terminal.
 pub(crate) fn start_detached_daemon(running_daemon: RunningDaemon) -> io::Result<()> {
-    let runtime_directory = runtime_directory::locate()?;
-    runtime_directory::prepare(&runtime_directory)?;
+    let runtime_directory = runtime_directory::open()?;
     let log = OpenOptions::new()
         .append(true)
         .create(true)

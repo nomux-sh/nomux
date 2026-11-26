@@ -5,11 +5,10 @@
 //! has mode 0600, and the listener closes a connection whose peer is not the
 //! owner of the socket.
 
-use std::env;
 use std::fs::{self, Permissions};
 use std::io;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use tokio::net::{UnixListener, UnixStream};
 
@@ -20,19 +19,6 @@ use crate::EnvelopeStream;
 pub const SOCKET_FILE: &str = "nomuxd.sock";
 
 const OWNER_READ_WRITE: u32 = 0o600;
-
-/// The socket of the daemon of this user: `~/.nomux/run/nomuxd.sock`.
-/// Returns `None` if the `HOME` variable is not set.
-#[must_use]
-pub fn default_socket_path() -> Option<PathBuf> {
-    let home = env::var_os("HOME").filter(|home| !home.is_empty())?;
-    Some(
-        PathBuf::from(home)
-            .join(".nomux")
-            .join("run")
-            .join(SOCKET_FILE),
-    )
-}
 
 /// Connects to the daemon that listens on `path`.
 ///

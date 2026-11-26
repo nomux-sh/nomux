@@ -6,7 +6,6 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use nomux_holder_protocol::SessionId;
-use nomux_holder_protocol::discovery::default_runtime_directory;
 use nomux_holder_protocol::session_state::default_state_directory;
 use nomux_holder_protocol::wire::WindowSize;
 use nomux_term::Size;
@@ -123,7 +122,7 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Inv
     Ok(Invocation::Session(SessionArguments {
         session_id: session_id.ok_or("--session is necessary")?,
         runtime_directory: runtime_directory
-            .or_else(default_runtime_directory)
+            .or_else(|| nomux_core::runtime_directory::locate().ok())
             .ok_or("--runtime-directory is necessary when HOME is not set")?,
         state_directory: state_directory
             .or_else(default_state_directory)
