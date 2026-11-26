@@ -5,7 +5,7 @@ The code is in `crates/nomux-cli`. The CLI is a thin client: it reads the comman
 
 ## Rules
 
-- No command asks a question. A command reads only its arguments and its environment. The exception is `attach`, which gives the keyboard and the screen of the user to a session.
+- No command asks a question, but `kill --all` on a terminal: a command that ends many sessions never runs without a sign of the user. A command reads only its arguments and its environment. The other exception is `attach`, which gives the keyboard and the screen of the user to a session.
 - Each command has the same exit codes. `attach` adds the exit status of the command of the session: see "`attach`".
 - Each command accepts `--json`, `--quiet` and `--host <name>`. `--json` and `--quiet` cannot be used together.
 - Without `--host`, a command uses the daemon of the local host. With `--host <name>`, it uses the daemon of the remote host `<name>` of `nomux host ls`, through SSH: see "`--host`".
@@ -19,19 +19,26 @@ The code is in `crates/nomux-cli`. The CLI is a thin client: it reads the comman
 
 ```
 nomux [--json | --quiet] [--host <name>] <command>
+nomux
 ```
+
+Bare `nomux` on a terminal attaches to the most recent session (see `attach` without a target), or starts a session and attaches to it if the host has none. Without a terminal on the standard input and the standard output, it prints the help on the standard error and has the exit code 1. `nomux --help` prints the help.
+
+`a` is an alias of `attach`. For the habit of tmux, `attach-session`, `new-session`, `list-sessions`, `kill-session` and `rename-session` are aliases too; the help does not show them. Their options are the options of nomux, not of tmux.
 
 | Command | Function |
 |---|---|
 | `new [-n <name>] [-a \| -A] [-c <dir>] [-- <command> [argument...]]` | Starts a new session and prints its identifier. With `-a`, attaches to it. With `-A`, attaches to the session that has the name, or starts it |
 | `ls [--all] [--memory]` | Lists the sessions. With `--all`, also the sessions whose command ended. With `--memory`, also the memory that the processes of each session use |
-| `attach <target> [--prefix <key>]...` | Shows a session in the terminal of the user until the user detaches or the session ends. A dormant session starts again |
+| `attach [-d] [-r] [--prefix <key>]... [<target>]` | Shows a session in the terminal of the user until the user detaches or the session ends. A dormant session starts again. Alias: `a` |
 | `start <target>` | Starts the command of a dormant session again |
-| `capture <target> [--lines <n>]` | Prints the last output lines of a session |
+| `capture [-f] <target> [--lines <n>]` | Prints the last output lines of a session. With `-f`, then each byte that the command writes |
 | `restore-policy <target> <policy>` | Sets when a dormant session starts again: `auto`, `on-focus` or `manual` |
 | `detach <target>` | Detaches the clients that are attached to a session. The session continues |
 | `kill <target>` | Ends a session and waits until its command has ended. Removes a dormant session with its output |
+| `kill --all [--include-dormant] [--dry-run] [--yes]` | Ends each session whose command runs. On a terminal it asks first |
 | `rename <target> <new-name>` | Gives a session a different name |
+| `send [--no-enter] [-k] <target> <text>...` | Types a line, or keys with `-k`, into a session |
 | `daemon status` | Shows if the daemon runs |
 | `daemon stop` | Stops the daemon. The sessions continue |
 | `daemon install-service [--dry-run]` | Writes the file that starts the daemon at login |
@@ -58,7 +65,7 @@ nomux [--json | --quiet] [--host <name>] <command>
 | `status [--tree]` | Shows the status of each session: what works, what is done and what needs the user. With `--tree`, also the Child work and the sessions below their Groups and Projects |
 | `status set <state> [<message>]` | Reports the status of the session of this process: `working`, `done`, `blocked`, `error` or `idle`. Only inside a session |
 | `agent explain <target>` | Shows what each source says about the status of a session |
-| `events --follow [--filter <type>]...` | Prints the events of the host when they come, until a signal stops the command |
+| `events -f [--filter <type>]...` | Prints the events of the host when they come, until a signal stops the command |
 | `hook <tool> <event>` | Sends one event of a hook of an agent tool to the daemon of the session. A tool calls it from its hooks. Only inside a session |
 | `hooks install <tool> [--dry-run \| --apply]` | Prints the change that the hooks of a tool need in its settings file. Writes it only with `--apply`. Only on this computer |
 | `hooks uninstall <tool> [--dry-run \| --apply]` | Prints how the removal of the hooks of a tool changes its settings file. Writes it only with `--apply`. Only on this computer |
@@ -214,10 +221,27 @@ The command of an ended session does not start again: `start` and `attach` have 
 - A line ends with a line feed. The output is the bytes as the command wrote them: it has the escape sequences of the command, and a terminal session ends a line with a carriage return and a line feed.
 - If the session has fewer lines, the command prints all of its output.
 - With `--quiet`, the output is the same. With `--json`, the output is a string: see "JSON output".
+- `-f, --follow` prints the lines, and then each byte that the command writes, until the session ends, a signal stops the command (`SIGINT`, `SIGTERM`), or the reader closes the output: then the exit code is 0. Thus `nomux capture -f api >> api.log` writes the output of a session to a file. The command attaches without a window size and without input, as a read-only client, from the end of the lines: it gets each byte one time and no screen. It has no JSON form.
+
+### `send`
+
+`send <target> <text>...` writes the words of the text with one space between them to the terminal of the session, and then Enter (a carriage return), as if the user typed them. The bytes go in one request, thus they stay together. A script uses it to give a command to a shell or a prompt to an agent:
+
+```sh
+nomux send api 'cargo test'               # types it and presses Enter
+nomux send -k api C-c                     # interrupt
+nomux send --no-enter api 'draft' && nomux send -k api Enter
+```
+
+- `--no-enter` sends the text without Enter.
+- `-k, --keys`: the words are key names, without Enter after them: `Enter`, `Escape`, `Tab`, `S-Tab`, `Space`, `BSpace`, `Up`, `Down`, `Left`, `Right`, `Home`, `End`, `PgUp`, `PgDn`, `F1` to `F12`, `C-<letter>` and `M-<character>` (the names of tmux). A cursor key has the sequence of the normal cursor mode. A name that the command does not know gives the exit code 1 and sends nothing.
+- A text with a line break gives the exit code 1 and sends nothing: send one line at a time.
+- `send` writes at once: it does not wait until the program is ready. A dormant session gives the exit code 1 (`send` does not start a session), an ended session the exit code 2.
+- The output is empty. With `--json`: see "JSON output".
 
 ### `attach`
 
-`attach <target>` makes the terminal of the user the terminal of the session:
+`attach [<target>]` makes the terminal of the user the terminal of the session:
 
 1. The session gets the window size of the terminal.
 2. The terminal shows the current screen of the session. A program that already drew its screen, for example an editor, is visible immediately. For a dormant session, the terminal first shows the end of the output from before, then the line `--- nomux: the session started again. The output before this line is from the command that stopped ---`, and then the screen of the new command. The old output and the line are in the scrollback of the terminal after that.
@@ -225,6 +249,11 @@ The command of an ended session does not start again: `start` and `attach` have 
 4. When the window gets a different size, the session gets the new size.
 
 `<session>` in a message is the name of the session with its identifier, `api (m4ab5ghi)`, or only the identifier of a session without a name.
+
+Without a target, `attach` takes the session that a client attached to last, else the session that started last, of the sessions that are not ended. The daemon keeps the time of the last attach in its memory: after a restart of the daemon, the session that started last. If the host has no such session, the exit code is 2. `a` is the same command.
+
+- `-d, --detach-others` detaches the other clients of the session first, as `detach` does. A different client can attach between the two requests.
+- `-r, --read-only` shows the session and sends no key and no window size to it: the session keeps its size. The detach keys work. The client keeps this rule itself; the daemon does not enforce it.
 
 The command needs a terminal on its standard input. More than one terminal can be attached to one session at the same time: each one shows the same output, and each one can type.
 The session has one window size: the size of the terminal that attached or changed its size last. A terminal with a different size shows the output as the programs made it for that size.
@@ -289,6 +318,13 @@ The command of the session gets `SIGHUP`. If it still runs after 2 seconds, it g
 If no session has the identifier, or if its command ended already, the exit code is 2. Thus the second `kill` of the same session has the exit code 2.
 
 A dormant session and a damaged session have no command to end. `kill` removes such a session and its state: its output is gone after that.
+
+`kill --all` ends each session whose command runs (the states `running` and `unreachable`), one after the other, and prints one line for each. It does not touch a dormant or a damaged session: after a restart of the host each session is dormant, and `kill --all` must not remove their output. `--include-dormant` also removes these sessions.
+
+- On a terminal, the command first asks `end <n> sessions? [y/N]` on the standard error. Only `y` or `yes` ends them; each other answer ends none, with the exit code 1. `--yes` does not ask. Without a terminal, `--all` needs `--yes`: else the exit code is 1 and no session ends.
+- `--dry-run` prints the sessions and ends none.
+- If no session runs, the command prints `no session runs`, asks nothing and has the exit code 0. If a session does not end, its error goes to the standard error, the other sessions still end, and the exit code is the highest code of the failures.
+- `kill` has no `-a`: in tmux, `kill-session -a` ends each other session.
 
 ### `daemon status` and `daemon stop`
 
@@ -480,7 +516,7 @@ For an ended session, the command prints its kept run, with the resume command o
 
 ### `events --follow`
 
-`events --follow` subscribes to the events of the host and prints each event when it comes: with `--json`, one JSON document on each line (NDJSON). The command ends with the exit code 0 on `SIGINT` (Ctrl-C) or `SIGTERM`, when the daemon closes the connection, and when the reader of the standard output closes it.
+`events --follow` (`-f`) subscribes to the events of the host and prints each event when it comes: with `--json`, one JSON document on each line (NDJSON). The command ends with the exit code 0 on `SIGINT` (Ctrl-C) or `SIGTERM`, when the daemon closes the connection, and when the reader of the standard output closes it.
 
 - `--filter <type>` prints only the events of a type: `agent-run-changed`, `agent-run-removed`, `extension-event` or `workspace-changed`. Give the option more than one time for more types. A snapshot is always printed.
 - The command prints the events after its start. A snapshot comes when the daemon does not have the events that the command needs.
@@ -644,7 +680,8 @@ With `--quiet`, a command prints only what a script needs:
 | `events --follow` | The lines of the text output |
 | `ext call` | The payload of the result, as without `--quiet` |
 | `version` | The version number |
-| `new --attach`, `attach`, `start`, `restore-policy`, `detach`, `kill`, `rename`, `daemon status`, `daemon stop`, `daemon install-service`, `daemon uninstall-service`, `host add`, `host rm`, `host doctor`, `ext install`, `ext rm`, `ext enable`, `ext disable`, `ext validate`, `status set`, `agent explain` | Nothing. The exit code is the result |
+| `capture -f` | The output, as without `--quiet` |
+| `new --attach`, `attach`, `start`, `restore-policy`, `detach`, `kill`, `rename`, `send`, `daemon status`, `daemon stop`, `daemon install-service`, `daemon uninstall-service`, `host add`, `host rm`, `host doctor`, `ext install`, `ext rm`, `ext enable`, `ext disable`, `ext validate`, `status set`, `agent explain` | Nothing. The exit code is the result |
 
 ### Errors
 
@@ -790,6 +827,21 @@ The command prints the document after the attach ended.
 ```
 
 `killed` is the identifier of the session that ended.
+
+```json
+{"schema_version":1,"killed_sessions":["k3xq2abc","m4ab5ghi"]}
+{"schema_version":1,"would_kill":["k3xq2abc","m4ab5ghi"]}
+```
+
+`kill --all` gives `killed_sessions`: the identifiers of the sessions that ended. With `--dry-run`, `would_kill`: the identifiers of the sessions that would end.
+
+### `send`
+
+```json
+{"schema_version":1,"sent":{"id":"k3xq2abc","bytes":11}}
+```
+
+`sent.bytes` is the number of bytes that the session got, with the Enter.
 
 ### `daemon status`
 
@@ -1098,7 +1150,7 @@ A wrong command line is not a JSON document: the argument parser writes its usag
 
 - `crates/nomux-cli/src/output/json.rs` and `crates/nomux-cli/src/output/extension_json.rs` have the full text of each document. A changed field fails these tests.
 - `crates/nomux-cli/src/arguments.rs` has the rule for the arguments after `--` and `--cmd`, and the usage error for the two forms in one command line. `crates/nomux-cli/src/output/memory_human.rs` has the full text of the table of `ls --memory`, `crates/nomux-cli/src/output/status_human.rs` has the table of `status`, and `tests/session_memory.rs` has its JSON document with real processes. `crates/nomux-cli/src/attach` has the key decoder with the legacy bytes, the kitty form, `modifyOtherKeys`, a sequence in two reads and a paste, and the mode of the terminal, also after a panic. `crates/nomux-core/src/configuration/prefix_keys.rs` has the rules of a prefix key.
-- `tests/` has the end-to-end tests that run the real `nomux`, `nomuxd` and `nomux-holder` and examine the exit codes. `tests/attach.rs` runs `nomux attach` in a pseudoterminal and examines the screen. `tests/remote_host.rs` runs the `host` commands and the commands with `--host` against an SSH server that the test starts. `tests/extensions.rs` runs the `ext` commands with a test extension that uses the extension SDK. `tests/restore.rs` stops each process as a restart of the host does and runs `ls`, `attach`, `start` and `restore-policy` on the dormant sessions. `tests/journal.rs` has `capture`, and `tests/daemon_service.rs` has the service file. `tests/status.rs` has `status`, `status set`, `agent explain` and `events --follow` with a program that reports its status. `tests/adapters.rs` has `hook`, the `hooks` commands and the event of an extension with the test adapter extension. `tests/session_names.rs` has a name after a restart of the host and two `new -A` at the same time. `crates/nomux-client/src/session_target.rs` has the table of the target rule. `tests/workspace.rs` has the `project` and `group` commands, the tree after a restart of the daemon, two clients that keep the same tree with the events, and `status --tree` with Groups.
+- `tests/` has the end-to-end tests that run the real `nomux`, `nomuxd` and `nomux-holder` and examine the exit codes. `tests/attach.rs` runs `nomux attach` in a pseudoterminal and examines the screen. `tests/remote_host.rs` runs the `host` commands and the commands with `--host` against an SSH server that the test starts. `tests/extensions.rs` runs the `ext` commands with a test extension that uses the extension SDK. `tests/restore.rs` stops each process as a restart of the host does and runs `ls`, `attach`, `start` and `restore-policy` on the dormant sessions. `tests/journal.rs` has `capture`, and `tests/daemon_service.rs` has the service file. `tests/status.rs` has `status`, `status set`, `agent explain` and `events --follow` with a program that reports its status. `tests/adapters.rs` has `hook`, the `hooks` commands and the event of an extension with the test adapter extension. `tests/session_names.rs` has a name after a restart of the host and two `new -A` at the same time. `tests/session_scripting.rs` has `send`, `kill --all` with its question, `attach -d`, `attach -r` and bare `nomux`. `crates/nomux-client/src/session_target.rs` has the table of the target rule. `tests/workspace.rs` has the `project` and `group` commands, the tree after a restart of the daemon, two clients that keep the same tree with the events, and `status --tree` with Groups.
 - `crates/nomux-cli/src/service_files` has the content of the systemd unit and of the launchd agent, also for a path that needs quotes.
 
 ## Open points for the next versions

@@ -41,6 +41,9 @@ enum Body<'a> {
     Attach(AttachDocument<'a>),
     Detached(DetachedDocument<'a>),
     Renamed(RenamedDocument<'a>),
+    KilledSessions(Vec<&'a str>),
+    WouldKill(Vec<&'a str>),
+    Sent(SentDocument<'a>),
     Daemon(DaemonDocument<'a>),
     Stopped(bool),
     Host(AddedHostDocument<'a>),
@@ -285,6 +288,12 @@ struct DetachedDocument<'a> {
 }
 
 #[derive(Serialize)]
+struct SentDocument<'a> {
+    id: &'a str,
+    bytes: usize,
+}
+
+#[derive(Serialize)]
 struct RenamedDocument<'a> {
     id: &'a str,
     name: Option<&'a str>,
@@ -376,6 +385,21 @@ pub(super) fn report(report: &Report) -> String {
             id: &session.id,
             clients: *clients,
         }),
+        Report::SessionsKilled {
+            sessions, dry_run, ..
+        } => {
+            let ids = sessions.iter().map(|session| session.id.as_str()).collect();
+            if *dry_run {
+                Body::WouldKill(ids)
+            } else {
+                Body::KilledSessions(ids)
+            }
+        }
+        Report::Sent { session, bytes } => Body::Sent(SentDocument {
+            id: &session.id,
+            bytes: *bytes,
+        }),
+        Report::Followed => return String::new(),
         Report::SessionRenamed {
             session,
             previous_name,

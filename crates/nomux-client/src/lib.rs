@@ -121,7 +121,7 @@ pub use nomux_core::workspace_tree::{Node, NodeKind, TreeError, WorkspaceTree};
 pub use scrollback::{CaptureRange, CapturedOutput};
 pub use session::{ExitStatus, NewSession, Session, SessionExit, SessionState};
 pub use session_memory::{MemoryMeasure, SessionMemory};
-pub use session_target::resolve_session;
+pub use session_target::{most_recent_session, resolve_session};
 pub use terminal::{
     AttachEnd, AttachOptions, OutputPosition, TerminalEvent, TerminalInput, TerminalOutput,
 };

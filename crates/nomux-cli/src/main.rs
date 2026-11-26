@@ -68,14 +68,14 @@ mod session_memory;
 mod status_commands;
 mod workspace_commands;
 
-use std::io;
+use std::io::{self, IsTerminal, Write};
 use std::process::ExitCode;
 
 use clap::CommandFactory;
-use clap::error::ErrorKind;
 
 use crate::arguments::Arguments;
 use crate::output::Format;
+use crate::session_commands::AttachArguments;
 
 fn main() -> ExitCode {
     let arguments = match Arguments::from_command_line(std::env::args_os()) {
@@ -94,12 +94,22 @@ fn main() -> ExitCode {
     let format = Format::of(&arguments);
     let host = arguments.host.clone();
     let Some(command) = arguments.requested_command() else {
-        let error =
-            Arguments::command().error(ErrorKind::MissingSubcommand, "a command is necessary");
-        return exit_after(error.print(), exit_code::ERROR);
+        // Bare `nomux` on a terminal attaches. Without a terminal it is a
+        // command line without a command: the help on the standard error,
+        // and the error status.
+        if io::stdin().is_terminal() && io::stdout().is_terminal() {
+            let command = arguments::Command::Attach(AttachArguments::of_bare_command());
+            return run_and_print(command, host.as_deref(), format);
+        }
+        let help = Arguments::command().render_help().to_string();
+        return exit_after(io::stderr().write_all(help.as_bytes()), exit_code::ERROR);
     };
+    run_and_print(command, host.as_deref(), format)
+}
 
-    match run(command, host.as_deref(), format) {
+/// Runs `command` and prints its result or its error.
+fn run_and_print(command: arguments::Command, host: Option<&str>, format: Format) -> ExitCode {
+    match run(command, host, format) {
         Ok(report) => exit_after(output::print_report(&report, format), report.exit_code()),
         Err(error) => {
             let code = exit_code::of_error(&error);

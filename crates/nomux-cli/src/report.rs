@@ -56,6 +56,21 @@ pub(crate) enum Report {
         session: Session,
         previous_name: Option<String>,
     },
+    /// `kill --all`.
+    SessionsKilled {
+        /// The sessions that ended, or that would end with `dry_run`.
+        sessions: Vec<Session>,
+        dry_run: bool,
+        /// The highest exit code of a session that did not end.
+        failure: Option<u8>,
+    },
+    Sent {
+        session: Session,
+        /// The number of bytes that the session got.
+        bytes: usize,
+    },
+    /// `capture --follow` printed the output while it came.
+    Followed,
     DaemonStatus {
         /// `None`: no daemon runs.
         info: Option<HostInfo>,
@@ -137,6 +152,10 @@ impl Report {
                 }
             }
             Self::Extension(report) => report.exit_code(),
+            Self::SessionsKilled {
+                failure: Some(code),
+                ..
+            } => *code,
             _ => exit_code::SUCCESS,
         }
     }
