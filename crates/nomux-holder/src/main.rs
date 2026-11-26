@@ -13,7 +13,9 @@
 //! report in the output: the program status (OSC 7501), the input line state
 //! (OSC 133) and the notifications (OSC 9, OSC 777). It gives the command
 //! the session identifier, the socket of the daemon and a token in its
-//! environment. The daemon controls
+//! environment. A pooled holder starts its command before the session
+//! exists, and writes no file of the session until the daemon assigns the
+//! session to it. The daemon controls
 //! the holder through a Unix socket and finds it through its discovery
 //! files. The holder stays alive when the daemon stops, crashes or is
 //! updated, thus the session stays alive.
@@ -42,6 +44,7 @@ mod pty;
 mod resize_verification;
 mod session;
 mod session_environment;
+mod session_files;
 mod session_state_directory;
 mod shared_memory;
 
@@ -56,9 +59,8 @@ use crate::arguments::{Invocation, SessionArguments, USAGE};
 use crate::child_exit_signal::ChildExitSignal;
 use crate::control::ControlServer;
 use crate::discovery_directory::DiscoveryDirectory;
-use crate::journal::{Journal, JournalLimits};
 use crate::session::Session;
-use crate::session_state_directory::SessionStateDirectory;
+use crate::session_files::SessionFiles;
 
 const EXIT_USAGE: u8 = 2;
 
@@ -88,21 +90,22 @@ fn run(arguments: &SessionArguments) -> io::Result<()> {
     // The mapping keeps the memory. The holder needs the descriptor no more.
     drop(memory.writable);
 
-    let directory = DiscoveryDirectory::create(&arguments.runtime_directory, &arguments.session_id)
-        .map_err(|error| with_context("cannot make the discovery directory", &error))?;
+    let directory = DiscoveryDirectory::create(
+        &arguments.runtime_directory,
+        &arguments.session_id,
+        arguments.pooled,
+    )
+    .map_err(|error| with_context("cannot make the discovery directory", &error))?;
     let server = ControlServer::bind(&directory.socket_path(), memory.read_only)
         .map_err(|error| with_context("cannot make the control socket", &error))?;
-    let state_directory = SessionStateDirectory::create(arguments)
-        .map_err(|error| with_context("cannot make the session state directory", &error))?;
-    let journal = Journal::create(
-        state_directory.journal_directory(),
-        state_directory.epoch(),
-        JournalLimits::DEFAULT,
-    )
-    .map_err(|error| with_context("cannot start the journal", &error))?;
-    let session = Session::start(arguments, ring, state_directory, journal)
+    let files = if arguments.pooled {
+        None
+    } else {
+        Some(SessionFiles::create(arguments, 0)?)
+    };
+    let session = Session::start(arguments, ring, files, directory)
         .map_err(|error| with_context("cannot start the command", &error))?;
-    directory.mark_ready()?;
+    session.mark_ready()?;
 
     event_loop::run(session, server, child_exit, arguments.exit_timeout)
 }
@@ -119,6 +122,6 @@ fn leave_session_of_starter() -> io::Result<()> {
     }
 }
 
-fn with_context(context: &str, error: &io::Error) -> io::Error {
+pub(crate) fn with_context(context: &str, error: &io::Error) -> io::Error {
     io::Error::new(error.kind(), format!("{context}: {error}"))
 }

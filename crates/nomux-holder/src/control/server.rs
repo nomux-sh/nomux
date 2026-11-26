@@ -222,6 +222,10 @@ fn answer(
         Ok(Request::Input(bytes)) => write_request(has_lease, || session.write_input(bytes)),
         Ok(Request::Resize(size)) => write_request(has_lease, || session.resize(size)),
         Ok(Request::Signal(signal)) => write_request(has_lease, || session.signal_child(signal)),
+        Ok(Request::AssignSession {
+            size,
+            working_directory,
+        }) => write_request(has_lease, || session.assign(size, working_directory)),
         // `Request` can get a variant that this holder does not answer yet.
         Ok(_) => Reply::Error(ErrorCode::UnknownKind),
     };
