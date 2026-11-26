@@ -219,7 +219,7 @@ fn the_end_of_the_session_ends_the_attach_with_the_exit_status() {
     client.type_keys(b"kill -9 $$\r");
     assert_eq!(client.wait_for_exit(), 128 + 9, "{}", client.text_output());
     let document = format!(
-        "{{\"schema_version\":1,\"attach\":{{\"id\":\"{killed}\",\"end\":\"signaled\",\"signal\":9}}}}"
+        "{{\"schema_version\":1,\"attach\":{{\"id\":\"{killed}\",\"name\":null,\"end\":\"signaled\",\"signal\":9}}}}"
     );
     assert!(
         client.text_output().contains(&document),

@@ -1,6 +1,6 @@
 //! The handshake: the answer of the daemon to the first request of a client.
 
-use nomux_proto::capabilities::OUTPUT_HISTORY;
+use nomux_proto::capabilities::{OUTPUT_HISTORY, SESSION_ACTIVITY, SESSION_NAMES};
 use nomux_proto::compatibility::{VersionError, VersionRange, negotiate};
 use nomux_proto::wire::v1::{Error, ErrorCode, Hello, Welcome};
 
@@ -33,7 +33,9 @@ pub(crate) fn answer(hello: &Hello) -> Result<Welcome, Error> {
         Ok(_) => Ok(Welcome {
             version: daemon.version,
             oldest: daemon.oldest,
-            capabilities: vec![OUTPUT_HISTORY.to_owned()],
+            capabilities: [OUTPUT_HISTORY, SESSION_NAMES, SESSION_ACTIVITY]
+                .map(str::to_owned)
+                .to_vec(),
             // The daemon has no host identity yet.
             host_id: String::new(),
         }),

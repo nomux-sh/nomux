@@ -23,6 +23,11 @@ impl AttachedClients {
         DetachRequest(self.detach_requests.subscribe())
     }
 
+    /// The number of attached clients.
+    pub(crate) fn count(&self) -> usize {
+        self.detach_requests.receiver_count()
+    }
+
     /// Tells each attached client to detach. Returns their number.
     pub(crate) fn detach_all(&self) -> usize {
         let clients = self.detach_requests.receiver_count();

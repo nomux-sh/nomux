@@ -21,7 +21,11 @@
 //!   host.
 //! - `workspace_commands`: the `project` and `group` commands, which change
 //!   and list the workspace tree of the Groups and the Projects of a host.
-//! - `attach`: the `attach` command, which uses the terminal of the user.
+//! - `session_commands`: the commands that start, find, change and end one
+//!   session: `new`, `attach`, `start`, `capture`, `restore-policy`,
+//!   `detach`, `kill` and `rename`.
+//! - `attach`: the attach of `attach` and `new`, which uses the terminal of
+//!   the user.
 //! - `service_files`: the file that starts the daemon at login.
 //! - `session_memory`: the memory of the sessions of `ls --memory`.
 //! - `report`: the result of a command.
@@ -37,7 +41,7 @@
 //! # Status
 //!
 //! The CLI has the commands `new`, `ls`, `attach`, `start`, `capture`,
-//! `restore-policy`, `detach`, `kill`, `daemon status`, `daemon stop`,
+//! `restore-policy`, `detach`, `kill`, `rename`, `daemon status`, `daemon stop`,
 //! `daemon install-service`, `daemon uninstall-service`, `host add`,
 //! `host ls`, `host rm`, `host doctor`, `ext ls`, `ext install`, `ext rm`,
 //! `ext enable`, `ext disable`, `ext call`, `ext validate`, `status`,
@@ -58,6 +62,7 @@ mod output;
 mod report;
 mod selected_host;
 mod service_files;
+mod session_commands;
 mod session_environment;
 mod session_memory;
 mod status_commands;

@@ -1,7 +1,5 @@
 //! The command line of `nomux`.
 
-use std::path::PathBuf;
-
 use std::ffi::OsString;
 
 use clap::error::ErrorKind;
@@ -11,6 +9,7 @@ use nomux_client::RestorePolicy;
 use crate::attach::PrefixOption;
 use crate::extension_commands::ExtCommand;
 use crate::hook_commands::HooksCommand;
+use crate::session_commands::{NewArguments, RenameArguments, Target};
 use crate::status_commands::{AgentCommand, EventTypeArgument, StatusCommand};
 use crate::workspace_commands::{GroupCommand, ProjectCommand};
 
@@ -58,8 +57,8 @@ impl Arguments {
         let arguments = Self::try_parse_from(arguments)?;
         // `--cmd` takes each argument after it, thus the parser does not
         // see a separator there as the second form.
-        if let Some(Command::New { command, .. }) = &arguments.command
-            && command.iter().any(|word| word == SEPARATOR)
+        if let Some(Command::New(new)) = &arguments.command
+            && new.command.iter().any(|word| word == SEPARATOR)
         {
             // The usage line of the message is the one of `new`.
             let mut nomux = Self::command();
@@ -108,33 +107,7 @@ command if the session ends during the attach, and 0 after a detach.";
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// Start a new session and print its identifier
-    New {
-        /// The working directory of the command [default: the current directory]
-        #[arg(long, value_name = "DIR")]
-        cwd: Option<PathBuf>,
-
-        /// Attach to the new session
-        #[arg(long)]
-        attach: bool,
-
-        #[command(flatten)]
-        prefix: PrefixOption,
-
-        /// The command of the session and its arguments [default: the shell of the user].
-        /// Each argument after --cmd belongs to the command, also an option of nomux
-        #[arg(
-            long = "cmd",
-            value_name = "COMMAND",
-            num_args = 1..,
-            allow_hyphen_values = true,
-            conflicts_with = "command_after_separator"
-        )]
-        command: Vec<String>,
-
-        /// The same as --cmd: each argument after -- belongs to the command
-        #[arg(last = true, value_name = "COMMAND")]
-        command_after_separator: Vec<String>,
-    },
+    New(NewArguments),
     /// List the sessions
     Ls {
         /// Also list the sessions whose command ended
@@ -149,21 +122,21 @@ pub(crate) enum Command {
     /// A dormant session starts again
     #[command(after_help = ATTACH_KEYS)]
     Attach {
-        /// The session identifier
-        id: String,
+        #[command(flatten)]
+        target: Target,
 
         #[command(flatten)]
         prefix: PrefixOption,
     },
     /// Start the command of a dormant session again
     Start {
-        /// The session identifier
-        id: String,
+        #[command(flatten)]
+        target: Target,
     },
     /// Print the last output lines of a session
     Capture {
-        /// The session identifier
-        id: String,
+        #[command(flatten)]
+        target: Target,
 
         /// The number of lines
         #[arg(long, value_name = "N", default_value_t = 100)]
@@ -171,8 +144,8 @@ pub(crate) enum Command {
     },
     /// Set when a dormant session starts again
     RestorePolicy {
-        /// The session identifier
-        id: String,
+        /// The session: its identifier, its name, or the start of one of them
+        target: String,
 
         /// auto: when the daemon starts. on-focus: at the first attach.
         /// manual: only with `nomux start`
@@ -180,14 +153,16 @@ pub(crate) enum Command {
     },
     /// Detach the clients that are attached to a session. The session continues
     Detach {
-        /// The session identifier
-        id: String,
+        #[command(flatten)]
+        target: Target,
     },
     /// End a session. A dormant session is removed with its output
     Kill {
-        /// The session identifier
-        id: String,
+        #[command(flatten)]
+        target: Target,
     },
+    /// Give a session a different name
+    Rename(RenameArguments),
     /// Show the status of each session: what works, what is done, what needs you
     #[command(args_conflicts_with_subcommands = true)]
     Status {
@@ -314,16 +289,10 @@ mod tests {
     fn new_session(arguments: &[&str]) -> (bool, bool, Vec<String>) {
         let arguments = command_line(&[&["new"], arguments].concat()).unwrap();
         let json = arguments.json;
-        let Some(Command::New {
-            attach,
-            command,
-            command_after_separator,
-            ..
-        }) = arguments.requested_command()
-        else {
+        let Some(Command::New(new)) = arguments.requested_command() else {
             panic!("not the new command");
         };
-        (json, attach, [command, command_after_separator].concat())
+        (json, new.attach, new.command())
     }
 
     fn command_line(arguments: &[&str]) -> Result<Arguments, clap::Error> {

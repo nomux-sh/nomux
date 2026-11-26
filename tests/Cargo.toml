@@ -114,6 +114,10 @@ name = "session_lifecycle"
 path = "session_lifecycle.rs"
 
 [[test]]
+name = "session_names"
+path = "session_names.rs"
+
+[[test]]
 name = "single_writer_lease"
 path = "single_writer_lease.rs"
 

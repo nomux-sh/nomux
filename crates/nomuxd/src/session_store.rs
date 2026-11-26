@@ -3,14 +3,15 @@
 //!
 //! The holder of a session writes its directory: the session metadata and
 //! the journal. The daemon reads the two, also when no holder runs, and it
-//! owns one file of its own in the directory: the restore policy. Only the
-//! daemon removes a directory.
+//! owns two files of its own in the directory: the restore policy and the
+//! name. Only the daemon removes a directory.
 //!
 //! The daemon trusts no file of a directory. A file that is damaged, too
 //! long or not a regular file gives a reason for a person, and it never
 //! stops the daemon.
 
 mod journal_check;
+mod name_file;
 mod restore_policy_file;
 pub(crate) mod small_file;
 mod stored_metadata;
@@ -19,6 +20,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::session_name::SessionName;
 use nomux_core::configuration::RestorePolicy;
 use nomux_holder_protocol::SessionId;
 use nomux_holder_protocol::session_state::{
@@ -103,6 +105,16 @@ impl SessionStore {
         policy: RestorePolicy,
     ) -> io::Result<()> {
         restore_policy_file::write(&self.session_directory(id), policy)
+    }
+
+    /// The name that a client gave to `id`. `None` if the session has none.
+    pub(crate) fn name(&self, id: &SessionId) -> Option<SessionName> {
+        name_file::read(&self.session_directory(id))
+    }
+
+    /// Gives `id` the name `name`, or removes its name for `None`.
+    pub(crate) fn set_name(&self, id: &SessionId, name: Option<&SessionName>) -> io::Result<()> {
+        name_file::write(&self.session_directory(id), name)
     }
 
     /// Removes the state directory of `id`: the daemon forgets the session.

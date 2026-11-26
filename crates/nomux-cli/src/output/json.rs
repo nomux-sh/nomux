@@ -40,6 +40,7 @@ enum Body<'a> {
     Killed(&'a str),
     Attach(AttachDocument<'a>),
     Detached(DetachedDocument<'a>),
+    Renamed(RenamedDocument<'a>),
     Daemon(DaemonDocument<'a>),
     Stopped(bool),
     Host(AddedHostDocument<'a>),
@@ -145,6 +146,7 @@ impl<'a> From<&'a HostDiagnosis> for DiagnosisDocument<'a> {
 #[derive(Serialize)]
 pub(super) struct SessionDocument<'a> {
     id: &'a str,
+    name: Option<&'a str>,
     state: &'static str,
     pid: Option<u32>,
     command: &'a [String],
@@ -164,6 +166,7 @@ impl<'a> From<&'a Session> for SessionDocument<'a> {
     fn from(session: &'a Session) -> Self {
         Self {
             id: &session.id,
+            name: session.name.as_deref(),
             state: state_name(session.state),
             pid: session.pid,
             command: &session.command,
@@ -244,6 +247,10 @@ impl<'a> From<&'a ServiceFileReport> for ServiceDocument<'a> {
 #[derive(Serialize)]
 struct AttachDocument<'a> {
     id: &'a str,
+    name: Option<&'a str>,
+    /// Only for `new -A`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    created: Option<bool>,
     end: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     exit_code: Option<i32>,
@@ -252,7 +259,7 @@ struct AttachDocument<'a> {
 }
 
 impl<'a> AttachDocument<'a> {
-    fn new(id: &'a str, end: AttachEnd) -> Self {
+    fn new(session: &'a Session, end: AttachEnd, created: Option<bool>) -> Self {
         let (end, exit_code, signal) = match end {
             AttachEnd::Detached => ("detached", None, None),
             AttachEnd::Exited { code } => ("exited", Some(code), None),
@@ -261,7 +268,9 @@ impl<'a> AttachDocument<'a> {
             AttachEnd::Unknown => ("unknown", None, None),
         };
         Self {
-            id,
+            id: &session.id,
+            name: session.name.as_deref(),
+            created,
             end,
             exit_code,
             signal,
@@ -273,6 +282,21 @@ impl<'a> AttachDocument<'a> {
 struct DetachedDocument<'a> {
     id: &'a str,
     clients: u32,
+}
+
+#[derive(Serialize)]
+struct RenamedDocument<'a> {
+    id: &'a str,
+    name: Option<&'a str>,
+    previous_name: Option<&'a str>,
+}
+
+/// A session that an ambiguous target can name.
+#[derive(Serialize)]
+struct CandidateDocument<'a> {
+    id: &'a str,
+    name: Option<&'a str>,
+    state: &'static str,
 }
 
 #[derive(Serialize)]
@@ -305,6 +329,9 @@ struct ErrorDocument<'a> {
     code: u8,
     kind: &'static str,
     message: &'a str,
+    /// Only for a target that can be more than one session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    candidates: Option<Vec<CandidateDocument<'a>>>,
 }
 
 pub(super) fn report(report: &Report) -> String {
@@ -316,10 +343,12 @@ pub(super) fn report(report: &Report) -> String {
             id,
             output: String::from_utf8_lossy(output),
         }),
-        Report::RestorePolicySet { id, policy } => Body::RestorePolicy(RestorePolicyDocument {
-            id,
-            policy: policy.as_str(),
-        }),
+        Report::RestorePolicySet { session, policy } => {
+            Body::RestorePolicy(RestorePolicyDocument {
+                id: &session.id,
+                policy: policy.as_str(),
+            })
+        }
         Report::ServiceFile(service) => Body::Service(service.into()),
         Report::Sessions {
             sessions,
@@ -337,11 +366,23 @@ pub(super) fn report(report: &Report) -> String {
         Report::SessionsMeasured { sessions, memory } => {
             Body::SessionsMemory(SessionsMemoryBody::new(sessions, memory))
         }
-        Report::SessionKilled { id } => Body::Killed(id),
-        Report::AttachEnded { id, end } => Body::Attach(AttachDocument::new(id, *end)),
-        Report::ClientsDetached { id, clients } => Body::Detached(DetachedDocument {
-            id,
+        Report::SessionKilled { session } => Body::Killed(&session.id),
+        Report::AttachEnded {
+            session,
+            end,
+            created,
+        } => Body::Attach(AttachDocument::new(session, *end, *created)),
+        Report::ClientsDetached { session, clients } => Body::Detached(DetachedDocument {
+            id: &session.id,
             clients: *clients,
+        }),
+        Report::SessionRenamed {
+            session,
+            previous_name,
+        } => Body::Renamed(RenamedDocument {
+            id: &session.id,
+            name: session.name.as_deref(),
+            previous_name: previous_name.as_deref(),
         }),
         Report::DaemonStatus {
             info,
@@ -386,10 +427,24 @@ pub(super) fn event(event: &HostEvent) -> String {
 
 pub(super) fn error(error: &ClientError, code: u8) -> String {
     let message = error.to_string();
+    let candidates = match error {
+        ClientError::AmbiguousTarget { candidates, .. } => Some(
+            candidates
+                .iter()
+                .map(|session| CandidateDocument {
+                    id: &session.id,
+                    name: session.name.as_deref(),
+                    state: state_name(session.state),
+                })
+                .collect(),
+        ),
+        _ => None,
+    };
     line(Body::Error(ErrorDocument {
         code,
         kind: exit_code::name(code),
         message: &message,
+        candidates,
     }))
 }
 
@@ -428,6 +483,9 @@ mod tests {
             restore_policy: None,
             exit: None,
             damage: None,
+            name: None,
+            last_attached_at: None,
+            attached_clients: 0,
             resolved_working_directory: None,
         }
     }
@@ -448,14 +506,14 @@ mod tests {
         };
         assert_eq!(
             report(&Report::SessionCreated(described)),
-            "{\"schema_version\":1,\"session\":{\"id\":\"ab\",\"state\":\"running\",\"pid\":7,\"command\":[\"vim\",\"a b\"],\"cwd\":\"/home/user\",\"rows\":24,\"columns\":80,\"started_at\":5,\"epoch\":2,\"restore_policy\":\"on-focus\"}}\n"
+            "{\"schema_version\":1,\"session\":{\"id\":\"ab\",\"name\":null,\"state\":\"running\",\"pid\":7,\"command\":[\"vim\",\"a b\"],\"cwd\":\"/home/user\",\"rows\":24,\"columns\":80,\"started_at\":5,\"epoch\":2,\"restore_policy\":\"on-focus\"}}\n"
         );
         assert_eq!(
             report(&Report::Sessions {
                 sessions: vec![session(None)],
                 workspace: Workspace::default(),
             }),
-            "{\"schema_version\":1,\"sessions\":[{\"id\":\"ab\",\"state\":\"running\",\"pid\":null,\"command\":[],\"cwd\":null,\"rows\":null,\"columns\":null,\"started_at\":null,\"epoch\":null,\"restore_policy\":null,\"project\":null}]}\n"
+            "{\"schema_version\":1,\"sessions\":[{\"id\":\"ab\",\"name\":null,\"state\":\"running\",\"pid\":null,\"command\":[],\"cwd\":null,\"rows\":null,\"columns\":null,\"started_at\":null,\"epoch\":null,\"restore_policy\":null,\"project\":null}]}\n"
         );
         let ended = Session {
             state: SessionState::Ended,
@@ -468,7 +526,7 @@ mod tests {
         };
         assert_eq!(
             report(&Report::SessionStarted(ended)),
-            "{\"schema_version\":1,\"session\":{\"id\":\"ab\",\"state\":\"ended\",\"pid\":null,\"command\":[],\"cwd\":null,\"rows\":null,\"columns\":null,\"started_at\":null,\"epoch\":null,\"restore_policy\":null,\"exit\":{\"ended_at\":9,\"signal\":15},\"damage\":\"a reason\"}}\n"
+            "{\"schema_version\":1,\"session\":{\"id\":\"ab\",\"name\":null,\"state\":\"ended\",\"pid\":null,\"command\":[],\"cwd\":null,\"rows\":null,\"columns\":null,\"started_at\":null,\"epoch\":null,\"restore_policy\":null,\"exit\":{\"ended_at\":9,\"signal\":15},\"damage\":\"a reason\"}}\n"
         );
         assert_eq!(
             report(&Report::Sessions {
@@ -479,7 +537,7 @@ mod tests {
         );
         assert_eq!(
             report(&Report::SessionKilled {
-                id: "ab".to_owned()
+                session: session(None)
             }),
             "{\"schema_version\":1,\"killed\":\"ab\"}\n"
         );
@@ -496,7 +554,7 @@ mod tests {
         );
         assert_eq!(
             report(&Report::RestorePolicySet {
-                id: "ab".to_owned(),
+                session: session(None),
                 policy: RestorePolicy::Manual,
             }),
             "{\"schema_version\":1,\"restore_policy\":{\"id\":\"ab\",\"policy\":\"manual\"}}\n"
@@ -523,29 +581,41 @@ mod tests {
     fn attach_and_detach_documents() {
         let ended = |end| {
             report(&Report::AttachEnded {
-                id: "ab".to_owned(),
+                session: session(None),
                 end,
+                created: None,
             })
         };
         assert_eq!(
             ended(AttachEnd::Detached),
-            "{\"schema_version\":1,\"attach\":{\"id\":\"ab\",\"end\":\"detached\"}}\n"
+            "{\"schema_version\":1,\"attach\":{\"id\":\"ab\",\"name\":null,\"end\":\"detached\"}}\n"
+        );
+        assert_eq!(
+            report(&Report::AttachEnded {
+                session: Session {
+                    name: Some("api".to_owned()),
+                    ..session(None)
+                },
+                end: AttachEnd::Detached,
+                created: Some(false),
+            }),
+            "{\"schema_version\":1,\"attach\":{\"id\":\"ab\",\"name\":\"api\",\"created\":false,\"end\":\"detached\"}}\n"
         );
         assert_eq!(
             ended(AttachEnd::Exited { code: 3 }),
-            "{\"schema_version\":1,\"attach\":{\"id\":\"ab\",\"end\":\"exited\",\"exit_code\":3}}\n"
+            "{\"schema_version\":1,\"attach\":{\"id\":\"ab\",\"name\":null,\"end\":\"exited\",\"exit_code\":3}}\n"
         );
         assert_eq!(
             ended(AttachEnd::Signaled { signal: 9 }),
-            "{\"schema_version\":1,\"attach\":{\"id\":\"ab\",\"end\":\"signaled\",\"signal\":9}}\n"
+            "{\"schema_version\":1,\"attach\":{\"id\":\"ab\",\"name\":null,\"end\":\"signaled\",\"signal\":9}}\n"
         );
         assert_eq!(
             ended(AttachEnd::Lost),
-            "{\"schema_version\":1,\"attach\":{\"id\":\"ab\",\"end\":\"lost\"}}\n"
+            "{\"schema_version\":1,\"attach\":{\"id\":\"ab\",\"name\":null,\"end\":\"lost\"}}\n"
         );
         assert_eq!(
             report(&Report::ClientsDetached {
-                id: "ab".to_owned(),
+                session: session(None),
                 clients: 2
             }),
             "{\"schema_version\":1,\"detached\":{\"id\":\"ab\",\"clients\":2}}\n"

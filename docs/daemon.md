@@ -323,6 +323,15 @@ A session whose holder is gone is the same case for each cause: a restart of the
 - The daemon starts no process for a dormant session until a restore.
 - **Nothing removes the state of a session that runs or of a dormant session, but `Session.Kill`.** The size limit of the journal, which the holder applies, is the only limit of its disk use.
 
+### Names
+
+A session can have a name: `spec/control.md` of the protocol, "Names", has the rule. `Session.Create` with a name and `Session.Rename` store it in the file `name` of the session state directory: one line with the name. A session without the file has no name.
+
+- **The daemon owns this file**, as it owns `restore-policy`. Thus the name stays with a dormant session, after a restart of the daemon and of the host, and with an ended session for the retention time. A file that cannot be read or has no valid name counts as absent: the session has no name and is not damaged.
+- One lock covers each check and each change of a name: the check that no other session that is not ended has the name or the identifier, the start of the session and the write of the file. Thus of two `Session.Create` with the same name and `reuse_existing` at the same time, one starts the session and the other gets it. A session without a name does not take the lock.
+- A new identifier is not the name of a session that is not ended.
+- The daemon gives the name in `Session.List`. It keeps the time of the last attach of each session (`Session.last_attached_at`) in its memory only, and counts the attached clients (`Session.attached_clients`).
+
 ### Restore
 
 A restore starts the command of a dormant session again. The daemon starts a new holder with the session identifier, the command, the working directory and the window size of the `session` file. The new holder writes to the same state directory and takes the next epoch: [holder.md](holder.md) has the rule. The processes of the earlier epoch do not come back, and their output stays in the journal.

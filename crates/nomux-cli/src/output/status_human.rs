@@ -100,8 +100,8 @@ pub(super) fn event_line(event: &HostEvent) -> String {
 
 /// One row of the status table: a session, or a Child work below it.
 struct Row<'a> {
-    /// The session identifier, or the name of the Child work with its
-    /// indentation.
+    /// The session name, else the session identifier, or the name of the
+    /// Child work, with its indentation.
     name: String,
     command: String,
     status: Option<&'a AgentStatus>,
@@ -152,12 +152,11 @@ fn session_rows<'a>(
     with_children: bool,
     rows: &mut Vec<Row<'a>>,
 ) {
-    let command = sessions
-        .iter()
-        .find(|session| session.id == run.session_id)
-        .map_or_else(String::new, |session| session.command.join(" "));
+    let session = sessions.iter().find(|session| session.id == run.session_id);
+    let command = session.map_or_else(String::new, |session| session.command.join(" "));
+    let label = session.map_or(run.session_id.as_str(), Session::label);
     rows.push(Row {
-        name: format!("{}{}", INDENT.repeat(depth), run.session_id),
+        name: format!("{}{label}", INDENT.repeat(depth)),
         command,
         status: Some(&run.aggregate),
     });
@@ -423,6 +422,9 @@ mod tests {
             restore_policy: None,
             exit: None,
             damage: None,
+            name: None,
+            last_attached_at: None,
+            attached_clients: 0,
             resolved_working_directory: None,
         }
     }

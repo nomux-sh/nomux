@@ -34,20 +34,27 @@ pub(crate) enum Report {
         output: Vec<u8>,
     },
     RestorePolicySet {
-        id: String,
+        session: Session,
         policy: RestorePolicy,
     },
     SessionKilled {
-        id: String,
+        session: Session,
     },
     AttachEnded {
-        id: String,
+        session: Session,
         end: AttachEnd,
+        /// Only for `new -A`: `false` if the session existed.
+        created: Option<bool>,
     },
     ClientsDetached {
-        id: String,
+        session: Session,
         /// The number of clients that were attached to the session.
         clients: u32,
+    },
+    SessionRenamed {
+        /// The session with its new name.
+        session: Session,
+        previous_name: Option<String>,
     },
     DaemonStatus {
         /// `None`: no daemon runs.

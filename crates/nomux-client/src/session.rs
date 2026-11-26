@@ -65,6 +65,9 @@ pub struct SessionExit {
 pub struct Session {
     /// The session identifier.
     pub id: String,
+    /// The session name. `None` if the session has no name, and from a
+    /// daemon without session names.
+    pub name: Option<String>,
     /// The state of the session.
     pub state: SessionState,
     /// The process ID of the command on the host. `None` if the session has
@@ -96,6 +99,21 @@ pub struct Session {
     /// [`SessionState::Damaged`], a part of the output is gone and the
     /// session can be used.
     pub damage: Option<String>,
+    /// When a client attached to the session the last time: seconds after
+    /// the Unix epoch. `None` if no client attached since the start of the
+    /// daemon, and from an older daemon.
+    pub last_attached_at: Option<u64>,
+    /// The number of clients that are attached to the session now: 0 from
+    /// an older daemon.
+    pub attached_clients: u32,
+}
+
+impl Session {
+    /// The name of the session, or its identifier if it has no name.
+    #[must_use]
+    pub fn label(&self) -> &str {
+        self.name.as_deref().unwrap_or(&self.id)
+    }
 }
 
 impl From<wire::Session> for Session {
@@ -114,6 +132,7 @@ impl From<wire::Session> for Session {
         };
         Self {
             id: session.id,
+            name: (!session.name.is_empty()).then_some(session.name),
             state,
             pid: (session.pid != 0).then_some(session.pid),
             command: session.command,
@@ -129,6 +148,8 @@ impl From<wire::Session> for Session {
                 .and_then(restore_policy_of),
             exit: session.exit.map(SessionExit::from),
             damage: (!session.damage.is_empty()).then_some(session.damage),
+            last_attached_at: (session.last_attached_at != 0).then_some(session.last_attached_at),
+            attached_clients: session.attached_clients,
         }
     }
 }
@@ -173,4 +194,9 @@ pub struct NewSession {
     /// The working directory of the command: an absolute path on the host.
     /// `None` is the home directory of the user.
     pub working_directory: Option<PathBuf>,
+    /// The name of the session. `None` for a session without a name.
+    pub name: Option<String>,
+    /// If a session that is not ended has `name`, the result is that
+    /// session and no session starts.
+    pub reuse_existing: bool,
 }

@@ -15,8 +15,9 @@
 //! - `listener`, `client_connection`, `handshake`, `handlers`: the client
 //!   side. One task serves one client connection.
 //! - `sessions`, `session_registry`, `session_handle`, `session_id`,
-//!   `session_error`: the operations on sessions, the list of the sessions
-//!   that the daemon knows, and the ways into one session.
+//!   `session_name`, `session_error`: the operations on sessions, the list
+//!   of the sessions that the daemon knows, the ways into one session, and
+//!   the rule of a session name.
 //! - `session_store`, `session_journal`, `stopped_sessions`: what a session
 //!   keeps on disk, its output history, and the sessions without a holder:
 //!   dormant, ended and damaged.
@@ -76,6 +77,7 @@ mod session_handle;
 mod session_id;
 mod session_journal;
 mod session_memory;
+mod session_name;
 mod session_registry;
 mod session_store;
 mod sessions;
