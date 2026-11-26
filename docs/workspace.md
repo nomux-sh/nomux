@@ -21,7 +21,8 @@ The tree has no status. A client computes the status of a Group or a Project fro
 | `nomux_core::workspace_tree` | The rules of the tree: add a node at a position, rename, move with the check for a cycle, remove (a Group gives its content to its parent), the depth-first sequence and the Project of a working directory. The daemon changes its tree with them, and a client applies the events to its copy with the same code. |
 | `crates/nomuxd/src/workspace.rs` | The owner of the tree in the daemon: the limits, the identifiers, the resolved directory of a new Project, the refusal of a second Project with the same directory, the revision, the file and the event of each change. |
 | `crates/nomuxd/src/workspace/tree_file.rs` | The file of the tree. |
-| `crates/nomux-client/src/workspace.rs`, `workspace_requests.rs` | The requests, the event, and `Workspace::apply`, which keeps the copy of a client current. |
+| `crates/nomux-client/src/workspace.rs`, `workspace_requests.rs` | The requests, the event, `Workspace::apply`, which keeps the copy of a client current, and `Session::project`, the Project of a session. |
+| `crates/nomuxd/src/sessions/resolved_directories.rs` | The working directory of each session with its symbolic links resolved. |
 | `crates/nomux-cli/src/workspace_commands` | The `project` and `group` commands and the names of the nodes on the command line. |
 
 A request that changes the tree changes a copy of it. The daemon writes the copy to the file, and only then takes it as the tree and sends the event. Thus a request that fails, also because the file cannot be written, does not change the tree and makes no event.
@@ -70,9 +71,11 @@ A position (`index`) that is absent or not smaller than the number of siblings p
 
 ## The Project of a session
 
-A session belongs to the Project whose directory is equal to its working directory or above it. If more than one Project matches, the Project with the longest directory wins. The comparison uses complete path components: `/src/app` matches `/src/app/web`, but not `/src/application`. A session without a working directory, or without a matching Project, has no Project.
+A session belongs to the Project whose directory is equal to its resolved working directory or above it. If more than one Project matches, the Project with the longest directory wins. The comparison uses complete path components: `/src/app` matches `/src/app/web`, but not `/src/application`. A session without a working directory, or without a matching Project, has no Project.
 
-`WorkspaceTree::project_of` is the one function with this rule. `nomux ls` and `nomux status --tree` use it. The Session service has no field for the Project: a client computes it from the working directory and the tree.
+- The directory of a Project has its symbolic links resolved, thus the working directory of a session must have them resolved too. Else a session that starts through a link, for example in `/tmp` on macOS (a link to `/private/tmp`), has no Project.
+- The daemon resolves the working directory of a session one time: the first time that it describes the session, thus in the response of `Session.Create` and at the first request after the daemon found the session again. It sends the result in `Session.resolved_working_directory`, which then does not change. `Session.working_directory`, the output of `nomux ls` and the working directory of the shell stay the path that the client gave. A path that the daemon cannot resolve (the directory was removed) gives an empty field, and the client then uses the path as it was given.
+- `Session::project` in `nomux-client` is the one function with the rule: it takes the resolved path, else the given path, and gives it to `WorkspaceTree::project_of`. `nomux ls` and `nomux status --tree` use it, and so can the desktop client. The Session service has no field for the Project: a client computes it from the session and the tree. The Project of a session changes only when the tree changes, thus a client needs no event for it.
 
 ## Status
 

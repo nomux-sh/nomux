@@ -4,7 +4,7 @@
 use nomux_core::workspace_tree::{Node, NodeKind, WorkspaceTree};
 use nomux_proto::wire::v1::{self as wire, workspace_changed, workspace_node};
 
-use crate::ClientError;
+use crate::{ClientError, Session};
 
 /// The workspace tree of a host and its revision.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -97,6 +97,21 @@ impl Workspace {
             }
             Err(_) => Applied::Missed,
         }
+    }
+}
+
+impl Session {
+    /// The Project of this session in `tree`: the Project whose directory is
+    /// the resolved working directory of the session or a directory above
+    /// it. Without a resolved path, the working directory as it was given.
+    /// `None` if the session has no Project.
+    #[must_use]
+    pub fn project<'tree>(&self, tree: &'tree WorkspaceTree) -> Option<&'tree Node> {
+        let directory = self
+            .resolved_working_directory
+            .as_deref()
+            .or(self.working_directory.as_deref())?;
+        tree.project_of(directory)
     }
 }
 

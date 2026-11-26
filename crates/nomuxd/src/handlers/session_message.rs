@@ -43,6 +43,9 @@ impl From<ListedSession> for Session {
             session.started_at = metadata.started;
             session.epoch = metadata.epoch;
         }
+        if let Some(resolved) = listed.resolved_working_directory {
+            session.resolved_working_directory = text(resolved.as_os_str());
+        }
         session
     }
 }

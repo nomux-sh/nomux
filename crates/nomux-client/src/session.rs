@@ -72,8 +72,12 @@ pub struct Session {
     pub pid: Option<u32>,
     /// The program of the command and its arguments.
     pub command: Vec<String>,
-    /// The working directory of the command.
+    /// The working directory of the command, as the client of
+    /// [`Client::create_session`](crate::Client::create_session) gave it.
     pub working_directory: Option<PathBuf>,
+    /// The working directory with each symbolic link resolved on the host.
+    /// `None` if the daemon cannot resolve it, and from an older daemon.
+    pub resolved_working_directory: Option<PathBuf>,
     /// The size of the window of the session.
     pub size: Option<WindowSize>,
     /// When the command started in the current epoch: seconds after the
@@ -115,6 +119,8 @@ impl From<wire::Session> for Session {
             command: session.command,
             working_directory: (!session.working_directory.is_empty())
                 .then(|| PathBuf::from(session.working_directory)),
+            resolved_working_directory: (!session.resolved_working_directory.is_empty())
+                .then(|| PathBuf::from(session.resolved_working_directory)),
             size,
             started_at: (session.started_at != 0).then_some(session.started_at),
             epoch: (session.epoch != 0).then_some(session.epoch),

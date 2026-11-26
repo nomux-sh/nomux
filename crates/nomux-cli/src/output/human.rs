@@ -230,9 +230,7 @@ impl<'a> SessionRow<'a> {
             state: session.state,
             pid: or_dash(session.pid.map_or_default(|pid| pid.to_string())),
             project: session
-                .working_directory
-                .as_deref()
-                .and_then(|directory| workspace.project_of(directory))
+                .project(workspace)
                 .map(|project| path_of(workspace, &project.id)),
             command: or_dash(session.command.join(" ")),
             note: note(session),
@@ -337,6 +335,7 @@ mod tests {
             restore_policy: None,
             exit: None,
             damage: None,
+            resolved_working_directory: None,
         }
     }
 

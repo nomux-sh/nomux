@@ -104,7 +104,7 @@ pub(super) struct ProjectDocument<'a> {
 impl<'a> ProjectDocument<'a> {
     /// The Project of `session` in `tree`. `None` if the session has none.
     pub(super) fn of_session(session: &Session, tree: &'a WorkspaceTree) -> Option<Self> {
-        let project = tree.project_of(session.working_directory.as_deref()?)?;
+        let project = session.project(tree)?;
         Some(Self {
             id: &project.id,
             path: path_of(tree, &project.id),
