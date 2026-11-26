@@ -38,7 +38,22 @@ nomux-holder --session <identifier> [options] -- <command> [argument...]
 | `--ring-capacity <bytes>` | 262144 | The size of the ring buffer: a power of two, 4096 or more |
 | `--exit-timeout <seconds>` | 30 | The time to keep the exit status for the daemon |
 
-The command gets the environment of the holder. There is no option for environment variables, because the arguments of a process are visible to other users and the environment is not. The starter sets the environment of the holder.
+The command gets the environment of the holder and the three variables of "Environment of the command". There is no option for environment variables, because the arguments of a process are visible to other users and the environment is not. The starter sets the environment of the holder.
+
+### Environment of the command
+
+The holder adds three variables to the environment of the command. A program in the session uses them to tell the daemon which session it is in, for example `nomux status set` ([status.md](status.md#self-report-and-the-token)).
+
+| Variable | Value |
+|---|---|
+| `NOMUX_SESSION_ID` | The session identifier |
+| `NOMUX_SOCK` | The socket of the daemon: `nomuxd.sock` in the runtime directory of the holder |
+| `NOMUX_TOKEN` | The token of this start of the holder: 32 lower-case hexadecimal characters, from 128 random bits of the operating system (`getrandom`) |
+
+- The holder makes a new token at each start. Thus a restore of a session gives it a new token, and the token of the earlier process proves nothing.
+- The token is only in the memory of the holder and in the environment of the command. No file has it: not the discovery files, not the session metadata and not the journal. Its `Debug` form does not show it.
+- The daemon gets the token with the `SessionToken` request on the private socket. It compares a token of a request in a time that does not depend on the first byte that is different.
+- The processes of the session inherit the variables. Thus each process of the session can prove that it is in the session. A process of the same user outside the session can read the environment of a process of the session: the token is not a defence against it, as the socket is not.
 
 At the start, the holder does these steps in this sequence:
 
@@ -526,7 +541,7 @@ The session is more important than its journal. If a write to a segment fails, o
 ## Control protocol
 
 The control socket is a Unix stream socket. The protocol has its own version, which is independent of the product version and of the protocol between the clients and the daemon.
-The current version is 1.3. "Protocol versions" shows what each version added.
+The current version is 1.4. "Protocol versions" shows what each version added.
 
 The encoding is written by hand: fixed little-endian fields with a length prefix. The holder decodes 10 small messages, thus a schema compiler and its runtime give no benefit, and the binary stays small.
 
@@ -557,6 +572,7 @@ If the length is smaller than 8 or the payload is longer than 65536 bytes, the r
 | `0x0007` | `ProgramReports` | Revision of the program reports (8), length of the encoded program reports (4). Since version 1.2 |
 | `0x0008` | `ProgramReportsChanged` | Revision of the program reports (8). Since version 1.2 |
 | `0x0009` | `Journal` | Position of the first byte (8), number of bytes (4). Since version 1.3 |
+| `0x000A` | `SessionToken` | The 32 characters of the token of the session. Since version 1.4 |
 
 The holder sends `Hello` when a connection opens, before the daemon sends a message. Thus the daemon knows the protocol version before its first request. The read-only descriptor of the ring buffer comes with the hello as `SCM_RIGHTS` ancillary data.
 
@@ -590,6 +606,7 @@ The holder answers each request with one message that has the same request ident
 | `0x0108` | `ProgramReports` | Empty. Since version 1.2 | | `ProgramReports` with a descriptor |
 | `0x0109` | `WaitProgramReports` | The revision that the daemon already has (8). Since version 1.2 | | `ProgramReportsChanged`, possibly later |
 | `0x010A` | `JournalRead` | The position of the first byte (8), the largest number of bytes (4, not 0). Since version 1.3 | | `Journal`, with a descriptor if it has bytes |
+| `0x010B` | `SessionToken` | Empty. Since version 1.4 | | `SessionToken` |
 
 `Signal` sends the signal to the process of the command. After the holder has the exit status, it sends no signal, because the process ID can belong to a different process.
 
@@ -737,6 +754,7 @@ An old daemon never sees a new reply kind or a new error code, because only a ne
 | 1.1 | Request `Redraw`, reply `Redraw`, error code `RedrawTooLarge` | It cannot get the screen. It shows a client only the bytes that the ring buffer has |
 | 1.2 | Requests `ProgramReports` and `WaitProgramReports`, replies `ProgramReports` and `ProgramReportsChanged` | It has no program status, no input line state and no notification from that holder. A holder of version 1.1 does not answer the OSC 7501 query, thus the tools in its session send no program status report |
 | 1.3 | Field `epoch` at the end of the hello, request `JournalRead`, reply `Journal` | The epoch is 1. The holder has no journal: a client that needs bytes that the ring buffer has no more gets a redraw, and the session has no scrollback and no state on disk |
+| 1.4 | The variables `NOMUX_SESSION_ID`, `NOMUX_SOCK` and `NOMUX_TOKEN` for the command, request `SessionToken`, reply `SessionToken` | It has no token of the session. The command of that holder has none of the three variables, and the daemon refuses each self-report for the session with a message that says why. The other status sources work |
 
 Release 0.1.0 has a holder of version 1.2. No release has a holder of version 1.0 or 1.1, thus each holder that runs has version 1.2 or later.
 
@@ -747,7 +765,7 @@ The types `Request`, `Reply` and `ErrorCode` of `nomux-holder-protocol` are `#[n
 - The socket has mode 0600 in a directory with mode 0700. The holder also reads the user ID of the peer (`SO_PEERCRED` on Linux, `getpeereid` on macOS) and closes a connection from a different user.
 - The holder accepts 4 connections at one time. It closes a fifth connection immediately.
 - The holder continues when no connection is open, and it accepts a new connection after a disconnect.
-- Each connection can read: `Status`, `WaitOutput`, `Redraw`, `ProgramReports`, `WaitProgramReports` and `JournalRead` need no lease.
+- Each connection can read: `Status`, `WaitOutput`, `Redraw`, `ProgramReports`, `WaitProgramReports`, `JournalRead` and `SessionToken` need no lease. Only the same user can connect, and that user can read the environment of the command too.
 - One connection at most has the lease. Only this connection can send `Input`, `Resize` and `Signal`. Other connections get `LeaseRequired`.
 - `AcquireLease` always moves the lease to the connection that asks. The connection that had the lease gets `LeaseRequired` for its next write request.
 - A disconnect releases the lease.

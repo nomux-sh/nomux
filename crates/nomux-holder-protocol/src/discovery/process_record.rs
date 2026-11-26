@@ -1,5 +1,6 @@
 //! Reads the record of a process from the operating system: its start time,
-//! its parent and the name of its program.
+//! its parent, the name of its program and the foreground process group
+//! of its terminal.
 
 use std::io;
 
@@ -12,6 +13,26 @@ pub(super) struct ProcessRecord {
     /// The name of the program. Linux gives 15 bytes at most, macOS gives
     /// 32 bytes at most.
     pub(super) name: String,
+    /// The foreground process group of the controlling terminal of the
+    /// process. `None` if the process has no controlling terminal, or if
+    /// the terminal has no foreground process group.
+    pub(super) terminal_foreground_group: Option<u32>,
+}
+
+/// The foreground process group of the controlling terminal of the process
+/// `pid`: the process ID of the leader of the group. The daemon calls this
+/// for the command of a session, whose controlling terminal is the terminal
+/// of the session.
+///
+/// Returns `None` if no such process runs, if it has no controlling
+/// terminal, or if the terminal has no foreground process group.
+///
+/// # Errors
+///
+/// Returns an error if the operating system does not give the record of a
+/// process that exists.
+pub fn terminal_foreground_group(pid: u32) -> io::Result<Option<u32>> {
+    Ok(read(pid)?.and_then(|record| record.terminal_foreground_group))
 }
 
 /// The name of the program that the process `pid` runs: the last part of the
@@ -48,11 +69,12 @@ pub(super) fn read(pid: u32) -> io::Result<Option<ProcessRecord>> {
 /// Parses `/proc/<pid>/stat`. The second field is the program name in
 /// parentheses, and it can contain spaces and parentheses, thus the name
 /// ends at the last `)` and the other fields are counted after it. The state
-/// is field 3, the parent is field 4 and the start time is field 22
-/// (`proc_pid_stat(5)`).
+/// is field 3, the parent is field 4, the foreground process group of the
+/// terminal is field 8 and the start time is field 22 (`proc_pid_stat(5)`).
 #[cfg(target_os = "linux")]
 fn parse_stat(stat: &str) -> io::Result<Option<ProcessRecord>> {
-    const FIELDS_FROM_PARENT_TO_START_TIME: usize = 18;
+    const FIELDS_FROM_PARENT_TO_FOREGROUND_GROUP: usize = 4;
+    const FIELDS_FROM_FOREGROUND_GROUP_TO_START_TIME: usize = 14;
 
     let invalid = || io::Error::new(io::ErrorKind::InvalidData, "invalid /proc stat file");
     let (before_name_end, after_name) = stat.rsplit_once(')').ok_or_else(invalid)?;
@@ -66,14 +88,22 @@ fn parse_stat(stat: &str) -> io::Result<Option<ProcessRecord>> {
         .next()
         .and_then(|field| field.parse().ok())
         .ok_or_else(invalid)?;
+    // The field is -1 for a process without a controlling terminal.
+    let foreground_group: i64 = fields
+        .nth(FIELDS_FROM_PARENT_TO_FOREGROUND_GROUP - 1)
+        .and_then(|field| field.parse().ok())
+        .ok_or_else(invalid)?;
     let start_time = fields
-        .nth(FIELDS_FROM_PARENT_TO_START_TIME - 1)
+        .nth(FIELDS_FROM_FOREGROUND_GROUP_TO_START_TIME - 1)
         .and_then(|field| field.parse().ok())
         .ok_or_else(invalid)?;
     Ok(Some(ProcessRecord {
         start_time,
         parent_pid,
         name: name.to_owned(),
+        terminal_foreground_group: u32::try_from(foreground_group)
+            .ok()
+            .filter(|group| *group != 0),
     }))
 }
 
@@ -128,6 +158,8 @@ pub(super) fn read(pid: u32) -> io::Result<Option<ProcessRecord>> {
         start_time: info.pbi_start_tvsec * MICROSECONDS_IN_SECOND + info.pbi_start_tvusec,
         parent_pid: info.pbi_ppid,
         name,
+        // `e_tpgid` is 0 for a process without a controlling terminal.
+        terminal_foreground_group: Some(info.e_tpgid).filter(|group| *group != 0),
     }))
 }
 
@@ -154,6 +186,16 @@ mod tests {
         assert_eq!(record.start_time, 987_654);
         assert_eq!(record.parent_pid, 1);
         assert_eq!(record.name, "a) b) (c");
+        assert_eq!(record.terminal_foreground_group, None);
+    }
+
+    #[test]
+    fn the_foreground_group_of_the_terminal_is_field_8() {
+        let stat = "4242 (sh) S 1 4242 4242 34816 4300 4194304 100 0 0 0 1 2 0 0 20 0 1 0 \
+                    987654 1000000 200";
+        let record = parse_stat(stat).unwrap().unwrap();
+        assert_eq!(record.terminal_foreground_group, Some(4300));
+        assert_eq!(record.start_time, 987_654);
     }
 
     #[test]

@@ -1174,6 +1174,7 @@ dependencies = [
 name = "nomux-holder"
 version = "0.3.0"
 dependencies = [
+ "getrandom 0.4.3",
  "libc",
  "nomux-core",
  "nomux-holder-protocol",

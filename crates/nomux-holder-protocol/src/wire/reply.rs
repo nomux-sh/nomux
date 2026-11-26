@@ -17,10 +17,13 @@
 //! 0x0008  ProgramReportsChanged  revision (8); since protocol version 1.2
 //! 0x0009  Journal                position of the first byte (8), number of
 //!                                bytes (4); since protocol version 1.3
+//! 0x000A  SessionToken           the 32 characters of the token; since
+//!                                protocol version 1.4
 //! ```
 
 use super::frame::Frame;
 use super::payload::{DecodeError, PayloadReader};
+use super::session_token::SessionToken;
 
 const DONE: u16 = 0x0002;
 const ERROR: u16 = 0x0003;
@@ -30,6 +33,7 @@ const REDRAW: u16 = 0x0006;
 const PROGRAM_REPORTS: u16 = 0x0007;
 const PROGRAM_REPORTS_CHANGED: u16 = 0x0008;
 const JOURNAL: u16 = 0x0009;
+const SESSION_TOKEN: u16 = 0x000A;
 
 const STATE_RUNNING: u8 = 0;
 const STATE_EXITED: u8 = 1;
@@ -179,6 +183,10 @@ pub enum Reply {
         /// position of the request or after it.
         length: u32,
     },
+    /// The answer to
+    /// [`Request::SessionToken`](super::Request::SessionToken). Since
+    /// protocol version 1.4.
+    SessionToken(SessionToken),
 }
 
 impl Reply {
@@ -224,6 +232,7 @@ impl Reply {
                 fields[8..].copy_from_slice(&length.to_le_bytes());
                 (JOURNAL, &fields)
             }
+            Self::SessionToken(ref token) => (SESSION_TOKEN, token.encode()),
         };
         let frame = Frame {
             kind,
@@ -273,6 +282,9 @@ impl Reply {
                 position: reader.u64()?,
                 length: reader.u32()?,
             }),
+            SESSION_TOKEN => SessionToken::decode(reader.bytes(SessionToken::LENGTH)?)
+                .map(Self::SessionToken)
+                .ok_or(DecodeError::InvalidPayload),
             kind => Err(DecodeError::UnknownKind(kind)),
         }
     }

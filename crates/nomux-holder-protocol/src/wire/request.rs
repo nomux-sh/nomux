@@ -15,6 +15,7 @@
 //!                             since protocol version 1.2
 //! 0x010A  JournalRead         position of the first byte (8), largest number
 //!                             of bytes (4); since protocol version 1.3
+//! 0x010B  SessionToken        empty; since protocol version 1.4
 //! ```
 
 use super::frame::Frame;
@@ -31,6 +32,7 @@ const REDRAW: u16 = 0x0107;
 const PROGRAM_REPORTS: u16 = 0x0108;
 const WAIT_PROGRAM_REPORTS: u16 = 0x0109;
 const JOURNAL_READ: u16 = 0x010A;
+const SESSION_TOKEN: u16 = 0x010B;
 
 /// A signal that the daemon can send to the child command.
 ///
@@ -115,6 +117,9 @@ pub enum Request<'payload> {
         /// bytes at most. Zero is not valid.
         max_length: u32,
     },
+    /// Give the token of the session: the value of the `NOMUX_TOKEN`
+    /// variable of its command. Since protocol version 1.4.
+    SessionToken,
 }
 
 impl<'payload> Request<'payload> {
@@ -153,6 +158,7 @@ impl<'payload> Request<'payload> {
                 fields[8..].copy_from_slice(&max_length.to_le_bytes());
                 (JOURNAL_READ, &fields)
             }
+            Self::SessionToken => (SESSION_TOKEN, &[]),
         };
         let frame = Frame {
             kind,
@@ -192,6 +198,7 @@ impl<'payload> Request<'payload> {
                 }
                 Ok(Self::JournalRead { from, max_length })
             }
+            SESSION_TOKEN => Ok(Self::SessionToken),
             kind => Err(DecodeError::UnknownKind(kind)),
         }
     }
@@ -208,6 +215,7 @@ impl<'payload> Request<'payload> {
             Self::Redraw => 1,
             Self::ProgramReports | Self::WaitProgramReports { .. } => 2,
             Self::JournalRead { .. } => 3,
+            Self::SessionToken => 4,
         }
     }
 }

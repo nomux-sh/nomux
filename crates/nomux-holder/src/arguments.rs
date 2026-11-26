@@ -25,7 +25,8 @@ Options:
   --ring-capacity <bytes>     Size of the ring buffer, a power of two (default: 262144)
   --exit-timeout <seconds>    Time to keep the exit status for the daemon (default: 30)
 
-The command gets the environment of the holder.
+The command gets the environment of the holder, and the variables
+NOMUX_SESSION_ID, NOMUX_SOCK and NOMUX_TOKEN.
 ";
 
 const DEFAULT_SIZE: WindowSize = WindowSize {

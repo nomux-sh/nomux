@@ -8,7 +8,7 @@ use std::time::Instant;
 use nomux_holder_protocol::SessionId;
 use nomux_holder_protocol::ring::RingWriter;
 use nomux_holder_protocol::wire::{
-    ChildSignal, ChildStatus, ErrorCode, Hello, ProtocolVersion, WindowSize,
+    ChildSignal, ChildStatus, ErrorCode, Hello, ProtocolVersion, SessionToken, WindowSize,
 };
 use nomux_term::osc::OscRecord;
 use nomux_term::osc::program_status::QUERY_REPLY;
@@ -24,6 +24,7 @@ use crate::journal::Journal;
 use crate::program_reports::ProgramReportStore;
 use crate::pty;
 use crate::resize_verification::ResizeVerification;
+use crate::session_environment;
 use crate::session_state_directory::SessionStateDirectory;
 
 /// The largest number of bytes that one read moves from the terminal to the
@@ -54,6 +55,9 @@ pub(crate) struct Session {
     input: InputQueue,
     size: WindowSize,
     resize_verification: ResizeVerification,
+    /// The secret that the command of the session has in its environment.
+    /// It is only in memory: no file has it.
+    token: SessionToken,
 }
 
 impl Session {
@@ -66,9 +70,15 @@ impl Session {
     ) -> io::Result<Self> {
         let screen_size = screen_size(arguments.size).ok_or(io::ErrorKind::InvalidInput)?;
         let pty = pty::open(arguments.size)?;
+        let token = session_environment::new_token()?;
         let child = ChildProcess::spawn(
             &arguments.program,
             &arguments.program_arguments,
+            session_environment::variables(
+                &arguments.session_id,
+                &arguments.runtime_directory,
+                &token,
+            ),
             arguments.working_directory.as_deref(),
             pty.slave,
         )?;
@@ -85,6 +95,7 @@ impl Session {
             input: InputQueue::default(),
             size: arguments.size,
             resize_verification: ResizeVerification::default(),
+            token,
         })
     }
 
@@ -96,6 +107,11 @@ impl Session {
             size: self.size,
             epoch: self.state_directory.epoch(),
         }
+    }
+
+    /// The token of the session, for the daemon.
+    pub(crate) fn token(&self) -> SessionToken {
+        self.token
     }
 
     /// The terminal and the events that the event loop must wait for.

@@ -23,7 +23,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 pub use process_identity::ProcessIdentity;
-pub use process_record::program_name;
+pub use process_record::{program_name, terminal_foreground_group};
 pub use scan::{DiscoveredHolder, HolderState, StaleReason, scan};
 
 use crate::SessionId;
@@ -34,6 +34,9 @@ pub const PID_FILE: &str = "pid";
 pub const SOCKET_FILE: &str = "sock";
 /// The name of the file that the holder writes last.
 pub const READY_FILE: &str = "ready";
+/// The name of the socket of the daemon in the runtime directory. A holder
+/// gives its path to the command of its session.
+pub const DAEMON_SOCKET_FILE: &str = "nomuxd.sock";
 
 /// The runtime directory of the user: `~/.nomux/run`. Returns `None` if the
 /// `HOME` variable is not set.
