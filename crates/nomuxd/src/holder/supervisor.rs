@@ -11,7 +11,8 @@ use std::time::Duration;
 use nomux_holder_protocol::SessionId;
 use nomux_holder_protocol::discovery::{DiscoveredHolder, HolderState, scan};
 use nomux_holder_protocol::wire::{
-    ChildSignal, ChildStatus, ErrorCode, MAX_PAYLOAD_LENGTH, Reply, Request, WindowSize,
+    ChildSignal, ChildStatus, ErrorCode, MAX_PAYLOAD_LENGTH, ProtocolVersion, Reply, Request,
+    WindowSize,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::{Instant, sleep, sleep_until};
@@ -39,6 +40,15 @@ pub(crate) type WriteDone = oneshot::Sender<Result<(), WriteError>>;
 pub(crate) enum SessionCommand {
     /// End the session. The task answers when the command has ended.
     Kill { done: WriteDone },
+    /// Write a checkpoint of the screen to the journal, then end the
+    /// command with `signals`, with `wait` after each one, and keep the
+    /// session as a dormant session. The task answers when the command has
+    /// ended.
+    Hibernate {
+        signals: Vec<ChildSignal>,
+        wait: Duration,
+        done: WriteDone,
+    },
     /// Write bytes to the terminal. With `done`, the task answers when the
     /// holder has the bytes.
     Input {
@@ -56,6 +66,8 @@ pub(crate) enum WriteError {
     LeaseLost,
     /// The holder refused the request.
     Refused(ErrorCode),
+    /// The command of the session ends already.
+    Ending,
 }
 
 impl fmt::Display for WriteError {
@@ -68,6 +80,7 @@ impl fmt::Display for WriteError {
                 formatter.write_str("the command of the session has ended")
             }
             Self::Refused(code) => write!(formatter, "the holder refused the request: {code:?}"),
+            Self::Ending => formatter.write_str("the command of the session ends already"),
         }
     }
 }
@@ -98,8 +111,10 @@ enum Expected {
     /// `WaitOutput`: the command has ended.
     EndOfCommand,
     Status,
-    /// A signal for a kill request.
+    /// A signal of the stop sequence.
     Signal,
+    /// A checkpoint before a hibernation.
+    Checkpoint,
     /// `Input` or `Resize`.
     Write(Option<WriteDone>),
 }
@@ -117,10 +132,16 @@ pub(crate) struct Supervisor {
     commands: mpsc::Receiver<SessionCommand>,
     /// Tells the attached clients how the session ended.
     ended: watch::Sender<Option<SessionEnd>>,
-    /// The requests that wait for the end of the session.
+    /// The kill requests that wait for the end of the session.
     kill_waiters: Vec<WriteDone>,
-    /// When the command gets `SIGKILL`, after a kill request.
-    force_kill_at: Option<Instant>,
+    /// The hibernation that waits for the end of the command.
+    hibernate_waiter: Option<WriteDone>,
+    /// The signals that end the command, after a kill or a hibernation.
+    stop: Option<StopSequence>,
+    /// When the next signal of `stop` goes to the command.
+    next_signal_at: Option<Instant>,
+    /// The protocol version of the holder of the current connection.
+    protocol: ProtocolVersion,
     /// The requests of the current connection that have no reply yet.
     in_flight: VecDeque<(u32, Expected)>,
 }
@@ -144,7 +165,10 @@ impl Supervisor {
             commands,
             ended,
             kill_waiters: Vec::new(),
-            force_kill_at: None,
+            hibernate_waiter: None,
+            stop: None,
+            next_signal_at: None,
+            protocol: ProtocolVersion::CURRENT,
             in_flight: VecDeque::new(),
         }
     }
@@ -164,6 +188,7 @@ impl Supervisor {
                 pid: current.hello.child_pid,
             };
             self.registry.set_state(&self.session_id, state);
+            self.protocol = current.hello.protocol;
             match self.serve(current.connection).await {
                 Served::SessionEnded(end) => break end,
                 Served::LeaseLost => return self.give_way_to_new_daemon(),
@@ -177,12 +202,19 @@ impl Supervisor {
         info!(session = %self.session_id, ?end, "the holder of the session is gone");
         self.hand_over(end);
         self.ended.send_replace(Some(end));
-        self.answer_kill_waiters(Ok(()));
+        self.answer_stop_waiters(Ok(()));
     }
 
     /// Gives the session, which has no holder now, to the list of the
     /// stopped sessions.
     fn hand_over(&self, end: SessionEnd) {
+        if self.hibernate_waiter.is_some() && self.kill_waiters.is_empty() {
+            // The command ended for the hibernation: the session waits for
+            // its wake. The file of the hibernation says so after a restart
+            // of the daemon too.
+            self.stopped.classify(&self.session_id);
+            return;
+        }
         match end {
             // A client asked for the end of the session, thus the session
             // does not stay as a dormant session.
@@ -202,7 +234,7 @@ impl Supervisor {
     /// lease last has it, thus this daemon stops.
     fn give_way_to_new_daemon(mut self) {
         error!(session = %self.session_id, "a different daemon took the lease of the holder; this daemon stops");
-        self.answer_kill_waiters(Err(WriteError::LeaseLost));
+        self.answer_stop_waiters(Err(WriteError::LeaseLost));
         self.shutdown.trigger();
     }
 
@@ -219,9 +251,9 @@ impl Supervisor {
     async fn converse(&mut self, connection: &mut HolderConnection) -> io::Result<Served> {
         self.request(connection, wait_for_end(), Expected::EndOfCommand)
             .await?;
-        // A kill request from before a lost connection continues here.
-        if !self.kill_waiters.is_empty() {
-            self.hang_up(connection).await?;
+        // A stop from before a lost connection continues here.
+        if self.stop.is_some() {
+            self.send_next_signal(connection).await?;
         }
         loop {
             tokio::select! {
@@ -232,9 +264,8 @@ impl Supervisor {
                     }
                 }
                 Some(command) = self.commands.recv() => self.handle_command(connection, command).await?,
-                () = sleep_until(self.force_kill_at.unwrap_or_else(Instant::now)), if self.force_kill_at.is_some() => {
-                    self.force_kill_at = None;
-                    self.request(connection, Request::Signal(ChildSignal::Kill), Expected::Signal).await?;
+                () = sleep_until(self.next_signal_at.unwrap_or_else(Instant::now)), if self.next_signal_at.is_some() => {
+                    self.send_next_signal(connection).await?;
                 }
             }
         }
@@ -247,10 +278,28 @@ impl Supervisor {
     ) -> io::Result<()> {
         match command {
             SessionCommand::Kill { done } => {
-                if self.kill_waiters.is_empty() {
-                    self.hang_up(connection).await?;
-                }
+                self.begin_stop(connection, StopSequence::kill()).await?;
                 self.kill_waiters.push(done);
+            }
+            SessionCommand::Hibernate {
+                signals,
+                wait,
+                done,
+            } => {
+                if self.stop.is_some() {
+                    answer(Some(done), Err(WriteError::Ending));
+                    return Ok(());
+                }
+                self.hibernate_waiter = Some(done);
+                // The screen of the moment of the stop is the screen that a
+                // wake shows first. An older holder has no checkpoint request:
+                // its last checkpoint is older.
+                if self.protocol.supports(&Request::Checkpoint) {
+                    self.request(connection, Request::Checkpoint, Expected::Checkpoint)
+                        .await?;
+                }
+                self.begin_stop(connection, StopSequence::new(signals, wait))
+                    .await?;
             }
             SessionCommand::Input { bytes, done } => {
                 // The answer belongs to the last frame: the holder answers
@@ -315,11 +364,16 @@ impl Supervisor {
             }
             // The command ended before the signal. The reply to `WaitOutput`
             // says so too.
-            (Expected::Signal, Reply::Done | Reply::Error(ErrorCode::ChildExited)) => {}
+            (Expected::Signal, Reply::Done | Reply::Error(ErrorCode::ChildExited))
+            | (Expected::Checkpoint, Reply::Done) => {}
             (Expected::Signal, Reply::Error(code)) => {
                 warn!(session = %self.session_id, ?code, "the holder refused a signal");
-                self.answer_kill_waiters(Err(WriteError::Refused(code)));
-                self.force_kill_at = None;
+                self.answer_stop_waiters(Err(WriteError::Refused(code)));
+                self.stop = None;
+                self.next_signal_at = None;
+            }
+            (Expected::Checkpoint, Reply::Error(code)) => {
+                debug!(session = %self.session_id, ?code, "the holder wrote no checkpoint");
             }
             (Expected::Write(done), Reply::Done) => answer(done, Ok(())),
             (Expected::Write(done), Reply::Error(code)) => {
@@ -345,17 +399,34 @@ impl Supervisor {
         Ok(())
     }
 
-    /// Sends `SIGHUP`, the signal that the end of a terminal gives to its
-    /// processes. `SIGKILL` follows after the grace time.
-    async fn hang_up(&mut self, connection: &mut HolderConnection) -> io::Result<()> {
-        self.request(
-            connection,
-            Request::Signal(ChildSignal::Hangup),
-            Expected::Signal,
-        )
-        .await?;
-        self.force_kill_at = Some(Instant::now() + HANGUP_GRACE);
-        Ok(())
+    /// Starts `stop`, if no stop runs.
+    async fn begin_stop(
+        &mut self,
+        connection: &mut HolderConnection,
+        stop: StopSequence,
+    ) -> io::Result<()> {
+        if self.stop.is_some() {
+            return Ok(());
+        }
+        self.stop = Some(stop);
+        self.send_next_signal(connection).await
+    }
+
+    /// Sends the next signal of the stop, and sets the time of the signal
+    /// after it.
+    async fn send_next_signal(&mut self, connection: &mut HolderConnection) -> io::Result<()> {
+        self.next_signal_at = None;
+        let Some(stop) = &mut self.stop else {
+            return Ok(());
+        };
+        let Some(signal) = stop.signals.pop_front() else {
+            return Ok(());
+        };
+        if !stop.signals.is_empty() {
+            self.next_signal_at = Some(Instant::now() + stop.wait);
+        }
+        self.request(connection, Request::Signal(signal), Expected::Signal)
+            .await
     }
 
     /// Connects to the holder again. The pause between two attempts grows,
@@ -400,10 +471,32 @@ impl Supervisor {
             .find(|holder| holder.session_id == self.session_id))
     }
 
-    fn answer_kill_waiters(&mut self, result: Result<(), WriteError>) {
+    fn answer_stop_waiters(&mut self, result: Result<(), WriteError>) {
         for waiter in self.kill_waiters.drain(..) {
             answer(Some(waiter), result);
         }
+        answer(self.hibernate_waiter.take(), result);
+    }
+}
+
+/// The signals that end a command, and the time after each one.
+struct StopSequence {
+    signals: VecDeque<ChildSignal>,
+    wait: Duration,
+}
+
+impl StopSequence {
+    fn new(signals: Vec<ChildSignal>, wait: Duration) -> Self {
+        Self {
+            signals: signals.into(),
+            wait,
+        }
+    }
+
+    /// `SIGHUP`, the signal that the end of a terminal gives to its
+    /// processes, and `SIGKILL` after the grace time.
+    fn kill() -> Self {
+        Self::new(vec![ChildSignal::Hangup, ChildSignal::Kill], HANGUP_GRACE)
     }
 }
 

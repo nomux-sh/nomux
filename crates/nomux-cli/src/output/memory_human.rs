@@ -1,21 +1,24 @@
 //! The text form of the sessions of `ls --memory`: one row for each
-//! session, and one line with the totals.
+//! session, and one line with the totals. A hibernated session shows the
+//! memory that its hibernation gave back.
 
 use nomux_client::{MemoryMeasure, Session, SessionMemory};
 
-use super::human::state_name;
+use super::human::session_state_name;
 use super::memory_size::memory_size;
 use super::table::{Cell, Table};
 use super::wrapped_line::wrapped;
-use crate::session_memory::{MemoryTotal, memory_of};
+use crate::session_memory::{FreedMemory, MemoryTotal, freed_bytes, memory_of};
 
-const HEADERS: [&str; 7] = [
+const HEADERS: [&str; 9] = [
     "ID",
     "STATE",
     "MEMORY",
     "PROCESSES",
     "HOLDER",
     "MEASURE",
+    "LIMIT",
+    "FREED",
     "COMMAND",
 ];
 const ABSENT: &str = "-";
@@ -28,28 +31,35 @@ pub(super) fn session_table(
     const PROCESSES: usize = 3;
     const HOLDER: usize = 4;
     const MEASURE: usize = 5;
-    const COMMAND: usize = 6;
-    // The total line names the measure, and the memory of the command
-    // matters more than its number of processes and its holder.
+    const LIMIT: usize = 6;
+    const FREED: usize = 7;
+    const COMMAND: usize = 8;
+    // The total line names the measure, the last line has the memory that
+    // the hibernations gave back, and the memory of the command matters more
+    // than its number of processes and its holder.
     let mut table = Table::new(&HEADERS)
         .shorten(&[COMMAND])
-        .omit(&[MEASURE, PROCESSES, HOLDER]);
+        .omit(&[MEASURE, LIMIT, FREED, PROCESSES, HOLDER]);
     for session in sessions {
         let row = row(session, memory_of(memory, &session.id));
         table.push(row.into_iter().map(Cell::new).collect());
     }
     let mut text = table.render(width);
     text.push_str(&wrapped(&total_line(&MemoryTotal::of(memory)), width));
+    if let Some(line) = freed_line(&FreedMemory::of(sessions)) {
+        text.push_str(&wrapped(&line, width));
+    }
     text
 }
 
-fn row(session: &Session, memory: Option<&SessionMemory>) -> [String; 7] {
+fn row(session: &Session, memory: Option<&SessionMemory>) -> [String; 9] {
     let command = match session.command.join(" ") {
         command if command.is_empty() => ABSENT.to_owned(),
         command => command,
     };
     let measured = memory.map_or(
         [
+            ABSENT.to_owned(),
             ABSENT.to_owned(),
             ABSENT.to_owned(),
             ABSENT.to_owned(),
@@ -61,19 +71,37 @@ fn row(session: &Session, memory: Option<&SessionMemory>) -> [String; 7] {
                 memory.command_processes.to_string(),
                 memory_size(memory.holder_bytes),
                 measure_name(memory.measure).to_owned(),
+                memory
+                    .limit_bytes
+                    .map_or_else(|| ABSENT.to_owned(), memory_size),
             ]
         },
     );
-    let [memory, processes, holder, measure] = measured;
+    let [memory, processes, holder, measure, limit] = measured;
+    let freed = freed_bytes(session).map_or_else(|| ABSENT.to_owned(), memory_size);
     [
         session.id.clone(),
-        state_name(session.state).to_owned(),
+        session_state_name(session).to_owned(),
         memory,
         processes,
         holder,
         measure,
+        limit,
+        freed,
         command,
     ]
+}
+
+/// The memory that the hibernated sessions gave back. `None` without a
+/// hibernated session.
+fn freed_line(freed: &FreedMemory) -> Option<String> {
+    (freed.sessions > 0).then(|| {
+        format!(
+            "hibernated: {} given back by {}",
+            memory_size(freed.bytes),
+            counted(freed.sessions, "session", "sessions")
+        )
+    })
 }
 
 fn total_line(total: &MemoryTotal) -> String {
@@ -134,6 +162,8 @@ mod tests {
             last_attached_at: None,
             attached_clients: 0,
             resolved_working_directory: None,
+            hibernation: None,
+            pinned: false,
         }
     }
 
@@ -144,23 +174,44 @@ mod tests {
             command_processes: 3,
             holder_bytes: 2 * MEBIBYTE,
             measure,
+            limit_bytes: None,
         }
     }
 
     #[test]
-    fn a_session_without_a_process_has_no_values_and_is_not_in_the_total() {
+    fn a_session_without_a_process_has_no_values_and_a_hibernated_one_has_the_memory_it_gave_back()
+    {
+        use nomux_client::{Hibernation, HibernationReason};
+
+        let hibernated = Session {
+            hibernation: Some(Hibernation {
+                hibernated_at: 5,
+                reason: HibernationReason::Count,
+                freed: Some((300 * MEBIBYTE, MemoryMeasure::Proportional)),
+                resume_command: "claude --resume 1".to_owned(),
+                woken_at: None,
+                wake_error: None,
+            }),
+            ..session("ef", SessionState::Dormant, &["claude"])
+        };
         let sessions = [
             session("ab", SessionState::Running, &["claude"]),
             session("cd", SessionState::Dormant, &["vim", "notes.txt"]),
+            hibernated,
         ];
-        let memory = [memory("ab", 512 * MEBIBYTE, MemoryMeasure::Proportional)];
+        let memory = [SessionMemory {
+            limit_bytes: Some(4096 * MEBIBYTE),
+            ..memory("ab", 512 * MEBIBYTE, MemoryMeasure::Proportional)
+        }];
 
         assert_eq!(
             session_table(&sessions, &memory, None),
-            "ID  STATE    MEMORY     PROCESSES  HOLDER   MEASURE  COMMAND\n\
-             ab  running  512.0 MiB  3          2.0 MiB  pss      claude\n\
-             cd  dormant  -          -          -        -        vim notes.txt\n\
-             total: 512.0 MiB in 3 processes of 1 session, and 2.0 MiB in the holders (pss)\n"
+            "ID  STATE       MEMORY     PROCESSES  HOLDER   MEASURE  LIMIT    FREED      COMMAND\n\
+             ab  running     512.0 MiB  3          2.0 MiB  pss      4.0 GiB  -          claude\n\
+             cd  dormant     -          -          -        -        -        -          vim notes.txt\n\
+             ef  hibernated  -          -          -        -        -        300.0 MiB  claude\n\
+             total: 512.0 MiB in 3 processes of 1 session, and 2.0 MiB in the holders (pss)\n\
+             hibernated: 300.0 MiB given back by 1 session\n"
         );
     }
 

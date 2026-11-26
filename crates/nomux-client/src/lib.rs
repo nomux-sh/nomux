@@ -76,6 +76,7 @@ mod error;
 mod events;
 mod extension;
 mod extension_requests;
+mod hibernation;
 mod hook_install;
 mod hook_requests;
 mod hooks;
@@ -102,11 +103,12 @@ pub use client::Client;
 pub use client_kind::ClientKind;
 pub use doctor::{HostCheck, check_host};
 pub use error::ClientError;
-pub use events::{EventBody, EventStream, EventType, HostEvent};
+pub use events::{EventBody, EventStream, EventType, HibernatedEvent, HostEvent};
 pub use extension::{
     Extension, ExtensionCallError, ExtensionErrorCode, ExtensionPackage, ExtensionPermissions,
     ExtensionState,
 };
+pub use hibernation::{Hibernation, HibernationReason};
 pub use hook_install::{
     HooksState, SettingsChange, ToolHooks, hooks_of_tool, plan_hook_install, plan_hook_uninstall,
     tools_with_installed_hooks,
@@ -115,7 +117,7 @@ pub use hooks::{
     HookAdapter, HookEvent, HookInstallPlan, HookPlatform, SettingsEntry, SettingsPath,
 };
 pub use host::Host;
-pub use host_info::HostInfo;
+pub use host_info::{HostInfo, MemoryLimitSupport};
 pub use nomux_core::configuration::RestorePolicy;
 pub use nomux_core::workspace_tree::{Node, NodeKind, TreeError, WorkspaceTree};
 pub use scrollback::{CaptureRange, CapturedOutput};

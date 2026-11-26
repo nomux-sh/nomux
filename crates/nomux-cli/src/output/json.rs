@@ -4,13 +4,15 @@ use std::borrow::Cow;
 use std::path::Path;
 
 use nomux_client::{
-    AttachEnd, ClientError, ExitStatus, HostEvent, HostInfo, RestorePolicy, Session, SessionExit,
+    AttachEnd, ClientError, ExitStatus, Hibernation, HostEvent, HostInfo, RestorePolicy, Session,
+    SessionExit,
 };
 use serde::Serialize;
 
 use super::extension_json::ExtensionBody;
 use super::hooks_json::HooksBody;
-use super::human::state_name;
+use super::human::{reason_name, state_name};
+use super::memory_human::measure_name;
 use super::memory_json::SessionsMemoryBody;
 use super::status_json::StatusBody;
 use super::workspace_json::{ProjectDocument, WorkspaceBody};
@@ -38,6 +40,7 @@ enum Body<'a> {
     RestorePolicy(RestorePolicyDocument<'a>),
     Service(ServiceDocument<'a>),
     Killed(&'a str),
+    Pinned(PinnedDocument<'a>),
     Attach(AttachDocument<'a>),
     Detached(DetachedDocument<'a>),
     Renamed(RenamedDocument<'a>),
@@ -163,6 +166,52 @@ pub(super) struct SessionDocument<'a> {
     exit: Option<ExitDocument>,
     #[serde(skip_serializing_if = "Option::is_none")]
     damage: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hibernation: Option<HibernationDocument<'a>>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pinned: bool,
+}
+
+/// The last hibernation of a session. `woken_at` is `null` while the
+/// session is hibernated.
+#[derive(Serialize)]
+struct HibernationDocument<'a> {
+    hibernated_at: u64,
+    reason: &'static str,
+    freed_bytes: Option<u64>,
+    measure: Option<&'static str>,
+    resume_command: &'a str,
+    woken_at: Option<u64>,
+    wake_error: Option<&'a str>,
+}
+
+impl<'a> From<&'a Hibernation> for HibernationDocument<'a> {
+    fn from(hibernation: &'a Hibernation) -> Self {
+        Self {
+            hibernated_at: hibernation.hibernated_at,
+            reason: reason_name(hibernation.reason),
+            freed_bytes: hibernation.freed.map(|(bytes, _)| bytes),
+            measure: hibernation.freed.map(|(_, measure)| measure_name(measure)),
+            resume_command: &hibernation.resume_command,
+            woken_at: hibernation.woken_at,
+            wake_error: hibernation.wake_error.as_deref(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct PinnedDocument<'a> {
+    id: &'a str,
+    pinned: bool,
+}
+
+impl<'a> From<(&'a Session, bool)> for PinnedDocument<'a> {
+    fn from((session, pinned): (&'a Session, bool)) -> Self {
+        Self {
+            id: &session.id,
+            pinned,
+        }
+    }
 }
 
 impl<'a> From<&'a Session> for SessionDocument<'a> {
@@ -181,6 +230,8 @@ impl<'a> From<&'a Session> for SessionDocument<'a> {
             restore_policy: session.restore_policy.map(RestorePolicy::as_str),
             exit: session.exit.map(ExitDocument::from),
             damage: session.damage.as_deref(),
+            hibernation: session.hibernation.as_ref().map(HibernationDocument::from),
+            pinned: session.pinned,
         }
     }
 }
@@ -319,6 +370,14 @@ struct DaemonDocument<'a> {
     sessions: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     configuration: Option<&'a Path>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    memory_limit: Option<MemoryLimitDocument<'a>>,
+}
+
+#[derive(Serialize)]
+struct MemoryLimitDocument<'a> {
+    applied: bool,
+    detail: &'a str,
 }
 
 impl<'a> From<Option<&'a HostInfo>> for DaemonDocument<'a> {
@@ -329,6 +388,12 @@ impl<'a> From<Option<&'a HostInfo>> for DaemonDocument<'a> {
             pid: info.map(|info| info.daemon_pid),
             sessions: info.map(|info| info.session_count),
             configuration: None,
+            memory_limit: info
+                .and_then(|info| info.memory_limit.as_ref())
+                .map(|limit| MemoryLimitDocument {
+                    applied: limit.applied,
+                    detail: &limit.detail,
+                }),
         }
     }
 }
@@ -345,9 +410,10 @@ struct ErrorDocument<'a> {
 
 pub(super) fn report(report: &Report) -> String {
     let body = match report {
-        Report::SessionCreated(session) | Report::SessionStarted(session) => {
-            Body::Session(session.into())
-        }
+        Report::SessionCreated(session)
+        | Report::SessionStarted(session)
+        | Report::SessionHibernated(session)
+        | Report::SessionWoken(session) => Body::Session(session.into()),
         Report::OutputCaptured { id, output } => Body::Capture(CaptureDocument {
             id,
             output: String::from_utf8_lossy(output),
@@ -376,6 +442,7 @@ pub(super) fn report(report: &Report) -> String {
             Body::SessionsMemory(SessionsMemoryBody::new(sessions, memory))
         }
         Report::SessionKilled { session } => Body::Killed(&session.id),
+        Report::SessionPinned { session, pinned } => Body::Pinned((session, *pinned).into()),
         Report::AttachEnded {
             session,
             end,
@@ -511,6 +578,8 @@ mod tests {
             last_attached_at: None,
             attached_clients: 0,
             resolved_working_directory: None,
+            hibernation: None,
+            pinned: false,
         }
     }
 
@@ -652,6 +721,7 @@ mod tests {
             daemon_version: "1.2.3".to_owned(),
             daemon_pid: 7,
             session_count: 2,
+            memory_limit: None,
         };
         assert_eq!(
             report(&Report::DaemonStatus {
@@ -696,6 +766,7 @@ mod tests {
                 daemon_version: "1.2.3".to_owned(),
                 daemon_pid: 7,
                 session_count: 0,
+                memory_limit: None,
             },
         };
         assert_eq!(

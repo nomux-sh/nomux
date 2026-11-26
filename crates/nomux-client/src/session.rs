@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use nomux_core::configuration::RestorePolicy;
 use nomux_proto::wire::v1 as wire;
 
-use crate::WindowSize;
+use crate::{Hibernation, WindowSize};
 
 /// The state of a session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,6 +106,12 @@ pub struct Session {
     /// The number of clients that are attached to the session now: 0 from
     /// an older daemon.
     pub attached_clients: u32,
+    /// The last hibernation: while the session is hibernated, and while
+    /// its command is the resumed run. `None` if the session never
+    /// hibernated, and from an older daemon.
+    pub hibernation: Option<Hibernation>,
+    /// The user excluded the session from automatic hibernation.
+    pub pinned: bool,
 }
 
 impl Session {
@@ -113,6 +119,17 @@ impl Session {
     #[must_use]
     pub fn label(&self) -> &str {
         self.name.as_deref().unwrap_or(&self.id)
+    }
+
+    /// `true` if the daemon stopped the command of the agent of the session
+    /// and waits for its wake.
+    #[must_use]
+    pub fn is_hibernated(&self) -> bool {
+        self.state == SessionState::Dormant
+            && self
+                .hibernation
+                .as_ref()
+                .is_some_and(|hibernation| hibernation.woken_at.is_none())
     }
 }
 
@@ -150,6 +167,8 @@ impl From<wire::Session> for Session {
             damage: (!session.damage.is_empty()).then_some(session.damage),
             last_attached_at: (session.last_attached_at != 0).then_some(session.last_attached_at),
             attached_clients: session.attached_clients,
+            hibernation: session.hibernation.map(Hibernation::from),
+            pinned: session.pinned,
         }
     }
 }

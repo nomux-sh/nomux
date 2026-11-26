@@ -147,6 +147,26 @@ pub(crate) enum Command {
         #[command(flatten)]
         target: Target,
     },
+    /// Stop the idle agent of a session and keep the session until a wake
+    Hibernate {
+        #[command(flatten)]
+        target: Target,
+    },
+    /// Start the agent of a hibernated session again with its resume command
+    Wake {
+        #[command(flatten)]
+        target: Target,
+    },
+    /// Exclude a session from automatic hibernation
+    Pin {
+        #[command(flatten)]
+        target: Target,
+    },
+    /// Take the exclusion of `pin` back
+    Unpin {
+        #[command(flatten)]
+        target: Target,
+    },
     /// End a session. A dormant session is removed with its output
     #[command(alias = "kill-session")]
     Kill(KillArguments),

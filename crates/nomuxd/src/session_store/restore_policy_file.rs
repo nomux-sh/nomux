@@ -6,9 +6,7 @@
 //! it again from its memory, thus a value that the daemon puts there does
 //! not stay.
 
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
-use std::os::unix::fs::OpenOptionsExt;
+use std::io;
 use std::path::Path;
 
 use nomux_core::configuration::RestorePolicy;
@@ -16,10 +14,6 @@ use nomux_core::configuration::RestorePolicy;
 use super::small_file;
 
 const FILE: &str = "restore-policy";
-/// The policy goes to this file first. A rename then replaces the policy
-/// file in one step.
-const NEW_FILE: &str = "restore-policy.new";
-const OWNER_READ_WRITE: u32 = 0o600;
 const MAX_LENGTH: u64 = 64;
 
 /// The policy in `session_directory`. `None` if the session has no policy,
@@ -31,13 +25,5 @@ pub(super) fn read(session_directory: &Path) -> Option<RestorePolicy> {
 }
 
 pub(super) fn write(session_directory: &Path, policy: RestorePolicy) -> io::Result<()> {
-    let new_file = session_directory.join(NEW_FILE);
-    OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(OWNER_READ_WRITE)
-        .open(&new_file)?
-        .write_all(format!("{policy}\n").as_bytes())?;
-    fs::rename(new_file, session_directory.join(FILE))
+    small_file::replace(session_directory, FILE, format!("{policy}\n").as_bytes())
 }

@@ -35,18 +35,22 @@ Bare `nomux` on a terminal attaches to the most recent session (see `attach` wit
 | `capture [-f] <target> [--lines <n>]` | Prints the last output lines of a session. With `-f`, then each byte that the command writes |
 | `restore-policy <target> <policy>` | Sets when a dormant session starts again: `auto`, `on-focus` or `manual` |
 | `detach <target>` | Detaches the clients that are attached to a session. The session continues |
+| `hibernate <target>` | Stops the idle agent of a session and keeps the session hibernated, with its output and its resume command |
+| `wake <target>` | Starts the agent of a hibernated session again with its resume command. `attach` does the same |
+| `pin <target>` | Excludes a session from automatic hibernation |
+| `unpin <target>` | Takes the exclusion of `pin` back |
 | `kill <target>` | Ends a session and waits until its command has ended. Removes a dormant session with its output |
 | `kill --all [--include-dormant] [--dry-run] [--yes]` | Ends each session whose command runs. On a terminal it asks first |
 | `rename <target> <new-name>` | Gives a session a different name |
 | `send [--no-enter] [-k] <target> <text>...` | Types a line, or keys with `-k`, into a session |
-| `daemon status` | Shows if the daemon runs |
+| `daemon status` | Shows if the daemon runs, and if the operating system applies a memory limit to a session |
 | `daemon stop` | Stops the daemon. The sessions continue |
 | `daemon install-service [--dry-run]` | Writes the file that starts the daemon at login |
 | `daemon uninstall-service [--dry-run]` | Removes that file |
 | `host add <ssh-target> [--name <name>]` | Connects to a host through SSH, installs nomux there, starts the daemon and saves the host |
 | `host ls` | Lists the saved hosts |
 | `host rm <name>` | Removes a saved host. Nothing changes on the host |
-| `host doctor [<name>]` | Checks the connection, the platform, the binaries, the permissions and the daemon of a host |
+| `host doctor [<name>]` | Checks the connection, the platform, the binaries, the permissions and the daemon of a host, and shows if its operating system applies a memory limit |
 | `ext ls` | Lists the installed extensions |
 | `ext install <directory> [--grant <permission>]... [--grant-all]` | Installs an extension from a directory on the host, with the permissions that the options approve |
 | `ext rm <id>` | Stops an extension and removes its package, its state and its data |
@@ -169,14 +173,18 @@ The session does not need the CLI or the daemon after that.
 If a session has a name, the table has the column `NAME` after `ID`, and `-` for a session without a name.
 If a session belongs to a Project of the workspace tree, the table has the column `PROJECT` with the path of the Project, and `-` for a session without a Project. [workspace.md](workspace.md#the-project-of-a-session) has the rule.
 
+A hibernated session has the state `hibernated`, and its note has the reason of the hibernation (`count`, `session-memory`, `total-memory`, `memory-pressure` or `request`) and the reason of a wake that failed. A pinned session has the note `pinned`.
+
 `ls --memory` also shows the memory that the processes of each session use at the time of the command. The daemon measures the memory for this command only: without `--memory`, `ls` measures nothing.
 
 ```console
 $ nomux ls --memory
-ID        STATE    MEMORY     PROCESSES  HOLDER     MEASURE  COMMAND
-k3xq2abc  running  512.4 MiB  7          607.0 KiB  pss      claude
-p2rs6tuv  dormant  -          -          -          -        vim notes.txt
+ID        STATE       MEMORY     PROCESSES  HOLDER     MEASURE  LIMIT    FREED      COMMAND
+k3xq2abc  running     512.4 MiB  7          607.0 KiB  pss      4.0 GiB  -          claude
+p2rs6tuv  dormant     -          -          -          -        -        -          vim notes.txt
+q4nn7abc  hibernated  -          -          -          -        -        487.1 MiB  claude --resume 0b1c
 total: 512.4 MiB in 7 processes of 1 session, and 607.0 KiB in the holders (pss)
+hibernated: 487.1 MiB given back by 1 session
 ```
 
 | Column | Meaning |
@@ -185,9 +193,11 @@ total: 512.4 MiB in 7 processes of 1 session, and 607.0 KiB in the holders (pss)
 | `PROCESSES` | The number of processes in that tree |
 | `HOLDER` | The memory of the holder of the session. It is not a part of `MEMORY` |
 | `MEASURE` | `pss`: the proportional set size, which counts a page that more than one process uses one time. `rss`: the resident set size, which counts such a page for each process. Linux gives `pss`, macOS gives `rss` |
+| `LIMIT` | The memory limit that the operating system applies to the processes of the command. `-` if none applies |
+| `FREED` | For a hibernated session: the memory that its hibernation gave back. The last line has the sum, if a session is hibernated |
 
-- A session without a process has `-` in the four columns and is not in the total line.
-- On a narrow terminal, the table leaves out `MEASURE` first: the total line names the measure. See "Rules".
+- A session without a process has `-` in the five columns of the measured values and is not in the total line.
+- On a narrow terminal, the table leaves out `MEASURE` first, then `LIMIT`, `FREED`, `PROCESSES` and `HOLDER`: the total line names the measure, and the last line has the sum of `FREED`. See "Rules".
 - The table has no `NAME` column, no `PID` column and no `NOTE` column. `ls` without `--memory` has them. The JSON document has the name.
 - A size has the unit `KiB`, `MiB` or `GiB` (1024 bytes, 1024 KiB, 1024 MiB) and one decimal place. The JSON output has the bytes.
 - If the sessions do not have the same measure, the total line says `pss and rss`: the sum then has values of the two kinds.
@@ -212,6 +222,14 @@ A session is dormant when its holder is gone and its command did not end. After 
 
 The default policy is `default_policy` in the `[restore]` table of the configuration file of the host. `ls --json` shows the policy of each session.
 The command of an ended session does not start again: `start` and `attach` have the exit code 2 for it.
+
+### Hibernation: `hibernate`, `wake`, `pin` and `unpin`
+
+A hibernated session is an agent session whose agent the daemon stopped, because the agent was idle and its adapter gave a resume command. The session keeps its output and its last Agent run. [memory.md](memory.md#hibernation) has the triggers and the conditions.
+
+- `hibernate <target>` hibernates the session now and prints the memory that the hibernation gave back. It fails with the exit code 1 and the reason if the session cannot hibernate: no adapter reports it as an agent session, its adapter gave no resume command, its agent works or waits for the user, a client shows it, or input came after the last change of its status. The idle time and the pin do not apply.
+- `wake <target>` starts the resume command of the hibernated session in its working directory and prints the command. `attach <target>` does the same and shows the old screen first. A session that is not hibernated fails with the exit code 1: `start` starts a dormant session. A wake that fails has the exit code 1, the reason and the resume command to run by hand; the session stays hibernated.
+- `pin <target>` excludes the session from each automatic hibernation. `unpin <target>` takes the exclusion back. `ls` shows the note `pinned`. A pin has no effect on `hibernate`.
 
 ### `capture`
 
@@ -484,6 +502,7 @@ These commands change and list the workspace tree of the host: the Groups and th
 - The state of a row is the most urgent status of the session and of its Child work. `needs you` has the kind of the wait if a source says it: `needs you: permission`.
 - A status that the daemon guessed has `(guess)`: the prompt marks of the shell or the foreground program of the terminal, and no report of a program.
 - A result that the user saw has `(seen)`. An attach to a session marks its results as seen.
+- A hibernated session has `hibernated: <reason>` as its state, for example `hibernated: count`. The JSON output has the field `hibernated` with the reason in the object of the session.
 - The mark: `!` needs you, `x` error, `+` done, `*` working, and no mark for idle.
 - With `--tree`, each Child work is a row below its session, indented two spaces for each level. A Child work that no source reports has `-` as its state.
 - A session that has a name shows its name in place of its identifier.
@@ -518,7 +537,7 @@ For an ended session, the command prints its kept run, with the resume command o
 
 `events --follow` (`-f`) subscribes to the events of the host and prints each event when it comes: with `--json`, one JSON document on each line (NDJSON). The command ends with the exit code 0 on `SIGINT` (Ctrl-C) or `SIGTERM`, when the daemon closes the connection, and when the reader of the standard output closes it.
 
-- `--filter <type>` prints only the events of a type: `agent-run-changed`, `agent-run-removed`, `extension-event` or `workspace-changed`. Give the option more than one time for more types. A snapshot is always printed.
+- `--filter <type>` prints only the events of a type: `agent-run-changed`, `agent-run-removed`, `extension-event`, `workspace-changed`, `session-hibernated`, `session-woken`, `session-wake-failed` or `session-memory-limit-reached`. Give the option more than one time for more types. A snapshot is always printed.
 - The command prints the events after its start. A snapshot comes when the daemon does not have the events that the command needs.
 - A text line is `<seq> <session> <state> <message>` for a change, `<seq> <session> removed` for a session that ended or was removed, `<seq> extension <id>: <name> (<n> bytes)` for an event of an extension, `<seq> workspace revision <revision>: <change>` for a change of the workspace tree, and `<seq> snapshot: ...` for a snapshot.
 
@@ -713,7 +732,7 @@ With `--json`, a command prints one JSON document on one line.
 
 **Schema version rule.** The value increases when a field is removed, gets a different name or gets a different meaning. A new field does not increase the value, thus a reader must ignore the fields that it does not know.
 
-### `new` and `start`
+### `new`, `start`, `hibernate` and `wake`
 
 ```json
 {"schema_version":1,"session":{"id":"k3xq2abc","name":"api","state":"running","pid":41873,"command":["/bin/zsh"],"cwd":"/home/user/project","rows":24,"columns":80,"started_at":1795651200,"epoch":1,"restore_policy":"on-focus"}}
@@ -733,6 +752,8 @@ With `--json`, a command prints one JSON document on one line.
 | `session.restore_policy` | string or `null` | `auto`, `on-focus` or `manual`. `null` for a policy that the CLI does not know |
 | `session.exit` | object | Only if `state` is `ended`: `ended_at` (seconds after the Unix epoch), and `exit_code` or `signal`. The object has neither of the two if the daemon does not know how the command ended |
 | `session.damage` | string | Only if a state file of the session is damaged: the reason, in English for a person. The text is not stable |
+| `session.hibernation` | object | Only if the session hibernated: `hibernated_at` (seconds after the Unix epoch), `reason` (`count`, `session-memory`, `total-memory`, `memory-pressure`, `request` or `unknown`), `freed_bytes` and `measure` (`null` if the daemon did not measure), `resume_command`, `woken_at` (`null` while the session is hibernated; else the time of the wake of the current run) and `wake_error` (`null`, or why the last wake failed). A hibernated session has the `state` `dormant` |
+| `session.pinned` | boolean | Only if it is `true`: the session is excluded from automatic hibernation |
 
 A field is `null`, or `command` is empty, when the daemon does not know the value: for a damaged session, and for a session of a holder that is too old to write the description. The document never has the environment of the command.
 
@@ -760,9 +781,11 @@ The document is the document of `ls` with one more field in each session and one
 | `sessions[].memory.command_processes` | number | The number of processes in that tree |
 | `sessions[].memory.holder_bytes` | number | The memory of the holder of the session in bytes |
 | `sessions[].memory.measure` | string | `pss`, `rss`, or `unknown` for a measure that the CLI does not know |
+| `sessions[].memory.limit_bytes` | number or `null` | The memory limit that the operating system applies to the command. `null` if none applies |
 | `memory_total.command_bytes`, `memory_total.command_processes`, `memory_total.holder_bytes` | number | The sums of the three values of the sessions that have a process |
 | `memory_total.sessions` | number | The number of sessions in the sums |
 | `memory_total.measure` | string or `null` | The measure of the sums. `null` if the sessions do not have the same measure, or if no session has a process |
+| `memory_total.freed_bytes`, `memory_total.hibernated_sessions` | number | The memory that the hibernated sessions gave back, and their number |
 
 ### `capture`
 
@@ -820,6 +843,12 @@ The command prints the document after the attach ended.
 
 `renamed.name` is the new name. `renamed.previous_name` is the name before the command, or `null`.
 
+### `pin` and `unpin`
+
+```json
+{"schema_version":1,"pinned":{"id":"k3xq2abc","pinned":true}}
+```
+
 ### `kill`
 
 ```json
@@ -856,6 +885,7 @@ The command prints the document after the attach ended.
 | `daemon.version` | string | The product version of the daemon |
 | `daemon.pid` | number | The process ID of the daemon |
 | `daemon.sessions` | number | The number of sessions |
+| `daemon.memory_limit` | object | `applied` (`true` if the operating system ends the processes of a session at its limit) and `detail` (how, or why not, in English). Not in the document from an older daemon |
 | `daemon.configuration` | string | The path of the global configuration file of the local host, also if no daemon runs. Not in the document with `--host`, in the `daemon` object of `host add`, or if `HOME` is not set |
 
 ### `daemon stop`
@@ -1081,11 +1111,13 @@ Each line is one document:
 |---|---|---|
 | `event.seq` | number | The position of the event in the event log of the daemon. The numbers start again when the daemon starts again |
 | `event.at_ms` | number | When the event occurred: milliseconds after the Unix epoch |
-| `event.type` | string | `agent_run_changed`, `agent_run_removed`, `extension_event`, `workspace_changed`, `snapshot`, or `unknown` for an event that the CLI does not know |
-| `event.session` | string | The session. Only in `agent_run_changed` and `agent_run_removed` |
+| `event.type` | string | `agent_run_changed`, `agent_run_removed`, `extension_event`, `workspace_changed`, `session_hibernated`, `session_woken`, `session_wake_failed`, `session_memory_limit_reached`, `snapshot`, or `unknown` for an event that the CLI does not know |
+| `event.session` | string | The session. Only in `agent_run_changed`, `agent_run_removed` and the four session events |
 | `event.run` | object | Only in `agent_run_changed`: the Agent run after the change, with the fields of `explain.run` |
 | `event.extension` | object | Only in `extension_event`: `id` (the extension), `name` (the name of the event) and `payload_base64` (the payload in base64: the extension selects its encoding) |
 | `event.workspace` | object | Only in `workspace_changed`: `revision`, and `change`: `added` with `node` (a node without `path`) and `index`, `renamed` with `id` and `name`, `moved` with `id`, `parent_id` and `index`, `removed` with `id`, or `unknown` |
+
+| `event.hibernation` | object | Only in the four session events, with the fields of the event: `reason`, `freed_bytes` and `measure`, and the numbers of the trigger (`live_agents` and `max_live_agents`, `memory_bytes` and `memory_limit_bytes`, or `pressure_stall_ms` and `pressure_window_ms`) for `session_hibernated`; `resume_command` for `session_woken`; `resume_command` and `error` for `session_wake_failed`; `limit_bytes` for `session_memory_limit_reached` |
 
 After a `snapshot`, one `agent_run_changed` event for each session gives the state of the host now. A reader discards the state that it had.
 
@@ -1150,7 +1182,7 @@ A wrong command line is not a JSON document: the argument parser writes its usag
 
 - `crates/nomux-cli/src/output/json.rs` and `crates/nomux-cli/src/output/extension_json.rs` have the full text of each document. A changed field fails these tests.
 - `crates/nomux-cli/src/arguments.rs` has the rule for the arguments after `--` and `--cmd`, and the usage error for the two forms in one command line. `crates/nomux-cli/src/output/memory_human.rs` has the full text of the table of `ls --memory`, `crates/nomux-cli/src/output/status_human.rs` has the table of `status`, and `tests/session_memory.rs` has its JSON document with real processes. `crates/nomux-cli/src/attach` has the key decoder with the legacy bytes, the kitty form, `modifyOtherKeys`, a sequence in two reads and a paste, and the mode of the terminal, also after a panic. `crates/nomux-core/src/configuration/prefix_keys.rs` has the rules of a prefix key.
-- `tests/` has the end-to-end tests that run the real `nomux`, `nomuxd` and `nomux-holder` and examine the exit codes. `tests/attach.rs` runs `nomux attach` in a pseudoterminal and examines the screen. `tests/remote_host.rs` runs the `host` commands and the commands with `--host` against an SSH server that the test starts. `tests/extensions.rs` runs the `ext` commands with a test extension that uses the extension SDK. `tests/restore.rs` stops each process as a restart of the host does and runs `ls`, `attach`, `start` and `restore-policy` on the dormant sessions. `tests/journal.rs` has `capture`, and `tests/daemon_service.rs` has the service file. `tests/status.rs` has `status`, `status set`, `agent explain` and `events --follow` with a program that reports its status. `tests/adapters.rs` has `hook`, the `hooks` commands and the event of an extension with the test adapter extension. `tests/session_names.rs` has a name after a restart of the host and two `new -A` at the same time. `tests/session_scripting.rs` has `send`, `kill --all` with its question, `attach -d`, `attach -r` and bare `nomux`. `crates/nomux-client/src/session_target.rs` has the table of the target rule. `tests/workspace.rs` has the `project` and `group` commands, the tree after a restart of the daemon, two clients that keep the same tree with the events, and `status --tree` with Groups.
+- `tests/` has the end-to-end tests that run the real `nomux`, `nomuxd` and `nomux-holder` and examine the exit codes. `tests/attach.rs` runs `nomux attach` in a pseudoterminal and examines the screen. `tests/remote_host.rs` runs the `host` commands and the commands with `--host` against an SSH server that the test starts. `tests/extensions.rs` runs the `ext` commands with a test extension that uses the extension SDK. `tests/restore.rs` stops each process as a restart of the host does and runs `ls`, `attach`, `start` and `restore-policy` on the dormant sessions. `tests/journal.rs` has `capture`, and `tests/daemon_service.rs` has the service file. `tests/status.rs` has `status`, `status set`, `agent explain` and `events --follow` with a program that reports its status. `tests/adapters.rs` has `hook`, the `hooks` commands and the event of an extension with the test adapter extension. `tests/session_names.rs` has a name after a restart of the host and two `new -A` at the same time. `tests/session_scripting.rs` has `send`, `kill --all` with its question, `attach -d`, `attach -r` and bare `nomux`. `crates/nomux-client/src/session_target.rs` has the table of the target rule. `tests/workspace.rs` has the `project` and `group` commands, the tree after a restart of the daemon, two clients that keep the same tree with the events, and `status --tree` with Groups. `tests/hibernation.rs` has `hibernate`, `wake`, `ls` and `capture` of a hibernated session, and `attach` as a wake.
 - `crates/nomux-cli/src/service_files` has the content of the systemd unit and of the launchd agent, also for a path that needs quotes.
 
 ## Open points for the next versions

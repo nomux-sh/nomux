@@ -1,6 +1,6 @@
 # Daemon
 
-This document describes the daemon (`nomuxd`): its process model, its socket, its lifecycle, how it finds and holds the holders, how it attaches clients to the terminal of a session, what it keeps of a session without a process, how it starts such a session again, how it keeps the status of each session and its events, how it keeps the workspace tree, and where it runs the extensions.
+This document describes the daemon (`nomuxd`): its process model, its socket, its lifecycle, how it finds and holds the holders, how it attaches clients to the terminal of a session, what it keeps of a session without a process, how it starts such a session again, how it keeps the status of each session and its events, how it hibernates an idle agent session, how it keeps the workspace tree, and where it runs the extensions.
 The code is in `crates/nomuxd`. The transport is in `crates/nomux-transport`, and the client side is in `crates/nomux-client`.
 
 [architecture.md](architecture.md) shows where the daemon is in the core. [holder.md](holder.md) describes the holder and its contract with the daemon. [cli.md](cli.md) describes the commands that use the daemon. [remote.md](remote.md) describes how a client on a different computer reaches the daemon through SSH. [extensions.md](extensions.md) describes the extension host of the daemon.
@@ -44,7 +44,8 @@ The start sequence is:
 6. Read the session state directories. A session that has no live holder becomes dormant, ended or damaged: see "Sessions without a holder". The daemon starts no process in this step.
 7. Read the installed extensions from the directory of the extension host. Start no extension.
 8. Accept connections.
-9. Start the command of each dormant session that has the restore policy `auto`.
+9. Start the command of each dormant session that has the restore policy `auto`, but not of a hibernated session.
+10. Start the task of the hibernation: see "Hibernation".
 
 A client that connects during steps 5 to 7 waits in the queue of the socket. Step 9 runs while the daemon answers clients.
 
@@ -109,7 +110,9 @@ The daemon implements these requests:
 | `Session.Detach` | Detaches each client that is attached to a session and gives their number |
 | `Session.Input` | Writes bytes to the terminal of a session and answers when the holder has them |
 | `Session.Resize` | Changes the window size of a session |
-| `Session.Memory` | Measures the memory that the processes of each session use. The daemon measures only for this request: [memory.md](memory.md) |
+| `Session.Memory` | Measures the memory that the processes of each session use, with the memory limit that the operating system applies. The daemon measures for this request and for a trigger of the hibernation only: [memory.md](memory.md) |
+| `Session.Hibernate` | Stops the agent of an agent session that can resume and keeps the session hibernated: [memory.md](memory.md#hibernation) |
+| `Session.SetPinned` | Excludes a session from automatic hibernation, or takes the exclusion back |
 | `Ext.List` | Gives the installed extensions with their state and their approved permissions |
 | `Ext.Inspect` | Validates an extension package in a directory and gives the permissions that its manifest asks for. Installs nothing |
 | `Ext.Install` | Installs an extension package from a directory with the permissions that the user approved |
@@ -146,6 +149,8 @@ idle_time = "10m"             # a number with the unit s, m, h or d
 shell_start_files = true      # false: the pool takes only sessions in the home directory
 ```
 
+The memory limits (`memory_limit` and `total_memory_limit` in `[sessions]`) and the settings of the hibernation (the `[agents]` table) are in [memory.md](memory.md#settings).
+
 | Key | Default | Function |
 |---|---|---|
 | `restore.default_policy` | `on-focus` | The restore policy of a session that has none of its own |
@@ -153,6 +158,8 @@ shell_start_files = true      # false: the pool takes only sessions in the home 
 | `pool.size` | `2` | The number of holders that the daemon keeps ready for a new session: see "Holder pool" |
 | `pool.idle_time` | `10m` | How long the pool stays when no session starts |
 | `pool.shell_start_files` | `true` | A pooled `bash`, `zsh` or `fish` starts with a start file of nomux, which changes to the directory of the session before the first prompt. With `false`, the pool takes only sessions in the home directory: see "Holder pool" |
+| `sessions.memory_limit`, `sessions.total_memory_limit` | none | The memory limit of one session and of all sessions: [memory.md](memory.md#memory-limit). With `memory_limit`, the pool is off |
+| `agents.*` | see [memory.md](memory.md#settings) | When the daemon hibernates an idle agent session |
 
 The daemon does not read the `[attach]` table: the CLI reads it for the prefix keys of an attach on the computer of the CLI ([cli.md](cli.md#attach)).
 
@@ -312,7 +319,7 @@ The holder of a session keeps the description of the session and its output in t
 
 | State | Condition | What the daemon has |
 |---|---|---|
-| `dormant` | No holder runs, and the `session` file says that the command ran | The description and the output. A restore starts the command again |
+| `dormant` | No holder runs, and the `session` file says that the command ran, or the file `hibernation` says that a hibernation ended the command | The description and the output. A restore starts the command again; for a hibernated session, a wake starts the resume command |
 | `ended` | The `session` file has an exit status, or the holder gave the exit status to this daemon | The description, the exit status, the time of the end and the output, for the retention time |
 | `damaged` | No holder runs, and the `session` file cannot be read | The reason, and the journal if it can be read |
 
@@ -353,6 +360,8 @@ Each session has a restore policy:
 - If the command cannot start, for example because its working directory is gone, the request fails with the code 1 and the session stays dormant.
 
 The environment of the new command is the environment of "Environment of a session", from the daemon at the time of the restore. The environment of the earlier command is not stored: it can have secrets.
+
+A restore of a hibernated session is a wake: the command is the resume command of its file `hibernation`, as words without a shell, and a wake that fails stays hibernated with the reason. [memory.md](memory.md#wake) has the steps.
 
 ### Ended sessions and the retention time
 
@@ -515,6 +524,10 @@ The daemon keeps the last events in memory: 1024 events at most, and 16 MiB of e
 
 `Hooks.Event` checks the token of the session as `Agent.SetStatus` does, and puts the event into a queue for the adapter extension of the tool: 256 events and 4 MiB at most. The response comes at once. One task calls the method `hook` of the adapters, one event at a time, and ends when the queue is empty. The adapter reports with the host services `agent.report` and `agent.child`, and the status registry keeps the reports as the source "adapter". [adapters.md](adapters.md) has the path of an event and the rules. The code is in `crates/nomuxd/src/hooks`, `crates/nomuxd/src/handlers/hooks.rs` and `crates/nomuxd/src/extensions/agent_services.rs`.
 
+## Hibernation
+
+One task applies the triggers of the hibernation: the count of the live agent sessions, the memory thresholds and the memory pressure of the host. It waits for an event of the event log, a detach, a pressure report of the kernel, and one timer at the time when a session becomes idle long enough if a trigger can then apply. It does not poll. The daemon owns two more files in the state directory of a session: `hibernation` (the last hibernation, as JSON) and `pinned` (empty). [memory.md](memory.md#hibernation) has the triggers, the conditions, the stop, the wake and the measurements. The code is in `crates/nomuxd/src/hibernation`, `crates/nomuxd/src/sessions/hibernate.rs` and `crates/nomuxd/src/memory_limit.rs`.
+
 ## Workspace tree
 
 The daemon owns the workspace tree of the host: the Groups and the Projects. It serves the Workspace service (`Workspace.Tree` and the six requests that change the tree) and sends a `WorkspaceChanged` event for each change, in the event log of "Events". It stores the tree with its revision in `workspace.json` in its state directory, with a write that replaces the file in one step, and reads the file only at its start. A file that it cannot use goes aside with a warning in the log, and the daemon starts with an empty tree. The daemon also resolves the symbolic links of the working directory of each session one time, and sends the result in `Session.resolved_working_directory`: a client finds the Project of a session with it. [workspace.md](workspace.md) has the model, the file, the rules and the Project of a session. The code is in `crates/nomuxd/src/workspace.rs`, `crates/nomuxd/src/workspace` and `crates/nomuxd/src/handlers/workspace.rs`.
@@ -674,6 +687,6 @@ These parts are not in the daemon yet:
 - **Daemon update.** `nomuxd --replace` takes over from a daemon that runs, and the clients of that daemon lose their connection. An update that keeps the connections is not written.
 - **Service files.** The launchd agent was not loaded on a Mac. The commands do not give the file to the service manager, and they do not stop a daemon.
 - **Log rotation.** `nomuxd.log` has no size limit. With the default level it stays almost empty.
-- **Memory limit.** The daemon shows the memory of each session and applies no limit. [memory.md](memory.md) has the design of the limit.
 - **Holder pool.** The start files of a pooled shell run in the home directory. Only `bash`, `zsh` and `fish` get the directory of a session that is not in the home directory. A session with a command gets a new holder. The pool has no size for each shell or each directory.
-- **Host identity, authentication, hibernation of agents, the QUIC transport.**
+- **Hibernation.** The memory pressure trigger on macOS, and a Task that is done as a candidate at once: [memory.md](memory.md#open-points).
+- **Host identity, authentication, the QUIC transport.**

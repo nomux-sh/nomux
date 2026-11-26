@@ -109,6 +109,8 @@ impl Attachment {
             () = detach.received() => output.end(EndReason::Detached).await,
             result = output.run(self.start) => result,
         };
+        drop(detach);
+        self.session.detached();
         if let Err(error) = result {
             debug!(%error, "an attach ended with an error");
         }

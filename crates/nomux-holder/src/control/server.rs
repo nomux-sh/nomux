@@ -228,6 +228,7 @@ fn answer(
             size,
             working_directory,
         }) => write_request(has_lease, || session.assign(size, working_directory)),
+        Ok(Request::Checkpoint) => write_request(has_lease, || session.checkpoint()),
         // `Request` can get a variant that this holder does not answer yet.
         Ok(_) => Reply::Error(ErrorCode::UnknownKind),
     };

@@ -4,13 +4,14 @@ use std::ffi::OsStr;
 
 use nomux_core::configuration::RestorePolicy;
 use nomux_proto::wire::v1::{
-    RestorePolicy as WireRestorePolicy, Session, SessionExit, SessionState as WireSessionState,
-    session_exit,
+    RestorePolicy as WireRestorePolicy, Session, SessionExit, SessionHibernation,
+    SessionState as WireSessionState, session_exit,
 };
 
 use crate::holder::SessionEnd;
 use crate::session_registry::{EndedSession, SessionState};
-use crate::sessions::ListedSession;
+use crate::session_store::HibernationRecord;
+use crate::sessions::{ListedSession, wire_measure, wire_reason};
 
 impl From<ListedSession> for Session {
     fn from(listed: ListedSession) -> Self {
@@ -33,6 +34,8 @@ impl From<ListedSession> for Session {
                 .map_or_else(String::new, |name| name.to_string()),
             last_attached_at: listed.last_attached_at.unwrap_or(0),
             attached_clients: u32::try_from(listed.attached_clients).unwrap_or(u32::MAX),
+            hibernation: listed.hibernation.map(SessionHibernation::from),
+            pinned: listed.pinned,
             ..Self::default()
         };
         // The metadata has no environment variable, thus the description
@@ -52,6 +55,23 @@ impl From<ListedSession> for Session {
             session.resolved_working_directory = text(resolved.as_os_str());
         }
         session
+    }
+}
+
+impl From<HibernationRecord> for SessionHibernation {
+    fn from(record: HibernationRecord) -> Self {
+        Self {
+            hibernated_at: record.hibernated_at,
+            reason: wire_reason(record.reason).into(),
+            freed_bytes: record.freed.map_or(0, |(bytes, _)| bytes),
+            measure: record
+                .freed
+                .map_or_else(Default::default, |(_, measure)| wire_measure(measure))
+                .into(),
+            resume_command: record.resume_command,
+            woken_at: record.woken_at.unwrap_or(0),
+            wake_error: record.wake_error.unwrap_or_default(),
+        }
     }
 }
 

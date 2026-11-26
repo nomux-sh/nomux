@@ -369,6 +369,27 @@ fn a_sequence_that_is_longer_than_a_block_does_not_stay_in_memory() {
 }
 
 #[test]
+fn a_checkpoint_now_has_the_screen_at_the_end_of_the_output() {
+    let mut recorded = Recorded::new(SMALL);
+    // Less output than the interval of the checkpoints.
+    recorded.write(b"the last screen\r\n");
+    recorded
+        .journal
+        .checkpoint_now(&mut recorded.screen, recorded.size);
+
+    let checkpoint = recorded
+        .reader()
+        .checkpoint_before(EPOCH, u64::MAX)
+        .unwrap()
+        .unwrap();
+    assert_eq!(checkpoint.position, recorded.output.len() as u64);
+    assert_eq!(
+        checkpoint.redraw_sequence,
+        redraw_sequence(&mut recorded.screen)
+    );
+}
+
+#[test]
 fn a_journal_that_cannot_write_stops_and_the_session_continues() {
     let mut recorded = Recorded::new(SMALL);
     let mut numbers = Numbers(3);

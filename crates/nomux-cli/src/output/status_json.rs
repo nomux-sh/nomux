@@ -10,6 +10,8 @@ use nomux_client::{
 };
 use serde::Serialize;
 
+use super::human::reason_name;
+use super::memory_human::measure_name;
 use super::workspace_json::NodeDocument;
 use crate::status_commands::{StatusReport, WorkspaceStatus};
 
@@ -81,6 +83,12 @@ impl<'a> TreeDocument<'a> {
         workspace: Option<&'a WorkspaceTree>,
     ) -> Self {
         let session_of = |id: &str| sessions.iter().find(|session| session.id == id);
+        let hibernated = |id: &str| {
+            session_of(id)
+                .filter(|session| session.is_hibernated())
+                .and_then(|session| session.hibernation.as_ref())
+                .map(|hibernation| reason_name(hibernation.reason))
+        };
         Self {
             attention: tree
                 .attention
@@ -92,8 +100,9 @@ impl<'a> TreeDocument<'a> {
             sessions: tree
                 .runs
                 .iter()
-                .map(|run| {
-                    RunDocument::new(
+                .map(|run| RunDocument {
+                    hibernated: hibernated(&run.session_id),
+                    ..RunDocument::new(
                         run,
                         Some(RunSessionDocument::of(session_of(&run.session_id))),
                         with_children,
@@ -137,6 +146,9 @@ struct RunDocument<'a> {
     children: Option<Vec<ChildDocument<'a>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     details: Option<DetailsDocument<'a>>,
+    /// The reason of the hibernation of a hibernated session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hibernated: Option<&'static str>,
 }
 
 /// The session of an Agent run in the tree.
@@ -188,6 +200,7 @@ impl<'a> RunDocument<'a> {
             aggregate: (&run.aggregate).into(),
             children: with_children.then(|| run.children.iter().map(ChildDocument::from).collect()),
             details: run.details.as_ref().map(DetailsDocument::from),
+            hibernated: None,
         }
     }
 }
@@ -332,6 +345,38 @@ pub(super) struct EventDocument<'a> {
     extension: Option<ExtensionEventDocument<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     workspace: Option<Box<WorkspaceEventDocument<'a>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hibernation: Option<Box<HibernationEventDocument<'a>>>,
+}
+
+/// An event of the hibernation of a session. Each field is only in the
+/// events that have it.
+#[derive(Default, Serialize)]
+struct HibernationEventDocument<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    freed_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    measure: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    live_agents: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_live_agents: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    memory_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    memory_limit_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pressure_stall_ms: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pressure_window_ms: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resume_command: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit_bytes: Option<u64>,
 }
 
 /// A change of the workspace tree.
@@ -400,6 +445,7 @@ impl<'a> From<&'a HostEvent> for EventDocument<'a> {
     fn from(event: &'a HostEvent) -> Self {
         let mut extension = None;
         let mut workspace = None;
+        let mut hibernation = None;
         let (kind, session, run) = match &event.body {
             EventBody::AgentRunChanged(run) => (
                 "agent_run_changed",
@@ -428,6 +474,57 @@ impl<'a> From<&'a HostEvent> for EventDocument<'a> {
                 }));
                 ("workspace_changed", None, None)
             }
+            EventBody::SessionHibernated(event) => {
+                hibernation = Some(Box::new(HibernationEventDocument {
+                    reason: Some(reason_name(event.reason)),
+                    freed_bytes: Some(event.freed_bytes),
+                    measure: Some(measure_name(event.measure)),
+                    live_agents: event.live_agents.map(|(live, _)| live),
+                    max_live_agents: event.live_agents.map(|(_, max_live)| max_live),
+                    memory_bytes: event.memory.map(|(bytes, _)| bytes),
+                    memory_limit_bytes: event.memory.map(|(_, limit)| limit),
+                    pressure_stall_ms: event.pressure.map(|(stall, _)| stall),
+                    pressure_window_ms: event.pressure.map(|(_, window)| window),
+                    ..HibernationEventDocument::default()
+                }));
+                ("session_hibernated", Some(event.session_id.as_str()), None)
+            }
+            EventBody::SessionWoken {
+                session_id,
+                resume_command,
+            } => {
+                hibernation = Some(Box::new(HibernationEventDocument {
+                    resume_command: Some(resume_command),
+                    ..HibernationEventDocument::default()
+                }));
+                ("session_woken", Some(session_id.as_str()), None)
+            }
+            EventBody::SessionWakeFailed {
+                session_id,
+                error,
+                resume_command,
+            } => {
+                hibernation = Some(Box::new(HibernationEventDocument {
+                    resume_command: Some(resume_command),
+                    error: Some(error),
+                    ..HibernationEventDocument::default()
+                }));
+                ("session_wake_failed", Some(session_id.as_str()), None)
+            }
+            EventBody::SessionMemoryLimitReached {
+                session_id,
+                limit_bytes,
+            } => {
+                hibernation = Some(Box::new(HibernationEventDocument {
+                    limit_bytes: Some(*limit_bytes),
+                    ..HibernationEventDocument::default()
+                }));
+                (
+                    "session_memory_limit_reached",
+                    Some(session_id.as_str()),
+                    None,
+                )
+            }
             EventBody::Snapshot => ("snapshot", None, None),
             EventBody::Unknown => ("unknown", None, None),
         };
@@ -439,6 +536,7 @@ impl<'a> From<&'a HostEvent> for EventDocument<'a> {
             run,
             extension,
             workspace,
+            hibernation,
         }
     }
 }
@@ -459,6 +557,7 @@ fn kind_name(state: AgentState) -> Option<&'static str> {
         AgentState::NeedsYou(Some(NeedsYouKind::Permission)) => Some("permission"),
         AgentState::NeedsYou(Some(NeedsYouKind::Question)) => Some("question"),
         AgentState::NeedsYou(Some(NeedsYouKind::Auth)) => Some("auth"),
+        AgentState::NeedsYou(Some(NeedsYouKind::Prompt)) => Some("prompt"),
         _ => None,
     }
 }

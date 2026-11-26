@@ -77,6 +77,8 @@ fn the_memory_of_a_session_is_the_memory_of_its_command_and_of_each_child_of_the
             "holder_bytes": holder_bytes,
             "sessions": 1,
             "measure": measure,
+            "freed_bytes": 0,
+            "hibernated_sessions": 0,
         })
     );
 
@@ -124,4 +126,53 @@ fn a_session_without_a_process_has_no_memory_and_the_total_has_only_the_other_se
     let plain = sandbox.nomux_ok(&["ls", "--json"]).json();
     assert_eq!(plain["sessions"][0].get("memory"), None);
     assert_eq!(plain.get("memory_total"), None);
+}
+
+/// The kernel applies a limit only where the daemon reaches a systemd user
+/// manager with control groups of version 2. Without one, the test writes
+/// `SKIPPED` with the reason.
+#[test]
+fn a_session_at_its_memory_limit_ends_and_the_other_sessions_continue() {
+    let mut sandbox = Sandbox::new();
+    sandbox.write_configuration("[sessions]\nmemory_limit = \"64M\"\n");
+    let _ = sandbox.nomux_ok(&["ls"]);
+    let daemon = sandbox.nomux_ok(&["daemon", "status", "--json"]).json();
+    let limit = &daemon["daemon"]["memory_limit"];
+    if limit["applied"] != true {
+        eprintln!("SKIPPED: {}", limit["detail"]);
+        return;
+    }
+    let small = new_session_that_uses(&sandbox, "small", &["16"]);
+    let session = &measured(&sandbox)["sessions"][0];
+    assert_eq!(session["memory"]["limit_bytes"], 64 * MEBIBYTE, "{session}");
+
+    let ready = sandbox.home().join("large");
+    let large = sandbox
+        .nomux_ok(&[
+            "new",
+            "--quiet",
+            "--",
+            MEMORY_USER,
+            ready.to_str().unwrap(),
+            "200",
+        ])
+        .stdout
+        .trim()
+        .to_owned();
+    let ended = wait_for("the kernel ends the session at its limit", || {
+        let list = sandbox.nomux_ok(&["ls", "--all", "--json"]).json();
+        list["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|session| session["id"] == large.as_str() && session["state"] == "ended")
+            .cloned()
+    });
+    assert_eq!(ended["exit"]["signal"], 9, "{ended}");
+    assert!(!ready.exists(), "the command never had 200 MiB");
+    let others = sandbox.sessions();
+    let small = others
+        .iter()
+        .find(|session| session["id"] == small.as_str());
+    assert_eq!(small.unwrap()["state"], "running");
 }

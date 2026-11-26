@@ -19,6 +19,7 @@
 //! 0x010C  AssignSession       rows (2), columns (2), length of the working
 //!                             directory (2), working directory; since
 //!                             protocol version 1.5
+//! 0x010D  Checkpoint          empty; since protocol version 1.6
 //! ```
 
 use super::frame::Frame;
@@ -37,6 +38,7 @@ const WAIT_PROGRAM_REPORTS: u16 = 0x0109;
 const JOURNAL_READ: u16 = 0x010A;
 const SESSION_TOKEN: u16 = 0x010B;
 const ASSIGN_SESSION: u16 = 0x010C;
+const CHECKPOINT: u16 = 0x010D;
 
 /// A signal that the daemon can send to the child command.
 ///
@@ -134,6 +136,10 @@ pub enum Request<'payload> {
         /// The bytes of a path: a path can have bytes that are not UTF-8.
         working_directory: &'payload [u8],
     },
+    /// Write each output byte that waits to the journal, and then a
+    /// checkpoint of the current screen. Needs the lease. Since protocol
+    /// version 1.6.
+    Checkpoint,
 }
 
 impl<'payload> Request<'payload> {
@@ -182,6 +188,7 @@ impl<'payload> Request<'payload> {
                 assignment = assignment_payload(size, working_directory);
                 (ASSIGN_SESSION, &assignment)
             }
+            Self::Checkpoint => (CHECKPOINT, &[]),
         };
         let frame = Frame {
             kind,
@@ -231,6 +238,7 @@ impl<'payload> Request<'payload> {
                     working_directory,
                 })
             }
+            CHECKPOINT => Ok(Self::Checkpoint),
             kind => Err(DecodeError::UnknownKind(kind)),
         }
     }
@@ -249,6 +257,7 @@ impl<'payload> Request<'payload> {
             Self::JournalRead { .. } => 3,
             Self::SessionToken => 4,
             Self::AssignSession { .. } => 5,
+            Self::Checkpoint => 6,
         }
     }
 }

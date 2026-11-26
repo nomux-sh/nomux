@@ -22,7 +22,11 @@
 //!   keeps on disk, its output history, and the sessions without a holder:
 //!   dormant, ended and damaged.
 //! - `session_memory`: the memory of the processes of each session, measured
-//!   when a client asks.
+//!   when a client asks or a trigger of the hibernation needs it.
+//! - `memory_limit`: the memory limit of a session as the operating system
+//!   applies it. The one place that knows the difference of the platforms.
+//! - `hibernation`: the triggers that stop an idle agent session that can
+//!   resume, and the rules that keep a session that must not stop.
 //! - `holder`: the holder side. One task owns the connection with the lease
 //!   to one holder. A second connection reads the terminal while a client
 //!   is attached.
@@ -49,7 +53,8 @@
 //! # Status
 //!
 //! The daemon creates, lists and ends sessions, attaches clients to them,
-//! reads their journal, and starts a dormant session again. A client on a
+//! reads their journal, and starts a dormant session again. It hibernates
+//! an idle agent session and wakes it with its resume command. A client on a
 //! different host reaches the socket through SSH. It installs extensions
 //! from a directory and calls their methods. It keeps the workspace tree of
 //! the Groups and the Projects. The daemon has no state database.
@@ -64,6 +69,7 @@ mod events;
 mod extensions;
 mod handlers;
 mod handshake;
+mod hibernation;
 mod holder;
 mod holder_pool;
 mod hooks;
@@ -71,6 +77,7 @@ mod in_flight_requests;
 mod instance_lock;
 mod listener;
 mod logging;
+mod memory_limit;
 mod runtime_directory;
 mod session_error;
 mod session_handle;

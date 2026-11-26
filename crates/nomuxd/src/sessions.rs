@@ -5,6 +5,7 @@
 
 mod adoption;
 mod attach_times;
+mod hibernate;
 mod memory;
 mod naming;
 mod pool;
@@ -23,26 +24,31 @@ use std::sync::Arc;
 use nomux_core::configuration::RestorePolicy;
 use nomux_holder_protocol::SessionId;
 use nomux_holder_protocol::discovery::{SOCKET_FILE, holder_directory, pooled_holder_directory};
+use nomux_holder_protocol::journal::FIRST_EPOCH;
 use nomux_holder_protocol::session_state::SessionMetadata;
-use tokio::sync::{Mutex, mpsc, watch};
+use tokio::sync::{Mutex, Notify, mpsc, watch};
+use tracing::warn;
 
+use crate::events::EventLog;
 use crate::holder::{
     self, HolderLink, HolderStart, LaunchError, OutputFeed, SharedOutputFeed, Supervisor,
 };
 use crate::holder_pool::HolderPool;
+use crate::memory_limit::LimitSupport;
 use crate::session_error::SessionError;
 use crate::session_handle::SessionHandle;
 use crate::session_id;
 use crate::session_journal::SessionJournal;
 use crate::session_name::SessionName;
 use crate::session_registry::{SessionRecord, SessionRegistry, SessionState};
-use crate::session_store::SessionStore;
-use crate::settings::Settings;
+use crate::session_store::{HibernationRecord, SessionStore};
+use crate::settings::{HibernationSettings, Settings};
 use crate::shutdown::Shutdown;
 use crate::status::{self, StatusRegistry};
 use crate::stopped_sessions::StoppedSessions;
 
 use self::attach_times::AttachTimes;
+pub(crate) use self::hibernate::{wire_measure, wire_reason};
 use self::resolved_directories::ResolvedDirectories;
 
 /// The commands of the attached clients and of the request handlers that
@@ -65,6 +71,9 @@ pub(crate) struct ListedSession {
     /// When a client attached the last time: seconds after the Unix epoch.
     pub(crate) last_attached_at: Option<u64>,
     pub(crate) attached_clients: usize,
+    /// The last hibernation. `None` if the session never hibernated.
+    pub(crate) hibernation: Option<HibernationRecord>,
+    pub(crate) pinned: bool,
 }
 
 /// The sessions of the host.
@@ -89,6 +98,14 @@ pub(crate) struct Sessions {
     /// One change of a name at a time: see `naming`.
     naming: Mutex<()>,
     attach_times: AttachTimes,
+    events: Arc<EventLog>,
+    /// The memory limit of one session from the configuration.
+    session_memory_limit: Option<u64>,
+    total_memory_limit: Option<u64>,
+    /// What the operating system gives for the limit.
+    limit_support: LimitSupport,
+    hibernation: HibernationSettings,
+    hibernation_check: Arc<Notify>,
 }
 
 impl Sessions {
@@ -103,6 +120,7 @@ impl Sessions {
         settings: Settings,
         shutdown: Shutdown,
         status: Arc<StatusRegistry>,
+        events: Arc<EventLog>,
     ) -> io::Result<Self> {
         let registry: Arc<SessionRegistry> = Arc::default();
         let store = Arc::new(SessionStore::locate()?);
@@ -117,6 +135,15 @@ impl Sessions {
             .filter(|home| !home.is_empty())
             .map(PathBuf::from)
             .ok_or_else(|| io::Error::other("the HOME variable of the daemon is not set"))?;
+        let limit_support = LimitSupport::detect();
+        if let (Some(limit), LimitSupport::Threshold { reason }) =
+            (settings.session_memory_limit, &limit_support)
+        {
+            warn!(
+                limit,
+                reason, "the memory limit of a session is a threshold for the hibernation only"
+            );
+        }
         Ok(Self {
             runtime_directory,
             registry,
@@ -126,9 +153,15 @@ impl Sessions {
             shutdown,
             status,
             restoring: Mutex::new(()),
+            // A pooled shell starts before its session, thus without the
+            // memory limit of a session: with a limit, the pool is off.
             pool: HolderPool::new(
                 shell.clone(),
-                settings.pool_size,
+                if settings.session_memory_limit.is_some() {
+                    0
+                } else {
+                    settings.pool_size
+                },
                 settings.pool_idle_time,
                 settings.pool_shell_start_files,
             ),
@@ -137,6 +170,12 @@ impl Sessions {
             resolved_directories: ResolvedDirectories::default(),
             naming: Mutex::new(()),
             attach_times: AttachTimes::default(),
+            events,
+            session_memory_limit: settings.session_memory_limit,
+            total_memory_limit: settings.total_memory_limit,
+            limit_support,
+            hibernation: settings.hibernation,
+            hibernation_check: Arc::default(),
         })
     }
 
@@ -174,9 +213,11 @@ impl Sessions {
             command.into_iter().map(OsString::from).collect()
         };
         let session_id = self.unused_session_id().map_err(start_failure)?;
+        let launcher = self.launcher(&session_id, FIRST_EPOCH);
         let start = HolderStart {
             session_id: &session_id,
             command: &command,
+            launcher: &launcher,
             working_directory: &working_directory,
             size: None,
             pooled: false,
@@ -318,6 +359,8 @@ impl Sessions {
             name: self.store.name(&record.id),
             last_attached_at: self.attach_times.of(&record.id),
             attached_clients,
+            hibernation: self.store.hibernation(&record.id),
+            pinned: self.store.is_pinned(&record.id),
             record,
         }
     }
@@ -379,7 +422,14 @@ impl Sessions {
             Arc::clone(&self.status),
             Arc::clone(&self.registry),
         ));
-        let handle = SessionHandle::new(session_id.clone(), commands, ended, output);
+        let handle = SessionHandle::new(
+            session_id.clone(),
+            commands,
+            ended,
+            output,
+            Arc::clone(&self.hibernation_check),
+        );
+        self.report_memory_limit(&handle);
         let record = SessionRecord {
             id: session_id.clone(),
             state,
@@ -396,6 +446,8 @@ impl Sessions {
             ended_sender,
         );
         tokio::spawn(supervisor.run(link));
+        // One more live session can exceed the count of live agents.
+        self.hibernation_check.notify_one();
         record
     }
 
@@ -443,7 +495,7 @@ fn start_failure(error: impl fmt::Display) -> SessionError {
     SessionError::Failed(format!("the session did not start: {error}"))
 }
 
-fn damaged(record: &SessionRecord) -> SessionError {
+pub(super) fn damaged(record: &SessionRecord) -> SessionError {
     SessionError::Failed(format!(
         "session {} is damaged: {}",
         record.id,

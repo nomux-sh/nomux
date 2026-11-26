@@ -11,7 +11,7 @@ Each session has one **Agent run**: what runs in the session. An Agent run can h
 
 | Part | Meaning |
 |---|---|
-| State | `idle`, `working`, `done`, `needs you` or `error`. `needs you` can have a kind: `permission`, `question` or `auth`. |
+| State | `idle`, `working`, `done`, `needs you` or `error`. `needs you` can have a kind: `permission`, `question`, `auth` or `prompt`. `prompt` is the input prompt of the agent: nothing that it asked for waits, thus a hibernation of the session loses nothing ([memory.md](memory.md#conditions-of-each-hibernation)). |
 | Source | Where the state comes from. `none` if no source reports the work. |
 | Message, title, progress, tool | Optional parts. Each part has its own source. |
 | Since | When the daemon saw the current state and kind for the first time. |
@@ -117,6 +117,10 @@ A dormant session has no process: no work runs and no work waits for the user. T
 - Idle work and a guess leave nothing.
 - After a restore, the status comes from the sources of the new process. The status of the old process is gone.
 - A session that was dormant when the daemon started is `idle` with no source: the daemon keeps no status on disk.
+
+### Hibernated sessions
+
+A hibernated session is a dormant session: its Agent run follows the rule above, and the details stay with the resume command. The daemon also keeps the resume command in the file `hibernation` of the state directory, thus a wake after a restart of the daemon has it. After a wake, the status comes from the sources of the resumed run, and `Session.hibernation.woken_at` marks the run as resumed. The daemon uses the facts of a run for the hibernation only when its status task has a connection to the current holder: before that, the entry has the run of the process before the wake. [memory.md](memory.md#hibernation) has the rules.
 
 ### Ended sessions
 

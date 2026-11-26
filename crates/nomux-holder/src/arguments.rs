@@ -23,6 +23,10 @@ Options:
   --columns <number>          Columns of the terminal window (default: 80)
   --ring-capacity <bytes>     Size of the ring buffer, a power of two (default: 262144)
   --exit-timeout <seconds>    Time to keep the exit status for the daemon (default: 30)
+  --launcher <word>           A word of a program that starts the command, for
+                              example a memory limit; repeat it for each word. The
+                              holder starts the launcher with the command after its
+                              words, and the session metadata has the command
   --pooled                    Start without a session: the daemon assigns the session
                               later. The standard input must be a pipe from the daemon:
                               a holder without a session ends when the pipe closes
@@ -68,11 +72,27 @@ pub(crate) struct SessionArguments {
     /// The named pipe through which the command gets the working directory
     /// of the session at the assignment.
     pub(crate) directory_fifo: Option<PathBuf>,
+    /// The program and the arguments that start the command. Empty if the
+    /// holder starts the command itself.
+    pub(crate) launcher: Vec<OsString>,
     pub(crate) program: OsString,
     pub(crate) program_arguments: Vec<OsString>,
     /// The arguments after `program_arguments` that only the start of the
     /// command has: the session metadata has the command without them.
     pub(crate) start_arguments: Vec<OsString>,
+}
+
+impl SessionArguments {
+    /// The program that the holder starts and its arguments: the launcher
+    /// with the command after it, or the command, and the start arguments.
+    pub(crate) fn command_line(&self) -> Vec<&OsString> {
+        self.launcher
+            .iter()
+            .chain([&self.program])
+            .chain(&self.program_arguments)
+            .chain(&self.start_arguments)
+            .collect()
+    }
 }
 
 pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Invocation, String> {
@@ -87,6 +107,7 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Inv
     let mut pooled = false;
     let mut directory_fifo = None;
     let mut start_arguments = Vec::new();
+    let mut launcher = Vec::new();
 
     loop {
         let Some(option) = arguments.next() else {
@@ -106,6 +127,7 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Inv
             "--pooled" => pooled = true,
             "--directory-fifo" => directory_fifo = Some(PathBuf::from(value()?)),
             "--start-argument" => start_arguments.push(value()?),
+            "--launcher" => launcher.push(value()?),
             "--session" => session_id = Some(parse_value(option, &value()?)?),
             "--runtime-directory" => runtime_directory = Some(PathBuf::from(value()?)),
             "--state-directory" => state_directory = Some(PathBuf::from(value()?)),
@@ -152,6 +174,7 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Inv
         exit_timeout,
         pooled,
         directory_fifo,
+        launcher,
         program,
         program_arguments: arguments.collect(),
         start_arguments,

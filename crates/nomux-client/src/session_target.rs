@@ -83,6 +83,8 @@ mod tests {
             damage: None,
             last_attached_at: None,
             attached_clients: 0,
+            hibernation: None,
+            pinned: false,
         }
     }
 

@@ -7,9 +7,10 @@ use nomux_holder_protocol::wire::WindowSize;
 use nomux_proto::wire::v1::{
     Error, ErrorCode, RestorePolicy as WireRestorePolicy, Session, SessionAttachRequest,
     SessionCaptureRequest, SessionCaptureResponse, SessionCreateRequest, SessionCreateResponse,
-    SessionDetachRequest, SessionDetachResponse, SessionInputRequest, SessionInputResponse,
-    SessionKillRequest, SessionKillResponse, SessionListRequest, SessionListResponse,
-    SessionRenameRequest, SessionRenameResponse, SessionResizeRequest, SessionResizeResponse,
+    SessionDetachRequest, SessionDetachResponse, SessionHibernateRequest, SessionHibernateResponse,
+    SessionInputRequest, SessionInputResponse, SessionKillRequest, SessionKillResponse,
+    SessionListRequest, SessionListResponse, SessionRenameRequest, SessionRenameResponse,
+    SessionResizeRequest, SessionResizeResponse, SessionSetPinnedRequest, SessionSetPinnedResponse,
     SessionSetRestorePolicyRequest, SessionSetRestorePolicyResponse, SessionStartRequest,
     SessionStartResponse, response,
 };
@@ -185,6 +186,28 @@ pub(super) fn set_restore_policy(
     context.sessions.set_restore_policy(&request.id, policy)?;
     Ok(response::Result::SessionSetRestorePolicy(
         SessionSetRestorePolicyResponse {},
+    ))
+}
+
+pub(super) async fn hibernate(
+    request: &SessionHibernateRequest,
+    context: &Context,
+) -> Result<response::Result, Error> {
+    let session = context.sessions.hibernate_on_request(&request.id).await?;
+    Ok(response::Result::SessionHibernate(
+        SessionHibernateResponse {
+            session: Some(session.into()),
+        },
+    ))
+}
+
+pub(super) fn set_pinned(
+    request: &SessionSetPinnedRequest,
+    context: &Context,
+) -> Result<response::Result, Error> {
+    context.sessions.set_pinned(&request.id, request.pinned)?;
+    Ok(response::Result::SessionSetPinned(
+        SessionSetPinnedResponse {},
     ))
 }
 

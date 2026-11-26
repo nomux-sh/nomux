@@ -89,8 +89,8 @@ pub(crate) fn reported_state_and_kind(state: i32, kind: i32) -> Option<State> {
         Ok(wire::NeedsYouKind::Permission) => Some(NeedsYouKind::Permission),
         Ok(wire::NeedsYouKind::Question) => Some(NeedsYouKind::Question),
         Ok(wire::NeedsYouKind::Auth) => Some(NeedsYouKind::Auth),
-        // A kind that the daemon does not know yet.
-        Ok(wire::NeedsYouKind::Prompt | wire::NeedsYouKind::Unspecified) | Err(_) => None,
+        Ok(wire::NeedsYouKind::Prompt) => Some(NeedsYouKind::Prompt),
+        Ok(wire::NeedsYouKind::Unspecified) | Err(_) => None,
     };
     match wire::AgentState::try_from(state).ok()? {
         wire::AgentState::Unspecified => None,
@@ -117,6 +117,7 @@ fn state(state: State) -> (wire::AgentState, wire::NeedsYouKind) {
         Some(NeedsYouKind::Permission) => wire::NeedsYouKind::Permission,
         Some(NeedsYouKind::Question) => wire::NeedsYouKind::Question,
         Some(NeedsYouKind::Auth) => wire::NeedsYouKind::Auth,
+        Some(NeedsYouKind::Prompt) => wire::NeedsYouKind::Prompt,
     };
     match state {
         State::Idle => (wire::AgentState::Idle, wire::NeedsYouKind::Unspecified),

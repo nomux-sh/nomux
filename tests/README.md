@@ -15,7 +15,8 @@ This directory is the package `nomux-end-to-end`: the end-to-end tests of the co
 | `process_cleanup.rs` | The test support itself: a sandbox stops the sessions and the daemon of its test, a process that a test left is stopped and fails the test, and a guarded process ends with each process of its group |
 | `remote_host.rs` | A remote host through SSH, with an `sshd` that each test starts: `host add` installs the binaries from a release archive, the session commands and an attach with `--host`, an attach that continues after the connection was cut with each byte one time, a host key that is not known or that changed, a daemon without a common protocol version that is replaced while its session continues, `host doctor` for a good host and for a wrong permission, ssh-agent, `ProxyJump`, and a server that refuses connections to Unix sockets |
 | `restore.rs` | Sessions without a process. After `SIGKILL` for each holder and the daemon, as a restart of the host does it, a new daemon lists the sessions as dormant with their description and starts no process; an attach shows the old output, the mark and a new shell in the directory of the session; the policy `auto` starts a session at the start of the daemon and `manual` only with `nomux start`. An ended session leaves with its state directory after the retention time, also across a restart of the daemon. A damaged `session` file, a damaged journal segment and a FIFO in the place of a file give a listed session with the reason and a daemon that works |
-| `session_memory.rs` | `nomux ls --memory`: the memory of a command that allocates a known amount and of the child that it starts, the holder as a separate value, and a session without a process that has no values and is not in the total |
+| `session_memory.rs` | `nomux ls --memory`: the memory of a command that allocates a known amount and of the child that it starts, the holder as a separate value, a session without a process that has no values and is not in the total, and a session at its memory limit that the kernel ends while a second session continues (`SKIPPED` without a systemd user manager) |
+| `hibernation.rs` | The hibernation with the test adapter and an agent tool that the test writes: the agent that is idle for the longest time hibernates when more agents are live than the limit, its process tree is gone, `ls` and `capture` show the hibernated session, and an attach shows the old screen and wakes the agent with its resume command in the directory of the session; a wake that fails stays hibernated with the reason and the command, and a session that no adapter reports cannot hibernate |
 | `session_lifecycle.rs` | The CLI starts the daemon and a session. The session continues after `SIGKILL` of the daemon, after `SIGKILL` of the process group of the daemon, after `nomux daemon stop` and after `nomuxd --replace`, and a new daemon finds it. A holder that does not run leaves the runtime directory, and its session is dormant. Exit codes, and the usage error for `--cmd` together with `--` |
 | `session_names.rs` | A session name stays with its session after a restart of the host, a name is a target of `start` and `kill`, a dormant session keeps its name for itself, and two `nomux new -A -n` at the same time give one session |
 | `session_scripting.rs` | `send` and `capture`, `kill --all` with its question on a terminal and `--yes` without one, `attach -d` and `attach -r`, and bare `nomux` on a terminal and in a pipe |
@@ -33,7 +34,7 @@ This directory is the package `nomux-end-to-end`: the end-to-end tests of the co
 | `support/ssh_server.rs` | An `sshd` that runs as the user of the tests on a free port of this computer, with a host key and an authorized key of its own |
 | `support/tcp_relay.rs` | A TCP relay between the client and the `sshd`: a test cuts its connections, and a measurement gives it a delay |
 | `support/extension_package.rs` | A package of the test extension: a manifest and the binary `nomux-test-extension` of the package `nomux-ext-host` |
-| `support/test_adapter.rs` | The binary `nomux-test-adapter`: the adapter extension of the made-up tool `testtool`. It maps three hook events to status reports and describes a hook install |
+| `support/test_adapter.rs` | The binary `nomux-test-adapter`: the adapter extension of the made-up tool `testtool`. It maps four hook events to status reports and describes a hook install |
 | `support/adapter_package.rs` | A package of the test adapter: a manifest with the `[adapter]` table and the scopes of an adapter |
 | `support/incompatible_daemon.rs` | The binary `nomux-test-incompatible-daemon`: a process in the place of a daemon that refuses each client as a daemon without a common protocol version does |
 | `support/status_program.rs` | The binary `nomux-test-status-program`: a command of a session that asks the OSC 7501 query and then writes one report for each line of its input |
@@ -44,6 +45,7 @@ This directory is the package `nomux-end-to-end`: the end-to-end tests of the co
 | `measurements/remote.rs` | Not a test: the program that measures a remote host |
 | `measurements/hooks.rs` | Not a test: the program that measures `nomux hook` with the daemon running and with the daemon stopped |
 | `measurements/restore.rs` | Not a test: the program that measures the start of the daemon with dormant sessions that each have a full journal |
+| `measurements/hibernation.rs` | Not a test: the program that measures the memory that the hibernation of agent sessions gives back, the time of a wake, and the idle daemon with each trigger on |
 
 Each test uses its own home directory in `/tmp`. Thus the tests run in parallel and do not touch `~/.nomux`.
 
@@ -121,3 +123,13 @@ cargo run --release -p nomux-end-to-end --example restore_measurements -- 50
 ```
 
 A run with 50 sessions takes approximately 1 minute and needs 1.6 GiB in `/tmp`.
+
+`measurements/hibernation.rs` starts agent sessions of the test adapter whose agents each hold 200 MiB, hibernates them, and measures the memory before and after, the CPU time and the context switches of the idle daemon in 60 s with each trigger on, and the time of each wake from `nomux attach` to the old screen and to the resumed run. The argument is the number of sessions. In a scope of its own, it also reports the memory of its control group, which has each process that it started: the available memory of the host changes with each other program. [docs/memory.md](../docs/memory.md) has the results.
+
+```sh
+cargo build --release --workspace
+cargo build --release -p nomux-end-to-end --example hibernation_measurements
+systemd-run --user --scope --quiet -- target/release/examples/hibernation_measurements 3
+```
+
+A run takes approximately 2.5 minutes: the daemon rests for 75 s before the 60 s of the idle measurement.
