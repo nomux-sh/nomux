@@ -187,8 +187,10 @@ For `Session.Create` of a session with the shell of the user, the daemon first t
 
 1. It makes a random session identifier of 8 characters from `a` to `z` and `2` to `7`. It makes a new one if a session, a holder directory or a pooled holder already has the identifier.
 2. It starts `nomux-holder --session <identifier> --runtime-directory <directory> --state-directory <directory> --working-directory <directory> -- <command>`. It finds `nomux-holder` in the directory of its own binary, and then in `PATH`. The state directory is the state directory of the user: [holder.md](holder.md) has its path.
-3. It waits until the holder writes its `ready` file. If the holder ends before that, the request fails with the last line of the standard error of the holder. If the holder is not ready after 5 seconds, the daemon stops it and the request fails with the code 3 (timeout).
+3. It waits until the holder writes its `ready` file. If the holder ends before that, the request fails with the last line of the standard error of the holder, or with the message and the location of its panic. If a signal ended the holder, the error also names the signal, says when the standard error is empty, and goes to the log with the level `warn`. If the holder is not ready after 5 seconds, the daemon stops it and the request fails with the code 3 (timeout).
 4. It connects to the holder and takes the lease.
+
+A holder that this daemon started and that ends later by a signal or with an exit code that is not 0 gives one line with the level `warn` in the log, with the exit status. After a panic, the file `holder-panic` of the session state directory has the message and the location: [holder.md](holder.md#session-state-directory).
 
 If the holder does not start, the daemon removes the session state directory that the holder made. Thus a session that never ran is not a dormant session after the next start of the daemon.
 

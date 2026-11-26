@@ -35,6 +35,9 @@ use crate::SessionId;
 pub const METADATA_FILE: &str = "session";
 /// The name of the directory with the journal.
 pub const JOURNAL_DIRECTORY: &str = "journal";
+/// The name of the file with the message and the location of each panic of
+/// a holder of the session. The release build aborts at a panic.
+pub const PANIC_FILE: &str = "holder-panic";
 
 const SESSIONS_DIRECTORY: &str = "sessions";
 
