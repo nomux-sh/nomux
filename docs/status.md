@@ -137,10 +137,10 @@ When the command of a session is the agent tool itself, the session ends with th
 
 ## Self-report and the token
 
-The holder gives the command of each session three environment variables: `NOMUX_SESSION_ID`, `NOMUX_SOCK` (the socket of the daemon) and `NOMUX_TOKEN` (a random token of 128 bits for each start of a holder). The holder gives the token to the daemon on its private socket: [holder.md](holder.md#environment-of-the-command).
+The holder gives the command of each session three environment variables: `NOMUX_SESSION_ID`, `NOMUX_SOCK` (the socket of the daemon) and `NOMUX_TOKEN` (a random token of 128 bits for each start of a holder). The daemon makes the token before it starts the holder and keeps it in the status registry, thus it accepts a report from the first instruction of the command: [holder.md](holder.md#environment-of-the-command).
 
 - `nomux status set <working|done|blocked|error|idle> ["message"]` reads the three variables and sends `Agent.SetStatus`. The daemon accepts it only with the token of the current holder of that session, thus a program cannot report for a different session. A wrong or a missing token gives exit code 4.
-- The token proves that a request comes from a process of the session. It is not a defence against a process of the same user that reads the environment of the session: such a process has the same permissions as the session.
+- The token proves that a request comes from a process of the session. It stops a process of one session that reports for a different session by mistake or with a guessed identifier. It does not stop a process of the same user that reads the environment of a process of the session or of its holder in `/proc`: such a process has the same permissions as the session. The daemon gives the token to the holder in its environment, not in its arguments: a process of a different user can read the arguments of a process (`/proc/<pid>/cmdline`, `ps`), but not its environment. The holder has no other channel from the daemon before its start: the standard input of a holder that is not pooled is `/dev/null`.
 - A self-report stays until the next one. `idle` takes it back.
 - No log, no journal, no metadata file and no command output has the token.
 - A holder from before protocol version 1.4 makes no token. The daemon refuses each self-report for its session with a message that says why. The other sources work. The session gets a token when its command starts again.

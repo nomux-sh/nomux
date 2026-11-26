@@ -89,7 +89,7 @@ impl Session {
     ) -> io::Result<Self> {
         let screen_size = screen_size(arguments.size).ok_or(io::ErrorKind::InvalidInput)?;
         let pty = pty::open(arguments.size)?;
-        let token = session_environment::new_token()?;
+        let token = session_environment::token()?;
         let directory_fifo = arguments
             .directory_fifo
             .as_deref()

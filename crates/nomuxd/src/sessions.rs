@@ -227,6 +227,7 @@ impl Sessions {
             // A holder that did not start leaves the state directory of a
             // session that never ran.
             let _ = self.store.remove(&session_id);
+            self.status.remove(&session_id);
         })?;
         Ok(self.describe(self.supervise(session_id, Some(link))))
     }
@@ -388,14 +389,22 @@ impl Sessions {
             .ok_or_else(|| SessionError::NotFound(format!("no session has the identifier {id}")))
     }
 
-    /// Starts a holder and takes its lease.
+    /// Starts a holder and takes its lease. The status registry knows the
+    /// token of the session before its command runs: a report from the
+    /// first instruction of the command comes from the session.
     async fn start_holder(&self, start: HolderStart<'_>) -> Result<HolderLink, SessionError> {
         let session_id = start.session_id;
-        holder::launch(&self.runtime_directory, self.store.state_directory(), start)
+        let token = holder::new_token().map_err(start_failure)?;
+        self.status.starting(session_id, token);
+        let state_directory = self.store.state_directory();
+        holder::launch(&self.runtime_directory, state_directory, start, token)
             .await
-            .map_err(|error| match error {
-                LaunchError::NotReady => SessionError::Timeout(error.to_string()),
-                _ => start_failure(error),
+            .map_err(|error| {
+                self.status.not_started(session_id);
+                match error {
+                    LaunchError::NotReady => SessionError::Timeout(error.to_string()),
+                    _ => start_failure(error),
+                }
             })?;
         holder::open_with_lease(&self.holder_socket(session_id), session_id)
             .await

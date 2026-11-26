@@ -38,7 +38,9 @@ Options:
                               The session metadata does not have it. Can be repeated
 
 The command gets the environment of the holder, and the variables
-NOMUX_SESSION_ID, NOMUX_SOCK and NOMUX_TOKEN.
+NOMUX_SESSION_ID, NOMUX_SOCK and NOMUX_TOKEN. NOMUX_TOKEN is the value of
+NOMUX_HOLDER_TOKEN if the holder has that variable, else a new random token.
+The command does not get NOMUX_HOLDER_TOKEN.
 ";
 
 const DEFAULT_SIZE: WindowSize = WindowSize {

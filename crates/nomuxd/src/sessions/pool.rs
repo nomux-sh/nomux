@@ -35,9 +35,11 @@ impl Sessions {
 
     /// A pooled holder that has the session `working_directory` now, with
     /// the identifier of the session. `None` if the pool has no holder that
-    /// can take the session.
+    /// can take the session. The status registry knows the token of the
+    /// holder before the assignment: the shell can run a command from then.
     pub(super) async fn take_pooled(&self, working_directory: &Path) -> Option<PooledHolder> {
         while let Some(mut holder) = self.pool.take(working_directory, &self.home) {
+            self.status.starting(&holder.session_id, holder.token);
             let assigned = holder::assign(&mut holder.link, working_directory).await;
             match assigned {
                 Ok(()) => return Some(holder),
@@ -48,6 +50,7 @@ impl Sessions {
                     let session_id = holder.session_id.clone();
                     drop(holder);
                     let _ = self.store.remove(&session_id);
+                    self.status.remove(&session_id);
                 }
             }
         }
@@ -121,8 +124,9 @@ impl Sessions {
             pooled: true,
             shell_start: shell_start.as_ref(),
         };
-        let launched =
-            holder::launch(&self.runtime_directory, self.store.state_directory(), start).await;
+        let token = holder::new_token().map_err(start_failure)?;
+        let state_directory = self.store.state_directory();
+        let launched = holder::launch(&self.runtime_directory, state_directory, start, token).await;
         if launched.is_err()
             && let Some(shell_start) = &shell_start
         {
@@ -140,6 +144,7 @@ impl Sessions {
         Ok(PooledHolder {
             session_id,
             link,
+            token,
             _pipe: pipe,
         })
     }

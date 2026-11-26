@@ -73,6 +73,7 @@ impl CommandEnvironment {
         for name in STARTER_TERMINAL_VARIABLES {
             command.env_remove(name);
         }
+        command.env_remove(SessionToken::HOLDER_VARIABLE);
         command.envs(self.set);
     }
 }
@@ -85,9 +86,18 @@ fn has_locale() -> bool {
         .any(|name| env::var_os(name).is_some_and(|value| !value.is_empty()))
 }
 
-/// Makes the token of this start of the session from random bytes of the
+/// The token of this start of the session: the one that the daemon gave in
+/// the environment of the holder, else one from random bytes of the
 /// operating system.
-pub(crate) fn new_token() -> io::Result<SessionToken> {
+pub(crate) fn token() -> io::Result<SessionToken> {
+    if let Some(text) = env::var_os(SessionToken::HOLDER_VARIABLE) {
+        return text.to_str().and_then(SessionToken::parse).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{} is not a token", SessionToken::HOLDER_VARIABLE),
+            )
+        });
+    }
     let mut random = [0; SessionToken::RANDOM_LENGTH];
     getrandom::fill(&mut random).map_err(io::Error::other)?;
     Ok(SessionToken::from_random(random))

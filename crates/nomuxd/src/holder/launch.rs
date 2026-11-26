@@ -16,7 +16,7 @@ use nomux_core::companion_binary;
 use nomux_holder_protocol::SessionId;
 use nomux_holder_protocol::discovery::{READY_FILE, holder_directory, pooled_holder_directory};
 use nomux_holder_protocol::session_state::PANIC_FILE;
-use nomux_holder_protocol::wire::WindowSize;
+use nomux_holder_protocol::wire::{SessionToken, WindowSize};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::time::sleep;
 use tracing::{debug, warn};
@@ -105,7 +105,7 @@ impl HolderStart<'_> {
 
 /// Starts a holder for `start` and waits until it is ready. The holder
 /// keeps its discovery files in `runtime_directory` and the state of the
-/// session in `state_directory`.
+/// session in `state_directory`. The command of the session gets `token`.
 ///
 /// The holder of a session is not tied to the daemon. It makes its own
 /// session with `setsid`, it has no pipe to the daemon, and the daemon sets
@@ -119,6 +119,7 @@ pub(crate) async fn launch(
     runtime_directory: &Path,
     state_directory: &Path,
     start: HolderStart<'_>,
+    token: SessionToken,
 ) -> Result<Option<ChildStdin>, LaunchError> {
     let session_id = start.session_id;
     let mut standard_error =
@@ -133,7 +134,8 @@ pub(crate) async fn launch(
         .arg("--state-directory")
         .arg(state_directory)
         .arg("--working-directory")
-        .arg(start.working_directory);
+        .arg(start.working_directory)
+        .env(SessionToken::HOLDER_VARIABLE, token.as_str());
     if start.pooled {
         holder.arg("--pooled");
     }
@@ -201,6 +203,14 @@ pub(crate) async fn launch(
             Err(LaunchError::NotReady)
         }
     }
+}
+
+/// A token for the next start of a session: the daemon knows it before
+/// the command of the session can run.
+pub(crate) fn new_token() -> io::Result<SessionToken> {
+    let mut random = [0; SessionToken::RANDOM_LENGTH];
+    getrandom::fill(&mut random).map_err(io::Error::other)?;
+    Ok(SessionToken::from_random(random))
 }
 
 /// A file without a name for the standard error of a holder.

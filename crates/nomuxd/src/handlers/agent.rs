@@ -36,7 +36,7 @@ pub(super) fn set_status(
     request: &AgentSetStatusRequest,
     context: &Context,
 ) -> Result<response::Result, Error> {
-    let id = find(context, &request.session_id)?;
+    let id = find_reporting(context, &request.session_id)?;
     let state = reported_state(request.state).ok_or_else(|| Error {
         code: ErrorCode::Failed.into(),
         message: format!("{} is not a state of an Agent run", request.state),
@@ -72,6 +72,18 @@ pub(super) fn find(context: &Context, id: &str) -> Result<SessionId, SessionErro
                 "no session that is not ended has the identifier {id}"
             ))
         })
+}
+
+/// The session `id` of a request from a process of the session: a session
+/// that is not ended, or a session whose holder the daemon starts now. The
+/// command of a session can send a request before the start completes.
+pub(super) fn find_reporting(context: &Context, id: &str) -> Result<SessionId, SessionError> {
+    find(context, id).or_else(|not_found| {
+        id.parse()
+            .ok()
+            .filter(|id| context.status.is_starting(id))
+            .ok_or(not_found)
+    })
 }
 
 fn refused_error(id: &SessionId, refused: TokenRefused) -> Error {

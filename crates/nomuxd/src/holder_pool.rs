@@ -26,6 +26,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use nomux_holder_protocol::SessionId;
+use nomux_holder_protocol::wire::SessionToken;
 use tokio::process::ChildStdin;
 use tokio::sync::Notify;
 use tokio::time::Instant;
@@ -41,6 +42,8 @@ pub(crate) struct PooledHolder {
     /// The identifier that the daemon keeps for the session of the holder.
     pub(crate) session_id: SessionId,
     pub(crate) link: HolderLink,
+    /// The token that the daemon gave to the holder.
+    pub(crate) token: SessionToken,
     /// The standard input of the holder. The daemon writes nothing: the
     /// value only keeps the pipe open.
     pub(crate) _pipe: ChildStdin,

@@ -3,10 +3,12 @@
 
 use std::fmt;
 
-/// The token of one start of a session. A holder makes it from random bytes
-/// at its start and gives it to the command of the session in the
-/// `NOMUX_TOKEN` variable. A request to the daemon that has the token comes
-/// from a process of that session.
+/// The token of one start of a session. The daemon makes it from random
+/// bytes before it starts the holder and gives it to the holder in the
+/// [`HOLDER_VARIABLE`](Self::HOLDER_VARIABLE) variable; a holder without
+/// that variable makes its own token. The holder gives the token to the
+/// command of the session in the `NOMUX_TOKEN` variable. A request to the
+/// daemon that has the token comes from a process of that session.
 ///
 /// The token is a secret. Its `Debug` output does not have its text, and no
 /// code writes it to a log, to the journal or to the session metadata.
@@ -18,6 +20,9 @@ impl SessionToken {
     pub const LENGTH: usize = 32;
     /// The number of random bytes of a token: 128 bits.
     pub const RANDOM_LENGTH: usize = Self::LENGTH / 2;
+    /// The variable in the environment of a holder with the token that the
+    /// daemon made. The command of the session does not get it.
+    pub const HOLDER_VARIABLE: &str = "NOMUX_HOLDER_TOKEN";
 
     /// The token for `random` bytes: their lower-case hexadecimal digits.
     #[must_use]
@@ -56,6 +61,13 @@ impl SessionToken {
             .zip(candidate)
             .fold(0, |difference, (own, other)| difference | (own ^ other));
         difference == 0
+    }
+
+    /// The token with the characters `text`. Returns `None` if `text` is
+    /// not a token.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::decode(text.as_bytes())
     }
 
     pub(super) fn encode(&self) -> &[u8; Self::LENGTH] {
