@@ -360,6 +360,7 @@ Each session has one directory in the state directory of the user. The name of t
     <session identifier>/  mode 0700
       session              the session metadata, mode 0600
       restore-policy       the restore policy, mode 0600. The daemon writes it
+      holder-panic         only after a panic of a holder, mode 0600
       journal/             mode 0700
         <epoch>-<start position>.journal   one segment, mode 0600
 ```
@@ -373,6 +374,8 @@ The state directory is not the runtime directory. A runtime directory can be on 
 The path comes from `HOME` only, as the path of the runtime directory does. `nomux_holder_protocol::session_state` has the paths and the format of the metadata, and `nomux_holder_protocol::journal` has the format of the journal and its reader. The daemon reads the directory with these two modules, also when no holder runs, and it gives the holder the directory with `--state-directory`.
 
 The holder writes the `session` file and the journal. The daemon writes one file, `restore-policy`, and the holder does not read or change it: [daemon.md](daemon.md) describes it.
+
+The release build of the holder aborts at a panic (`panic = "abort"`). Before the abort, the holder writes the message of the panic to its standard error, and appends one line to the file `holder-panic` if the session state directory exists: the time in seconds since the Unix epoch, the location in the source code and the message. Thus the evidence stays after the end of the holder, without a core dump. A pooled holder before its assignment has no session state directory: its panic goes only to its standard error.
 
 If the holder cannot make the directory or the first segment, it does not start. After the start, an error of the disk does not stop the session: see "When a write fails".
 

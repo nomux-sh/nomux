@@ -40,6 +40,7 @@ mod event_loop;
 mod foreground_program;
 mod input_queue;
 mod journal;
+mod panic_record;
 mod program_reports;
 mod pty;
 mod resize_verification;
@@ -54,6 +55,7 @@ use std::io;
 use std::process::ExitCode;
 
 use nomux_holder_protocol::ring::{RingWriter, region_length};
+use nomux_holder_protocol::session_state::session_state_directory;
 use rustix::io::Errno;
 
 use crate::arguments::{Invocation, SessionArguments, USAGE};
@@ -83,6 +85,10 @@ fn main() -> ExitCode {
 }
 
 fn run(arguments: &SessionArguments) -> io::Result<()> {
+    panic_record::install(session_state_directory(
+        &arguments.state_directory,
+        &arguments.session_id,
+    ));
     leave_session_of_starter()?;
     let child_exit = ChildExitSignal::install()?;
 
