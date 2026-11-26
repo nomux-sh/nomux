@@ -28,6 +28,11 @@ impl From<ListedSession> for Session {
             restore_policy: wire_restore_policy(listed.restore_policy).into(),
             exit,
             damage: listed.record.damage.unwrap_or_default(),
+            name: listed
+                .name
+                .map_or_else(String::new, |name| name.to_string()),
+            last_attached_at: listed.last_attached_at.unwrap_or(0),
+            attached_clients: u32::try_from(listed.attached_clients).unwrap_or(u32::MAX),
             ..Self::default()
         };
         // The metadata has no environment variable, thus the description

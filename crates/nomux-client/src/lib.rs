@@ -38,6 +38,10 @@
 //!   [`WorkspaceChange`] of each event, and [`WorkspaceTree::project_of`]
 //!   gives the Project of a session. [`most_urgent`] gives the status of a
 //!   Group from the statuses of its sessions.
+//! - [`resolve_session`] and [`Client::find_session`]: the session that a
+//!   target names: its identifier, its name, or a unique prefix of one of
+//!   them. [`Client::open_session`] starts a session with a name or gives
+//!   the session that has it, and [`Client::rename_session`] renames one.
 //! - [`ClientError`]: why a connection or a request failed.
 //! - [`Client::capture`] and [`Client::capture_lines`]: the scrollback of a
 //!   session, without an attach.
@@ -82,6 +86,7 @@ mod reconnect;
 mod scrollback;
 mod session;
 mod session_memory;
+mod session_target;
 mod ssh_host;
 mod terminal;
 mod window_size;
@@ -116,6 +121,7 @@ pub use nomux_core::workspace_tree::{Node, NodeKind, TreeError, WorkspaceTree};
 pub use scrollback::{CaptureRange, CapturedOutput};
 pub use session::{ExitStatus, NewSession, Session, SessionExit, SessionState};
 pub use session_memory::{MemoryMeasure, SessionMemory};
+pub use session_target::resolve_session;
 pub use terminal::{
     AttachEnd, AttachOptions, OutputPosition, TerminalEvent, TerminalInput, TerminalOutput,
 };

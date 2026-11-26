@@ -18,7 +18,8 @@ pub(crate) fn of_error(error: &ClientError) -> u8 {
         ClientError::DaemonNotRunning
         | ClientError::DaemonStart(_)
         | ClientError::Connection(_)
-        | ClientError::Failed(_) => ERROR,
+        | ClientError::Failed(_)
+        | ClientError::AmbiguousTarget { .. } => ERROR,
         ClientError::ExtensionAnswered(error) => match error.code {
             ExtensionErrorCode::NotFound => NOT_FOUND,
             ExtensionErrorCode::Timeout => TIMEOUT,

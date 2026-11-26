@@ -55,19 +55,33 @@ pub(super) fn report(report: &Report, style: Style, width: Option<usize>) -> Str
         Report::SessionsMeasured { sessions, memory } => {
             memory_human::session_table(sessions, memory, width)
         }
-        Report::SessionStarted(session) => format!("session {} runs\n", session.id),
+        Report::SessionStarted(session) => format!("session {} runs\n", described(session)),
         Report::OutputCaptured { output, .. } => String::from_utf8_lossy(output).into_owned(),
-        Report::RestorePolicySet { id, policy } => {
-            format!("session {id} has the restore policy {policy}\n")
+        Report::RestorePolicySet { session, policy } => {
+            format!(
+                "session {} has the restore policy {policy}\n",
+                described(session)
+            )
         }
-        Report::SessionKilled { id } => format!("session {id} ended\n"),
-        Report::AttachEnded { id, end } => attach_end(id, *end),
-        Report::ClientsDetached { id, clients: 1 } => {
-            format!("detached 1 client from session {id}\n")
+        Report::SessionKilled { session } => format!("session {} ended\n", described(session)),
+        Report::AttachEnded { session, end, .. } => attach_end(&described(session), *end),
+        Report::ClientsDetached {
+            session,
+            clients: 1,
+        } => {
+            format!("detached 1 client from session {}\n", described(session))
         }
-        Report::ClientsDetached { id, clients } => {
-            format!("detached {clients} clients from session {id}\n")
+        Report::ClientsDetached { session, clients } => {
+            format!(
+                "detached {clients} clients from session {}\n",
+                described(session)
+            )
         }
+        Report::SessionRenamed { session, .. } => format!(
+            "session {} is now named {}\n",
+            session.id,
+            session.name.as_deref().unwrap_or("-")
+        ),
         Report::DaemonStatus {
             info,
             configuration,
@@ -122,6 +136,7 @@ pub(super) fn quiet_report(report: &Report) -> String {
         | Report::SessionKilled { .. }
         | Report::AttachEnded { .. }
         | Report::ClientsDetached { .. }
+        | Report::SessionRenamed { .. }
         | Report::DaemonStatus { .. }
         | Report::DaemonStopped { .. }
         | Report::HostAdded(_)
@@ -193,6 +208,15 @@ fn host_diagnosis(host: &HostDiagnosis) -> String {
     text
 }
 
+/// The name and the identifier of a session, for a message: `api
+/// (k3xq2abc)`, or the identifier of a session without a name.
+fn described(session: &Session) -> String {
+    match &session.name {
+        Some(name) => format!("{name} ({})", session.id),
+        None => session.id.clone(),
+    }
+}
+
 fn attach_end(id: &str, end: AttachEnd) -> String {
     match end {
         AttachEnd::Detached => format!("detached from session {id}\n"),
@@ -218,6 +242,7 @@ fn daemon_status(info: &HostInfo) -> String {
 /// One row of the session table.
 struct SessionRow<'a> {
     id: &'a str,
+    name: Option<&'a str>,
     state: SessionState,
     pid: String,
     /// The path of the Project of the session.
@@ -237,6 +262,7 @@ impl<'a> SessionRow<'a> {
         };
         Self {
             id: &session.id,
+            name: session.name.as_deref(),
             state: session.state,
             pid: or_dash(session.pid.map_or_default(|pid| pid.to_string())),
             project: session
@@ -270,34 +296,51 @@ fn session_table(
     style: Style,
     width: Option<usize>,
 ) -> String {
-    const PID: usize = 2;
-    const PROJECT: usize = 3;
     let rows: Vec<SessionRow<'_>> = sessions
         .iter()
         .map(|session| SessionRow::of(session, workspace))
         .collect();
-    // The table has the last column only if a session has a note, and the
-    // project column only if a session has a Project.
+    // The table has the last column only if a session has a note, the name
+    // column only if a session has a name, and the project column only if a
+    // session has a Project.
     let has_notes = rows.iter().any(|row| !row.note.is_empty());
+    let has_names = rows.iter().any(|row| row.name.is_some());
     let has_projects = rows.iter().any(|row| row.project.is_some());
-    let mut header = vec!["ID", "STATE", "PID"];
+    let mut header = vec!["ID"];
+    if has_names {
+        header.push("NAME");
+    }
+    header.extend(["STATE", "PID"]);
     if has_projects {
         header.push("PROJECT");
     }
     let command = header.len();
     header.extend(["COMMAND", if has_notes { "NOTE" } else { "" }]);
-    let (shortened, omitted): (&[usize], &[usize]) = if has_projects {
-        (&[command, command + 1, PROJECT], &[PID, PROJECT])
-    } else {
-        (&[command, command + 1], &[PID])
-    };
-    let mut table = Table::new(&header).shorten(shortened).omit(omitted);
+    // A narrow terminal first shortens the command, the note, the Project
+    // and the name, then omits the process ID and the Project.
+    let pid = header
+        .iter()
+        .position(|column| *column == "PID")
+        .unwrap_or_default();
+    let mut shortened = vec![command, command + 1];
+    let mut omitted = vec![pid];
+    if has_projects {
+        shortened.push(pid + 1);
+        omitted.push(pid + 1);
+    }
+    if has_names {
+        shortened.push(1);
+    }
+    let mut table = Table::new(&header).shorten(&shortened).omit(&omitted);
     for row in rows {
-        let mut cells = vec![
-            Cell::new(row.id),
+        let mut cells = vec![Cell::new(row.id)];
+        if has_names {
+            cells.push(Cell::new(row.name.unwrap_or("-")));
+        }
+        cells.extend([
             Cell::coloured(state_name(row.state), colour(row.state, style)),
             Cell::new(row.pid),
-        ];
+        ]);
         if has_projects {
             cells.push(Cell::new(row.project.unwrap_or_else(|| "-".to_owned())));
         }
@@ -343,6 +386,7 @@ mod tests {
     fn session(id: &str, state: SessionState) -> Session {
         Session {
             id: id.to_owned(),
+            name: None,
             state,
             pid: None,
             command: Vec::new(),
@@ -354,6 +398,8 @@ mod tests {
             exit: None,
             damage: None,
             resolved_working_directory: None,
+            last_attached_at: None,
+            attached_clients: 0,
         }
     }
 
@@ -425,6 +471,26 @@ mod tests {
 
         assert_fits(&text, 60);
         assert!(text.contains("build-server  ssh://"), "{text}");
+    }
+
+    #[test]
+    fn a_narrow_terminal_shortens_the_name_and_leaves_out_the_process_id() {
+        let sessions = vec![
+            Session {
+                name: Some("api-gateway".to_owned()),
+                pid: Some(41873),
+                command: vec!["cargo".to_owned(), "watch".to_owned(), "-x".to_owned()],
+                ..session("k3xq2abc", SessionState::Running)
+            },
+            session("m4ab5ghi", SessionState::Running),
+        ];
+
+        assert_eq!(
+            session_table(&sessions, &WorkspaceTree::default(), Style::Plain, Some(40)),
+            "ID        NAME        STATE    COMMAND\n\
+             k3xq2abc  api-gatew…  running  cargo …\n\
+             m4ab5ghi  -           running  -\n"
+        );
     }
 
     #[test]

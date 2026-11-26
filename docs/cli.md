@@ -12,7 +12,7 @@ The code is in `crates/nomux-cli`. The CLI is a thin client: it reads the comman
 - A command that needs the daemon starts it when no daemon answers. The CLI runs `nomuxd --detach` and waits for 5 seconds at most until the socket answers. The `daemon` commands start no daemon.
 - The text output has colour only for the state of a session or of its status, only when the standard output is a terminal, and only when the `NO_COLOR` variable is not set. The JSON output and the quiet output never have colour.
 - On a terminal, the text output fits the width of the terminal. A table shortens its columns first: the command column, then the column of the note, the message or the reason, and then a column of a path or a name. An ellipsis (`…`) marks the cut, and a shortened column keeps the width of its header. Thus the state and the message stay visible.
-- If the shortened columns are not enough, a table leaves out columns in a fixed sequence: `ls` leaves out `PID` and then `PROJECT`, `ls --memory` leaves out `MEASURE`, then `PROCESSES` and then `HOLDER`, `status` leaves out `FOR` and then `COMMAND`, and `ext ls` leaves out `VERSION` and then `NAME`. A table leaves out a column only when the table does not fit with each shortened column at the width of its header. A line that is not a table, for example the total line of `ls --memory`, breaks at a space. With usual values, each table fits a terminal of 60 columns.
+- If the shortened columns are not enough, a table leaves out columns in a fixed sequence: `ls` leaves out `PID` and then `PROJECT` (it never leaves out `NAME`), `ls --memory` leaves out `MEASURE`, then `PROCESSES` and then `HOLDER`, `status` leaves out `FOR` and then `COMMAND`, and `ext ls` leaves out `VERSION` and then `NAME`. A table leaves out a column only when the table does not fit with each shortened column at the width of its header. A line that is not a table, for example the total line of `ls --memory`, breaks at a space. With usual values, each table fits a terminal of 60 columns.
 - The width is the display width of the text: a wide character has two columns and is not cut. When the standard output is not a terminal, and in the JSON output, nothing is shortened, left out or broken.
 
 ## Commands
@@ -23,14 +23,15 @@ nomux [--json | --quiet] [--host <name>] <command>
 
 | Command | Function |
 |---|---|
-| `new [--cwd <dir>] [--attach] [-- <command> [argument...]]` | Starts a new session and prints its identifier. With `--attach`, attaches to it |
+| `new [-n <name>] [-a \| -A] [-c <dir>] [-- <command> [argument...]]` | Starts a new session and prints its identifier. With `-a`, attaches to it. With `-A`, attaches to the session that has the name, or starts it |
 | `ls [--all] [--memory]` | Lists the sessions. With `--all`, also the sessions whose command ended. With `--memory`, also the memory that the processes of each session use |
-| `attach <id> [--prefix <key>]...` | Shows a session in the terminal of the user until the user detaches or the session ends. A dormant session starts again |
-| `start <id>` | Starts the command of a dormant session again |
-| `capture <id> [--lines <n>]` | Prints the last output lines of a session |
-| `restore-policy <id> <policy>` | Sets when a dormant session starts again: `auto`, `on-focus` or `manual` |
-| `detach <id>` | Detaches the clients that are attached to a session. The session continues |
-| `kill <id>` | Ends a session and waits until its command has ended. Removes a dormant session with its output |
+| `attach <target> [--prefix <key>]...` | Shows a session in the terminal of the user until the user detaches or the session ends. A dormant session starts again |
+| `start <target>` | Starts the command of a dormant session again |
+| `capture <target> [--lines <n>]` | Prints the last output lines of a session |
+| `restore-policy <target> <policy>` | Sets when a dormant session starts again: `auto`, `on-focus` or `manual` |
+| `detach <target>` | Detaches the clients that are attached to a session. The session continues |
+| `kill <target>` | Ends a session and waits until its command has ended. Removes a dormant session with its output |
+| `rename <target> <new-name>` | Gives a session a different name |
 | `daemon status` | Shows if the daemon runs |
 | `daemon stop` | Stops the daemon. The sessions continue |
 | `daemon install-service [--dry-run]` | Writes the file that starts the daemon at login |
@@ -56,7 +57,7 @@ nomux [--json | --quiet] [--host <name>] <command>
 | `group ls [--tree]` | Lists the Groups. With `--tree`, the full tree with the Projects |
 | `status [--tree]` | Shows the status of each session: what works, what is done and what needs the user. With `--tree`, also the Child work and the sessions below their Groups and Projects |
 | `status set <state> [<message>]` | Reports the status of the session of this process: `working`, `done`, `blocked`, `error` or `idle`. Only inside a session |
-| `agent explain <id>` | Shows what each source says about the status of a session |
+| `agent explain <target>` | Shows what each source says about the status of a session |
 | `events --follow [--filter <type>]...` | Prints the events of the host when they come, until a signal stops the command |
 | `hook <tool> <event>` | Sends one event of a hook of an agent tool to the daemon of the session. A tool calls it from its hooks. Only inside a session |
 | `hooks install <tool> [--dry-run \| --apply]` | Prints the change that the hooks of a tool need in its settings file. Writes it only with `--apply`. Only on this computer |
@@ -81,9 +82,43 @@ nomux --host vps daemon status
 - `--host` cannot be used with a `host` command, which takes the name as an argument, and with `daemon install-service` and `daemon uninstall-service`, which change a file of the computer of the CLI. `version` prints the version of the CLI.
 - An SSH error has exit code 1. If the host accepts no key of the user, the exit code is 4. [remote.md](remote.md) has the messages for a host key that is not known or that changed.
 
+### Targets and names
+
+A session has an identifier, which the daemon gives and which never changes, and it can have a name, which the user gives and can change. Each command that takes a session takes a **target**: the identifier, the name, or the start of one of the two.
+
+| Step | The target is | Sessions |
+|---|---|---|
+| 1 | the identifier of a session | each session, also an ended session |
+| 2 | the name of a session | the sessions that are not ended |
+| 3 | the start of the identifier or of the name of exactly one session | the sessions that are not ended |
+
+The first step that finds a session wins: an exact name wins over a longer name with the same start. If step 3 finds more than one session, the command does nothing, prints the candidates and has the exit code 1. With `--json`, the error document has the field `candidates`. If no step finds a session, the exit code is 2.
+
+```console
+$ nomux new -n api
+$ nomux new -n api-v2
+$ nomux capture ap
+nomux: ap can be more than one session. Give more of the identifier or of the name of one of them:
+  okjzhnzv  api-v2  /bin/sh
+  ouldrfi3  api     sleep 600
+```
+
+The rules of a name:
+
+- A name has 1 to 64 characters from `A-Z`, `a-z`, `0-9`, `.`, `_` and `-`. The first character is a letter or a digit. Names are case-sensitive.
+- A name is unique on the host among the sessions that are not ended. A dormant session keeps its name, also after a restart of the host. An ended session keeps its name in `ls --all`, and a new session can take that name at once.
+- A name is not the identifier of a different session.
+- `-t <target>` is the same as the argument, for the habit of tmux: `nomux attach -t api`. The help does not show it. `restore-policy` does not have it.
+- A daemon that is older than the names refuses `new -n` and `rename` with the exit code 1. A target finds the sessions of such a daemon by their identifiers.
+
+The CLI finds the session of a target with one `Session.List` request before the request of the command: `nomux-client` has the rule (`resolve_session`), thus each client finds a session in the same way.
+
 ### `new`
 
-- `--cwd <dir>` is the working directory of the command. The default is the current directory of the CLI. A relative path is relative to that directory.
+- `-n, --name <name>` is the name of the session: see "Targets and names". A name that a session that is not ended has gives the exit code 1, and the message names that session and `-A`.
+- `-a, --attach` attaches the terminal to the new session, as `attach` does. The command then prints the result of the attach and not the session identifier. Without a terminal, the command fails and starts no session.
+- `-A, --attach-or-create` needs `-n`: if a session that is not ended has the name, the command attaches to it, else it starts the session and attaches to it. The daemon decides it in one step, thus two `nomux new -A -n work` at the same time start one session. For a session that exists, the command and `--cwd` are not used, and one line on the standard error says so. A dormant session starts again, as `attach` does.
+- `-c, --cwd <dir>` is the working directory of the command. The default is the current directory of the CLI. A relative path is relative to that directory.
 - `--attach` attaches the terminal to the new session, as `attach` does. The command then prints the result of the attach and not the session identifier. Without a terminal, the command fails and starts no session.
 - `-- <command> [argument...]` is the command of the session. The default is the shell of the user.
 - `--cmd <command> [argument...]` is a second form of the same.
@@ -96,6 +131,9 @@ nomux new --json -- sleep 300            # --json is an option of nomux
 nomux new -- sleep 300 --json            # --json is an argument of sleep
 nomux new --cwd ~/project -- vim -u NONE notes.txt
 nomux new --attach -- htop
+nomux new -n api -c ~/src/api -- cargo watch -x test
+nomux new -n api -a                      # start the session "api" and attach to it
+nomux new -A -n work                     # attach to "work", or start it and attach
 ```
 
 **The two forms cannot be used together.** A command line that has `--cmd` and then `--` is a usage error with the exit code 1, and no session starts: `nomux` cannot know if the `--` is an argument of the command or the start of the second form.
@@ -121,6 +159,7 @@ The session does not need the CLI or the daemon after that.
 
 `ls` lists the sessions that can run: the sessions whose command runs, the dormant sessions and the damaged sessions. `ls --all` (`-a`) also lists the ended sessions, which the daemon keeps for the retention time. "Output" has the states.
 
+If a session has a name, the table has the column `NAME` after `ID`, and `-` for a session without a name.
 If a session belongs to a Project of the workspace tree, the table has the column `PROJECT` with the path of the Project, and `-` for a session without a Project. [workspace.md](workspace.md#the-project-of-a-session) has the rule.
 
 `ls --memory` also shows the memory that the processes of each session use at the time of the command. The daemon measures the memory for this command only: without `--memory`, `ls` measures nothing.
@@ -142,7 +181,7 @@ total: 512.4 MiB in 7 processes of 1 session, and 607.0 KiB in the holders (pss)
 
 - A session without a process has `-` in the four columns and is not in the total line.
 - On a narrow terminal, the table leaves out `MEASURE` first: the total line names the measure. See "Rules".
-- The table has no `PID` column and no `NOTE` column. `ls` without `--memory` has them.
+- The table has no `NAME` column, no `PID` column and no `NOTE` column. `ls` without `--memory` has them. The JSON document has the name.
 - A size has the unit `KiB`, `MiB` or `GiB` (1024 bytes, 1024 KiB, 1024 MiB) and one decimal place. The JSON output has the bytes.
 - If the sessions do not have the same measure, the total line says `pss and rss`: the sum then has values of the two kinds.
 - A daemon that is older than this option answers with an error, and the exit code is 1.
@@ -154,9 +193,9 @@ total: 512.4 MiB in 7 processes of 1 session, and 607.0 KiB in the holders (pss)
 
 A session is dormant when its holder is gone and its command did not end. After a restart of the host, each session is dormant: `ls` shows it with its command, and no process of it runs. [daemon.md](daemon.md) has the details.
 
-- `attach <id>` on a dormant session starts its command again and attaches to it. The command starts in the working directory of the session, with the window size of the terminal. The processes of the session from before do not come back.
-- `start <id>` starts the command again without an attach, with the window size that the session had. For a session whose command runs, it succeeds and changes nothing.
-- `restore-policy <id> <policy>` sets when the command starts again:
+- `attach <target>` on a dormant session starts its command again and attaches to it. The command starts in the working directory of the session, with the window size of the terminal. The processes of the session from before do not come back.
+- `start <target>` starts the command again without an attach, with the window size that the session had. For a session whose command runs, it succeeds and changes nothing.
+- `restore-policy <target> <policy>` sets when the command starts again:
 
 | Policy | The command starts again |
 |---|---|
@@ -169,7 +208,7 @@ The command of an ended session does not start again: `start` and `attach` have 
 
 ### `capture`
 
-`capture <id>` prints the last 100 lines that the command of the session wrote. `--lines <n>` sets the number.
+`capture <target>` prints the last 100 lines that the command of the session wrote. `--lines <n>` sets the number.
 
 - The lines come from the journal of the session. Thus the command also gives lines that left the screen, lines from before a restore, and the lines of a dormant or an ended session.
 - A line ends with a line feed. The output is the bytes as the command wrote them: it has the escape sequences of the command, and a terminal session ends a line with a carriage return and a line feed.
@@ -178,12 +217,14 @@ The command of an ended session does not start again: `start` and `attach` have 
 
 ### `attach`
 
-`attach <id>` makes the terminal of the user the terminal of the session:
+`attach <target>` makes the terminal of the user the terminal of the session:
 
 1. The session gets the window size of the terminal.
 2. The terminal shows the current screen of the session. A program that already drew its screen, for example an editor, is visible immediately. For a dormant session, the terminal first shows the end of the output from before, then the line `--- nomux: the session started again. The output before this line is from the command that stopped ---`, and then the screen of the new command. The old output and the line are in the scrollback of the terminal after that.
 3. Each key goes to the session, and the terminal shows each byte that the session writes. The terminal is in raw mode: `Ctrl-C` and `Ctrl-Z` go to the programs of the session.
 4. When the window gets a different size, the session gets the new size.
+
+`<session>` in a message is the name of the session with its identifier, `api (m4ab5ghi)`, or only the identifier of a session without a name.
 
 The command needs a terminal on its standard input. More than one terminal can be attached to one session at the same time: each one shows the same output, and each one can type.
 The session has one window size: the size of the terminal that attached or changed its size last. A terminal with a different size shows the output as the programs made it for that size.
@@ -212,10 +253,10 @@ The session has one window size: the size of the terminal that attached or chang
 
 | Event | Message | Exit code |
 |---|---|---|
-| The user detaches, `nomux detach` detaches the client, or the terminal closes | `detached from session <id>` | 0 |
-| The command of the session ends | `session <id> ended with exit status <n>` | `<n>`: the exit status of the command |
-| A signal ends the command of the session | `session <id> ended by signal <n>` | 128 + `<n>`, as a shell gives it |
-| The session ends and the daemon cannot get the exit status | `session <id> ended; its exit status is not known` | 1 |
+| The user detaches, `nomux detach` detaches the client, or the terminal closes | `detached from session <session>` | 0 |
+| The command of the session ends | `session <session> ended with exit status <n>` | `<n>`: the exit status of the command |
+| A signal ends the command of the session | `session <session> ended by signal <n>` | 128 + `<n>`, as a shell gives it |
+| The session ends and the daemon cannot get the exit status | `session <session> ended; its exit status is not known` | 1 |
 | The daemon stops or fails | An error that says that the session continues and how to attach again | 1 |
 | The connection to a remote host ends | The attach connects again and continues with the output that it does not have. The title of the terminal window says `nomux: connection lost, connecting again` until then, and the keys of that time are discarded. After approximately 48 seconds without a connection: an error that says how to attach again | 1 after the error |
 | The CLI gets `SIGTERM`, `SIGHUP`, `SIGINT` or `SIGQUIT` | An error | 1 |
@@ -226,9 +267,18 @@ Thus the exit code of `attach` can be a value that the table "Exit codes" does n
 
 The CLI does not use the alternate screen of the terminal: after the attach, the terminal shows the last screen of the session, and the message is on the next line.
 
+### `rename`
+
+`rename <target> <new-name>` gives the session the name `<new-name>`, with the rules of "Targets and names". The same name as now succeeds and changes nothing. A name that a different session has gives the exit code 1. An ended session cannot get a new name: the exit code is 2.
+
+```console
+$ nomux rename ouldrfi3 web
+session ouldrfi3 is now named web
+```
+
 ### `detach`
 
-`detach <id>` detaches each client that is attached to the session, from a different terminal or from a script. Each of these clients ends as after the detach keys. The session continues.
+`detach <target>` detaches each client that is attached to the session, from a different terminal or from a script. Each of these clients ends as after the detach keys. The session continues.
 The command succeeds also if no client is attached. If no session has the identifier, the exit code is 2.
 
 A client detaches itself with the detach keys. The command has no form without an identifier yet: a later version takes the identifier from the environment of the session.
@@ -400,6 +450,7 @@ These commands change and list the workspace tree of the host: the Groups and th
 - A result that the user saw has `(seen)`. An attach to a session marks its results as seen.
 - The mark: `!` needs you, `x` error, `+` done, `*` working, and no mark for idle.
 - With `--tree`, each Child work is a row below its session, indented two spaces for each level. A Child work that no source reports has `-` as its state.
+- A session that has a name shows its name in place of its identifier.
 - With `--tree`, the sessions without a Project come first. Then each Group (its name ends with `/`) and each Project of the workspace tree is a row, in the sequence of the tree and indented for each level, with the most urgent status of the sessions below it ([workspace.md](workspace.md#status)). The sessions of a Project are the rows below it. A Group or a Project without a session has `-` as its state. The first column has the header `NAME`.
 
 ```console
@@ -423,7 +474,7 @@ $ nomux status --tree
 
 ### `agent explain`
 
-`agent explain <id>` prints the status of a session with its source, and then each source in the sequence in which they decide, with what it says and why: the note of the source. A source that reports nothing is in the list too.
+`agent explain <target>` prints the status of a session with its source, and then each source in the sequence in which they decide, with what it says and why: the note of the source. A source that reports nothing is in the list too.
 
 For an ended session, the command prints its kept run, with the resume command of the tool, until the session is removed. An ended session without a kept run gives exit code 2.
 
@@ -461,9 +512,14 @@ These commands change and show the hooks of an agent tool in the settings file o
 ```console
 $ nomux new
 k3xq2abc
+$ nomux new -n api
+m4ab5ghi
 $ nomux ls
-ID        STATE    PID    COMMAND
-k3xq2abc  running  41873  /bin/zsh
+ID        NAME  STATE    PID    COMMAND
+k3xq2abc  -     running  41873  /bin/zsh
+m4ab5ghi  api   running  41880  /bin/zsh
+$ nomux attach api
+detached from session api (m4ab5ghi)
 $ nomux attach k3xq2abc
 detached from session k3xq2abc
 $ nomux detach k3xq2abc
@@ -588,7 +644,7 @@ With `--quiet`, a command prints only what a script needs:
 | `events --follow` | The lines of the text output |
 | `ext call` | The payload of the result, as without `--quiet` |
 | `version` | The version number |
-| `new --attach`, `attach`, `start`, `restore-policy`, `detach`, `kill`, `daemon status`, `daemon stop`, `daemon install-service`, `daemon uninstall-service`, `host add`, `host rm`, `host doctor`, `ext install`, `ext rm`, `ext enable`, `ext disable`, `ext validate`, `status set`, `agent explain` | Nothing. The exit code is the result |
+| `new --attach`, `attach`, `start`, `restore-policy`, `detach`, `kill`, `rename`, `daemon status`, `daemon stop`, `daemon install-service`, `daemon uninstall-service`, `host add`, `host rm`, `host doctor`, `ext install`, `ext rm`, `ext enable`, `ext disable`, `ext validate`, `status set`, `agent explain` | Nothing. The exit code is the result |
 
 ### Errors
 
@@ -600,8 +656,8 @@ A wrong command line prints the usage message of the argument parser and has the
 | Code | Name in JSON | Meaning |
 |---:|---|---|
 | 0 | | Success |
-| 1 | `error` | An error that has no other code, also a wrong command line, an SSH connection that cannot be made, a host key that is not trusted, a check of `host doctor` that failed, a dormant session that cannot start, a manifest that is not valid, and an extension that failed |
-| 2 | `not_found` | The item does not exist: no session has the identifier, the command of the session ended, no host has the name, no extension has the identifier, or no daemon runs (`daemon status`) |
+| 1 | `error` | An error that has no other code, also a wrong command line, a target that can be more than one session, a session name that is not valid or in use, an SSH connection that cannot be made, a host key that is not trusted, a check of `host doctor` that failed, a dormant session that cannot start, a manifest that is not valid, and an extension that failed |
+| 2 | `not_found` | The item does not exist: no session has the identifier (no session matches the target), the command of the session ended, no host has the name, no extension has the identifier, or no daemon runs (`daemon status`) |
 | 3 | `timeout` | An operation did not complete in the permitted time: the daemon did not answer after its start, a session was not ready, a command did not end, or an extension did not answer |
 | 4 | `no_permission` | The user does not have permission, for example for the socket of the daemon, or a remote host accepted no key of the user. Also: `ext install` without an approval of the permissions, an extension that does not have a permission, and a `status set` that cannot prove its session |
 | 5 | `version_mismatch` | The CLI and the daemon have no common protocol version. Update the older of the two |
@@ -623,12 +679,13 @@ With `--json`, a command prints one JSON document on one line.
 ### `new` and `start`
 
 ```json
-{"schema_version":1,"session":{"id":"k3xq2abc","state":"running","pid":41873,"command":["/bin/zsh"],"cwd":"/home/user/project","rows":24,"columns":80,"started_at":1795651200,"epoch":1,"restore_policy":"on-focus"}}
+{"schema_version":1,"session":{"id":"k3xq2abc","name":"api","state":"running","pid":41873,"command":["/bin/zsh"],"cwd":"/home/user/project","rows":24,"columns":80,"started_at":1795651200,"epoch":1,"restore_policy":"on-focus"}}
 ```
 
 | Field | Type | Meaning |
 |---|---|---|
 | `session.id` | string | The session identifier |
+| `session.name` | string or `null` | The session name. `null` if the session has no name, and from an older daemon |
 | `session.state` | string | `running`, `unreachable`, `dormant`, `ended`, `damaged` or `unknown` |
 | `session.pid` | number or `null` | The process ID of the command. `null` if the session has no process or the daemon does not know it |
 | `session.command` | array of strings | The program of the command and its arguments. Empty if the daemon does not know them. A byte sequence that is not UTF-8 has U+FFFD in its place |
@@ -645,8 +702,8 @@ A field is `null`, or `command` is empty, when the daemon does not know the valu
 ### `ls`
 
 ```json
-{"schema_version":1,"sessions":[{"id":"k3xq2abc","state":"dormant","pid":null,"command":["/bin/zsh"],"cwd":"/home/user/project","rows":24,"columns":80,"started_at":1795651200,"epoch":1,"restore_policy":"on-focus"}]}
-{"schema_version":1,"sessions":[{"id":"k3xq2abc","state":"ended","pid":null,"command":["make"],"cwd":"/home/user/project","rows":24,"columns":80,"started_at":1795651200,"epoch":1,"restore_policy":"on-focus","exit":{"ended_at":1795651260,"exit_code":2}}]}
+{"schema_version":1,"sessions":[{"id":"k3xq2abc","name":null,"state":"dormant","pid":null,"command":["/bin/zsh"],"cwd":"/home/user/project","rows":24,"columns":80,"started_at":1795651200,"epoch":1,"restore_policy":"on-focus"}]}
+{"schema_version":1,"sessions":[{"id":"k3xq2abc","name":null,"state":"ended","pid":null,"command":["make"],"cwd":"/home/user/project","rows":24,"columns":80,"started_at":1795651200,"epoch":1,"restore_policy":"on-focus","exit":{"ended_at":1795651260,"exit_code":2}}]}
 ```
 
 `sessions` is an array of the object that `new` gives, in the sequence of the identifiers, with one more field: `project`, the Project of the session (`id` and `path`), or `null` if the session has no Project. It is empty if there is no session. An ended session is in the array only with `--all`.
@@ -654,7 +711,7 @@ A field is `null`, or `command` is empty, when the daemon does not know the valu
 ### `ls --memory`
 
 ```json
-{"schema_version":1,"sessions":[{"id":"k3xq2abc","state":"running","pid":41873,"command":["claude"],"cwd":"/home/user/project","rows":24,"columns":80,"started_at":1795651200,"epoch":1,"restore_policy":"on-focus","memory":{"command_bytes":537290342,"command_processes":7,"holder_bytes":621568,"measure":"pss"}},{"id":"p2rs6tuv","state":"dormant","pid":null,"command":["vim","notes.txt"],"cwd":"/home/user","rows":24,"columns":80,"started_at":1795651100,"epoch":1,"restore_policy":"on-focus","memory":null}],"memory_total":{"command_bytes":537290342,"command_processes":7,"holder_bytes":621568,"sessions":1,"measure":"pss"}}
+{"schema_version":1,"sessions":[{"id":"k3xq2abc","name":null,"state":"running","pid":41873,"command":["claude"],"cwd":"/home/user/project","rows":24,"columns":80,"started_at":1795651200,"epoch":1,"restore_policy":"on-focus","memory":{"command_bytes":537290342,"command_processes":7,"holder_bytes":621568,"measure":"pss"}},{"id":"p2rs6tuv","name":null,"state":"dormant","pid":null,"command":["vim","notes.txt"],"cwd":"/home/user","rows":24,"columns":80,"started_at":1795651100,"epoch":1,"restore_policy":"on-focus","memory":null}],"memory_total":{"command_bytes":537290342,"command_processes":7,"holder_bytes":621568,"sessions":1,"measure":"pss"}}
 ```
 
 The document is the document of `ls` with one more field in each session and one more field at the top. Without `--memory`, the document has neither of the two.
@@ -687,12 +744,13 @@ The document is the document of `ls` with one more field in each session and one
 {"schema_version":1,"restore_policy":{"id":"k3xq2abc","policy":"manual"}}
 ```
 
-### `attach` and `new --attach`
+### `attach`, `new --attach` and `new -A`
 
 ```json
-{"schema_version":1,"attach":{"id":"k3xq2abc","end":"detached"}}
-{"schema_version":1,"attach":{"id":"k3xq2abc","end":"exited","exit_code":0}}
-{"schema_version":1,"attach":{"id":"k3xq2abc","end":"signaled","signal":9}}
+{"schema_version":1,"attach":{"id":"k3xq2abc","name":"api","end":"detached"}}
+{"schema_version":1,"attach":{"id":"k3xq2abc","name":null,"end":"exited","exit_code":0}}
+{"schema_version":1,"attach":{"id":"k3xq2abc","name":null,"end":"signaled","signal":9}}
+{"schema_version":1,"attach":{"id":"k3xq2abc","name":"work","created":false,"end":"detached"}}
 ```
 
 The command prints the document after the attach ended.
@@ -700,6 +758,8 @@ The command prints the document after the attach ended.
 | Field | Type | Meaning |
 |---|---|---|
 | `attach.id` | string | The session identifier |
+| `attach.name` | string or `null` | The session name |
+| `attach.created` | boolean | Only for `new -A`: `false` if the session existed |
 | `attach.end` | string | `detached`: the client detached and the session continues. `exited`: the command ended with an exit code. `signaled`: a signal ended the command. `lost`: the session ended and its exit status is not known. `unknown`: the daemon is newer than the CLI and sent a reason that the CLI does not know |
 | `attach.exit_code` | number | The exit code of the command. Only if `end` is `exited` |
 | `attach.signal` | number | The signal number. Only if `end` is `signaled` |
@@ -714,6 +774,14 @@ The command prints the document after the attach ended.
 |---|---|---|
 | `detached.id` | string | The session identifier |
 | `detached.clients` | number | The number of clients that were attached to the session |
+
+### `rename`
+
+```json
+{"schema_version":1,"renamed":{"id":"k3xq2abc","name":"web","previous_name":"api"}}
+```
+
+`renamed.name` is the new name. `renamed.previous_name` is the name before the command, or `null`.
 
 ### `kill`
 
@@ -906,14 +974,14 @@ A node has these fields:
 ### `status`
 
 ```json
-{"schema_version":1,"status":{"attention":{"session":"k3xq2abc","status":{"state":"needs_you","kind":"permission","source":"program_status","guess":false,"since_ms":1795670000000,"seen":false,"message":{"text":"run tests?","source":"program_status"},"title":null,"progress":null,"tool":null}},"sessions":[{"id":"k3xq2abc","command":["claude"],"status":{...},"aggregate":{...}}]}}
+{"schema_version":1,"status":{"attention":{"session":"k3xq2abc","status":{"state":"needs_you","kind":"permission","source":"program_status","guess":false,"since_ms":1795670000000,"seen":false,"message":{"text":"run tests?","source":"program_status"},"title":null,"progress":null,"tool":null}},"sessions":[{"id":"k3xq2abc","name":null,"command":["claude"],"status":{...},"aggregate":{...}}]}}
 ```
 
 | Field | Type | Meaning |
 |---|---|---|
 | `status.attention` | object or `null` | The session with the most urgent status, and that status. `null` if the host has no session |
 | `status.sessions[]` | list | One Agent run for each session that is not ended and for each ended session that keeps its last Agent run, in the sequence of the identifiers |
-| `.id`, `.command` | string, list of strings | The session and its command |
+| `.id`, `.name`, `.command` | string, string or `null`, list of strings | The session, its name and its command |
 | `.status` | status | The status of the Agent run |
 | `.aggregate` | status | The most urgent status of the Agent run and of its Child work |
 | `.children[]` | list | Only with `--tree`. Each Child work: `name`, `status` (a status, or `null` if no source reports it), `aggregate` and `children` |
@@ -945,7 +1013,7 @@ A status has these fields:
 {"schema_version":1,"explain":{"session":"k3xq2abc","run":{"id":"k3xq2abc","status":{...},"aggregate":{...},"children":[]},"sources":[{"source":"program_status","guess":false,"reported":true,"state":"working","kind":null,"message":"reading files","note":"1 program status records in the terminal stream"}]}}
 ```
 
-`explain.run` has the fields of an entry of `status.sessions` with its Child work, without `command`. `explain.sources` has each source in the sequence in which they decide. `reported` is `false` for a source that says nothing: then `state`, `kind` and `message` are `null`, and `note` says why. The text of a note is not stable.
+`explain.run` has the fields of an entry of `status.sessions` with its Child work, without `name` and `command`. `explain.sources` has each source in the sequence in which they decide. `reported` is `false` for a source that says nothing: then `state`, `kind` and `message` are `null`, and `note` says why. The text of a note is not stable.
 
 ### `events --follow`
 
@@ -1018,6 +1086,11 @@ The command prints the answer for the tool, not a JSON document, also with `--js
 | `error.code` | number | The exit code of the command |
 | `error.kind` | string | The name of the exit code from the table "Exit codes" |
 | `error.message` | string | A message in English for a person. The text is not stable |
+| `error.candidates` | list | Only for a target that can be more than one session: each candidate as `id`, `name` (string or `null`) and `state` |
+
+```json
+{"schema_version":1,"error":{"code":1,"kind":"error","message":"ap can be more than one session. ...","candidates":[{"id":"okjzhnzv","name":"api-v2","state":"running"},{"id":"ouldrfi3","name":"api","state":"running"}]}}
+```
 
 A wrong command line is not a JSON document: the argument parser writes its usage message as text.
 
@@ -1025,7 +1098,7 @@ A wrong command line is not a JSON document: the argument parser writes its usag
 
 - `crates/nomux-cli/src/output/json.rs` and `crates/nomux-cli/src/output/extension_json.rs` have the full text of each document. A changed field fails these tests.
 - `crates/nomux-cli/src/arguments.rs` has the rule for the arguments after `--` and `--cmd`, and the usage error for the two forms in one command line. `crates/nomux-cli/src/output/memory_human.rs` has the full text of the table of `ls --memory`, `crates/nomux-cli/src/output/status_human.rs` has the table of `status`, and `tests/session_memory.rs` has its JSON document with real processes. `crates/nomux-cli/src/attach` has the key decoder with the legacy bytes, the kitty form, `modifyOtherKeys`, a sequence in two reads and a paste, and the mode of the terminal, also after a panic. `crates/nomux-core/src/configuration/prefix_keys.rs` has the rules of a prefix key.
-- `tests/` has the end-to-end tests that run the real `nomux`, `nomuxd` and `nomux-holder` and examine the exit codes. `tests/attach.rs` runs `nomux attach` in a pseudoterminal and examines the screen. `tests/remote_host.rs` runs the `host` commands and the commands with `--host` against an SSH server that the test starts. `tests/extensions.rs` runs the `ext` commands with a test extension that uses the extension SDK. `tests/restore.rs` stops each process as a restart of the host does and runs `ls`, `attach`, `start` and `restore-policy` on the dormant sessions. `tests/journal.rs` has `capture`, and `tests/daemon_service.rs` has the service file. `tests/status.rs` has `status`, `status set`, `agent explain` and `events --follow` with a program that reports its status. `tests/adapters.rs` has `hook`, the `hooks` commands and the event of an extension with the test adapter extension. `tests/workspace.rs` has the `project` and `group` commands, the tree after a restart of the daemon, two clients that keep the same tree with the events, and `status --tree` with Groups.
+- `tests/` has the end-to-end tests that run the real `nomux`, `nomuxd` and `nomux-holder` and examine the exit codes. `tests/attach.rs` runs `nomux attach` in a pseudoterminal and examines the screen. `tests/remote_host.rs` runs the `host` commands and the commands with `--host` against an SSH server that the test starts. `tests/extensions.rs` runs the `ext` commands with a test extension that uses the extension SDK. `tests/restore.rs` stops each process as a restart of the host does and runs `ls`, `attach`, `start` and `restore-policy` on the dormant sessions. `tests/journal.rs` has `capture`, and `tests/daemon_service.rs` has the service file. `tests/status.rs` has `status`, `status set`, `agent explain` and `events --follow` with a program that reports its status. `tests/adapters.rs` has `hook`, the `hooks` commands and the event of an extension with the test adapter extension. `tests/session_names.rs` has a name after a restart of the host and two `new -A` at the same time. `crates/nomux-client/src/session_target.rs` has the table of the target rule. `tests/workspace.rs` has the `project` and `group` commands, the tree after a restart of the daemon, two clients that keep the same tree with the events, and `status --tree` with Groups.
 - `crates/nomux-cli/src/service_files` has the content of the systemd unit and of the launchd agent, also for a path that needs quotes.
 
 ## Open points for the next versions

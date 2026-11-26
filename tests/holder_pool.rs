@@ -193,6 +193,7 @@ fn a_session_from_the_pool_opens_in_less_than_10_ms() {
                 .create_session(NewSession {
                     command: Vec::new(),
                     working_directory: Some(project.clone()),
+                    ..NewSession::default()
                 })
                 .await
                 .expect("the session starts");
@@ -332,6 +333,7 @@ fn new_shell_session(sandbox: &Sandbox, working_directory: Option<PathBuf>) -> S
             .create_session(NewSession {
                 command: Vec::new(),
                 working_directory,
+                ..NewSession::default()
             })
             .await
             .expect("the session starts")

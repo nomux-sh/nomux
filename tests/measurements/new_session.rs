@@ -128,6 +128,7 @@ async fn first_command(sandbox: &Sandbox, project: &Path, pooled: bool) -> Vec<D
             .create_session(NewSession {
                 command: Vec::new(),
                 working_directory: Some(project.to_owned()),
+                ..NewSession::default()
             })
             .await
             .expect("the session starts");
@@ -173,6 +174,7 @@ fn breakdown(sandbox: &Sandbox, project: &Path, runtime: &tokio::runtime::Runtim
                 .create_session(NewSession {
                     command: Vec::new(),
                     working_directory: Some(project.to_owned()),
+                    ..NewSession::default()
                 })
                 .await
                 .expect("the session starts");

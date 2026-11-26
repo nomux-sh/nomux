@@ -68,9 +68,11 @@ pub(crate) async fn agent(
     host_name: Option<&str>,
     format: Format,
 ) -> Result<Report, ClientError> {
-    let AgentCommand::Explain { id } = command;
+    let AgentCommand::Explain { target } = command;
     let host = selected_host::connect(host_name, format).await?;
-    let explanation = host.client(KIND).await?.explain_agent(&id).await?;
+    let mut client = host.client(KIND).await?;
+    let id = client.find_session(target.text()).await?.id;
+    let explanation = client.explain_agent(&id).await?;
     Ok(StatusReport::Explained(explanation).into())
 }
 

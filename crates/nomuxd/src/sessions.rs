@@ -1,12 +1,17 @@
 //! The operations on sessions: create, list and find. The child modules
 //! take over the sessions of an earlier daemon and of an earlier start of
-//! the host, and start a dormant session again.
+//! the host, start a dormant session again, and keep the names and the
+//! attach times of the sessions.
 
 mod adoption;
+mod attach_times;
 mod memory;
+mod naming;
 mod pool;
 mod resolved_directories;
 mod restore;
+
+pub(crate) use self::naming::NamedSession;
 
 use std::env;
 use std::ffi::OsString;
@@ -29,6 +34,7 @@ use crate::session_error::SessionError;
 use crate::session_handle::SessionHandle;
 use crate::session_id;
 use crate::session_journal::SessionJournal;
+use crate::session_name::SessionName;
 use crate::session_registry::{SessionRecord, SessionRegistry, SessionState};
 use crate::session_store::SessionStore;
 use crate::settings::Settings;
@@ -36,6 +42,7 @@ use crate::shutdown::Shutdown;
 use crate::status::{self, StatusRegistry};
 use crate::stopped_sessions::StoppedSessions;
 
+use self::attach_times::AttachTimes;
 use self::resolved_directories::ResolvedDirectories;
 
 /// The commands of the attached clients and of the request handlers that
@@ -54,6 +61,10 @@ pub(crate) struct ListedSession {
     /// The working directory of the metadata with its symbolic links
     /// resolved. `None` if it cannot be resolved.
     pub(crate) resolved_working_directory: Option<PathBuf>,
+    pub(crate) name: Option<SessionName>,
+    /// When a client attached the last time: seconds after the Unix epoch.
+    pub(crate) last_attached_at: Option<u64>,
+    pub(crate) attached_clients: usize,
 }
 
 /// The sessions of the host.
@@ -75,6 +86,9 @@ pub(crate) struct Sessions {
     home: PathBuf,
     pool: HolderPool,
     resolved_directories: ResolvedDirectories,
+    /// One change of a name at a time: see `naming`.
+    naming: Mutex<()>,
+    attach_times: AttachTimes,
 }
 
 impl Sessions {
@@ -121,6 +135,8 @@ impl Sessions {
             shell,
             home,
             resolved_directories: ResolvedDirectories::default(),
+            naming: Mutex::new(()),
+            attach_times: AttachTimes::default(),
         })
     }
 
@@ -178,8 +194,9 @@ impl Sessions {
     /// sessions are in the list only with `include_ended`.
     pub(crate) fn list(&self, include_ended: bool) -> Vec<ListedSession> {
         let records = self.registry.records();
-        self.resolved_directories
-            .keep_only(&records.iter().map(|record| &record.id).collect::<Vec<_>>());
+        let ids: Vec<&SessionId> = records.iter().map(|record| &record.id).collect();
+        self.resolved_directories.keep_only(&ids);
+        self.attach_times.keep_only(&ids);
         records
             .into_iter()
             .filter(|record| include_ended || !matches!(record.state, SessionState::Ended(_)))
@@ -228,6 +245,11 @@ impl Sessions {
     pub(crate) fn detach(&self, id: &str) -> Result<usize, SessionError> {
         let (_, handle) = self.find(id)?;
         Ok(handle.map_or(0, |handle| handle.clients.detach_all()))
+    }
+
+    /// A client attached to the session `id` now.
+    pub(crate) fn mark_attached(&self, id: &SessionId) {
+        self.attach_times.stamp(id);
     }
 
     /// Sets when the daemon starts the command of the session `id` again.
@@ -284,10 +306,18 @@ impl Sessions {
             self.resolved_directories
                 .of(&record.id, &metadata.working_directory)
         });
+        let attached_clients = self
+            .registry
+            .find(&record.id)
+            .and_then(|(_, handle)| handle)
+            .map_or(0, |handle| handle.clients.count());
         ListedSession {
             metadata,
             restore_policy: self.restore_policy(&record.id),
             resolved_working_directory,
+            name: self.store.name(&record.id),
+            last_attached_at: self.attach_times.of(&record.id),
+            attached_clients,
             record,
         }
     }
@@ -388,14 +418,16 @@ impl Sessions {
     }
 
     /// A random identifier that no session, no holder directory, no pooled
-    /// holder and no state directory has.
+    /// holder and no state directory has, and that is not the name of a
+    /// session.
     fn unused_session_id(&self) -> io::Result<SessionId> {
         loop {
             let session_id = session_id::random()?;
             let in_use = self.registry.contains(&session_id)
                 || holder_directory(&self.runtime_directory, &session_id).exists()
                 || pooled_holder_directory(&self.runtime_directory, &session_id).exists()
-                || self.store.has(&session_id);
+                || self.store.has(&session_id)
+                || self.is_name_in_use(&session_id);
             if !in_use {
                 return Ok(session_id);
             }

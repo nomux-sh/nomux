@@ -15,7 +15,7 @@ use std::task::Poll;
 use std::time::Duration;
 
 use nomux_client::{
-    AttachEnd, AttachOptions, Client, ClientError, Host, TerminalEvent, TerminalInput,
+    AttachEnd, AttachOptions, Client, ClientError, Host, Session, TerminalEvent, TerminalInput,
     TerminalOutput,
 };
 use tokio::io::{AsyncWriteExt, Stdout};
@@ -40,19 +40,19 @@ pub(crate) fn require_terminal() -> Result<(), ClientError> {
     }
 }
 
-/// Attaches to the session `id` on `host` with the prefix keys `prefixes`
-/// and returns how the attach ended. `host_name` is the name of a remote
-/// host, for the messages.
+/// Attaches to `session` on `host` with the prefix keys `prefixes` and
+/// returns how the attach ended. `host_name` is the name of a remote host,
+/// for the messages. The attach uses one connection for the terminal, and
+/// `control` for the window size.
 pub(crate) async fn run(
     host: &Host,
     host_name: Option<&str>,
-    id: &str,
+    control: Client,
+    session: &Session,
     prefixes: PrefixKeys,
 ) -> Result<AttachEnd, ClientError> {
+    let id = session.id.as_str();
     require_terminal()?;
-    // The attach uses one connection for the terminal. The window size goes
-    // on a second connection.
-    let control = host.client(KIND).await?;
     let options = AttachOptions {
         size: local_terminal::window_size(),
         resume: None,
@@ -70,7 +70,7 @@ pub(crate) async fn run(
         end = send_input(&mut input, &mut resize, &reconnected, signals, prefixes) => end,
     };
     drop(raw_mode);
-    end.map_err(|error| with_attach_hint(error, host_name, id))
+    end.map_err(|error| with_attach_hint(error, host_name, session.label()))
 }
 
 /// Writes the screen and the output of the session to the terminal until
@@ -280,10 +280,10 @@ fn terminal_error(error: &io::Error) -> ClientError {
 
 /// A lost connection or a daemon that stopped ends the attach and not the
 /// session. The message says how to continue.
-fn with_attach_hint(error: ClientError, host_name: Option<&str>, id: &str) -> ClientError {
+fn with_attach_hint(error: ClientError, host_name: Option<&str>, target: &str) -> ClientError {
     let host_option = host_name.map_or_else(String::new, |name| format!("--host {name} "));
     let hint =
-        format!("The session continues: run `nomux {host_option}attach {id}` to attach again");
+        format!("The session continues: run `nomux {host_option}attach {target}` to attach again");
     match error {
         ClientError::Connection(error) => {
             ClientError::Connection(io::Error::new(error.kind(), format!("{error}. {hint}")))

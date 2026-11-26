@@ -12,6 +12,7 @@ The user documentation is not here. It is in the [`docs`](https://github.com/nom
 | [holder.md](holder.md) | The holder: process model, ring buffer, control protocol, discovery files | in use |
 | [daemon.md](daemon.md) | The daemon: process model, socket, lifecycle, how it finds and holds the holders | in use |
 | [cli.md](cli.md) | The CLI: commands, JSON schema, exit codes | in use |
+| [coming-from-tmux-and-screen.md](coming-from-tmux-and-screen.md) | The commands of tmux and GNU screen and the commands of nomux that do the same | in use |
 | [extensions.md](extensions.md) | The extension host: installed extensions, life cycle of a process, isolation, limits, and the host in the daemon with its directory, the `Ext` service and the host services | in use |
 | [memory.md](memory.md) | The memory of each session: what `nomux ls --memory` shows, how the daemon measures it, and the design of an optional memory limit | the first part in use, the limit is a design |
 | [status.md](status.md) | The agent status: the model, the sources and their sequence, the rules of the resolver and of the aggregation, the adapter source, sessions without a process, the self-report and its token | in use |

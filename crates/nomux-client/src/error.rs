@@ -8,6 +8,7 @@ use nomux_core::configuration::ConfigurationError;
 use nomux_proto::wire::v1 as wire;
 use nomux_transport::ssh::SshError;
 
+use crate::Session;
 use crate::extension::ExtensionCallError;
 
 /// A connection to the daemon or a request did not succeed.
@@ -32,6 +33,14 @@ pub enum ClientError {
     Failed(String),
     /// A method of an extension answered a call with an error.
     ExtensionAnswered(ExtensionCallError),
+    /// The target names more than one session: the identifier or the name
+    /// of each candidate starts with it.
+    AmbiguousTarget {
+        /// The text that the user gave.
+        target: String,
+        /// The sessions that the target can name.
+        candidates: Vec<Session>,
+    },
 }
 
 impl ClientError {
@@ -97,6 +106,28 @@ impl fmt::Display for ClientError {
             | Self::Timeout(message)
             | Self::Failed(message) => formatter.write_str(message),
             Self::ExtensionAnswered(error) => error.fmt(formatter),
+            Self::AmbiguousTarget { target, candidates } => {
+                write!(
+                    formatter,
+                    "{target} can be more than one session. Give more of the identifier or of \
+                     the name of one of them:"
+                )?;
+                let name_width = candidates
+                    .iter()
+                    .map(|session| session.name.as_deref().map_or(1, str::len))
+                    .max()
+                    .unwrap_or(0);
+                for session in candidates {
+                    let name = session.name.as_deref().unwrap_or("-");
+                    let line = format!(
+                        "  {}  {name:<name_width$}  {}",
+                        session.id,
+                        session.command.join(" ")
+                    );
+                    write!(formatter, "\n{}", line.trim_end())?;
+                }
+                Ok(())
+            }
         }
     }
 }

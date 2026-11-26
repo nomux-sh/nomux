@@ -9,8 +9,9 @@ use nomux_proto::wire::v1::{
     SessionCaptureRequest, SessionCaptureResponse, SessionCreateRequest, SessionCreateResponse,
     SessionDetachRequest, SessionDetachResponse, SessionInputRequest, SessionInputResponse,
     SessionKillRequest, SessionKillResponse, SessionListRequest, SessionListResponse,
-    SessionResizeRequest, SessionResizeResponse, SessionSetRestorePolicyRequest,
-    SessionSetRestorePolicyResponse, SessionStartRequest, SessionStartResponse, response,
+    SessionRenameRequest, SessionRenameResponse, SessionResizeRequest, SessionResizeResponse,
+    SessionSetRestorePolicyRequest, SessionSetRestorePolicyResponse, SessionStartRequest,
+    SessionStartResponse, response,
 };
 
 use super::Context;
@@ -18,6 +19,8 @@ use super::session_message::restore_policy_of;
 use crate::attachment::Attachment;
 use crate::handshake::ClientFeatures;
 use crate::session_error::SessionError;
+use crate::session_name::SessionName;
+use crate::sessions::NamedSession;
 
 pub(super) async fn create(
     request: SessionCreateRequest,
@@ -25,14 +28,49 @@ pub(super) async fn create(
 ) -> Result<response::Result, Error> {
     let working_directory =
         (!request.working_directory.is_empty()).then(|| PathBuf::from(request.working_directory));
-    let session = context
-        .sessions
-        .create(request.command, working_directory)
-        .await?;
+    let named = match name_of(&request.name)? {
+        Some(name) => {
+            context
+                .sessions
+                .create_named(
+                    request.command,
+                    working_directory,
+                    name,
+                    request.reuse_existing,
+                )
+                .await?
+        }
+        None => NamedSession {
+            session: context
+                .sessions
+                .create(request.command, working_directory)
+                .await?,
+            created: true,
+        },
+    };
     Ok(response::Result::SessionCreate(SessionCreateResponse {
-        session: Some(session.into()),
-        created: true,
+        session: Some(named.session.into()),
+        created: named.created,
     }))
+}
+
+pub(super) async fn rename(
+    request: SessionRenameRequest,
+    context: &Context,
+) -> Result<response::Result, Error> {
+    let name = name_of(&request.name)?;
+    let session = context.sessions.rename(&request.id, name).await?;
+    Ok(response::Result::SessionRename(SessionRenameResponse {
+        session: Some(session.into()),
+    }))
+}
+
+/// The name of a request. An empty text is no name.
+fn name_of(text: &str) -> Result<Option<SessionName>, SessionError> {
+    if text.is_empty() {
+        return Ok(None);
+    }
+    text.parse().map(Some).map_err(SessionError::Failed)
 }
 
 pub(super) fn list(request: SessionListRequest, context: &Context) -> response::Result {
@@ -63,6 +101,7 @@ pub(super) async fn attach(
     let attachment = Attachment::prepare(request, size, features, &context.sessions).await?;
     // The user looks at the session now.
     context.status.mark_seen(attachment.session_id());
+    context.sessions.mark_attached(attachment.session_id());
     Ok(attachment)
 }
 

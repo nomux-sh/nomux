@@ -4,13 +4,13 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use nomux_proto::capabilities::OUTPUT_HISTORY;
+use nomux_proto::capabilities::{OUTPUT_HISTORY, SESSION_ACTIVITY, SESSION_NAMES};
 use nomux_proto::compatibility::{VersionRange, negotiate};
 use nomux_proto::wire::v1::{
     self as wire, Envelope, Hello, HostInfoRequest, HostStopRequest, Request, SessionAttachRequest,
     SessionCaptureRequest, SessionCreateRequest, SessionDetachRequest, SessionInputRequest,
-    SessionKillRequest, SessionListRequest, SessionResizeRequest, SessionSetRestorePolicyRequest,
-    SessionStartRequest, envelope, request, response,
+    SessionKillRequest, SessionListRequest, SessionRenameRequest, SessionResizeRequest,
+    SessionSetRestorePolicyRequest, SessionStartRequest, envelope, request, response,
 };
 use nomux_transport::{EnvelopeStream, FrameReader, FrameWriter};
 use tokio::time::timeout;
@@ -35,6 +35,8 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct Client {
     stream: EnvelopeStream,
     next_request_id: u64,
+    /// The capability flags of the daemon.
+    daemon_capabilities: Vec<String>,
 }
 
 impl Client {
@@ -69,6 +71,7 @@ impl Client {
         let mut client = Self {
             stream,
             next_request_id: 1,
+            daemon_capabilities: Vec::new(),
         };
         client.handshake(kind).await?;
         Ok(client)
@@ -80,8 +83,11 @@ impl Client {
             version: local.version,
             oldest: local.oldest,
             // This client reads the output of an earlier epoch and the
-            // frames that come with it.
-            capabilities: vec![OUTPUT_HISTORY.to_owned()],
+            // frames that come with it, and the names and the activity of
+            // the sessions.
+            capabilities: [OUTPUT_HISTORY, SESSION_NAMES, SESSION_ACTIVITY]
+                .map(str::to_owned)
+                .to_vec(),
             client_kind: wire::ClientKind::from(kind).into(),
             token: String::new(),
         };
@@ -100,7 +106,20 @@ impl Client {
                 local.oldest, local.version, daemon.oldest, daemon.version
             ))
         })?;
+        self.daemon_capabilities = welcome.capabilities;
         Ok(())
+    }
+
+    /// Fails if the daemon does not have the capability flag `flag`: it is
+    /// older than the `feature`.
+    fn require(&self, flag: &str, feature: &str) -> Result<(), ClientError> {
+        if self.daemon_capabilities.iter().any(|known| known == flag) {
+            Ok(())
+        } else {
+            Err(ClientError::Failed(format!(
+                "the daemon is older than {feature}: update nomux on the host and stop the                  daemon with `nomux daemon stop`, then run the command again"
+            )))
+        }
     }
 
     /// Starts a new session.
@@ -110,24 +129,88 @@ impl Client {
     /// Returns [`ClientError::Failed`] if the session cannot start, and
     /// [`ClientError::Timeout`] if it is not ready in time.
     pub async fn create_session(&mut self, session: NewSession) -> Result<Session, ClientError> {
+        self.open_session(session).await.map(|(session, _)| session)
+    }
+
+    /// Starts a new session, or gives the session that has the name of
+    /// `session` if [`NewSession::reuse_existing`] is set. The second value
+    /// is `false` if the session existed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::Failed`] if the session cannot start, if the
+    /// name is not valid or in use, or if the daemon has no session names,
+    /// and [`ClientError::Timeout`] if the session is not ready in time.
+    pub async fn open_session(
+        &mut self,
+        session: NewSession,
+    ) -> Result<(Session, bool), ClientError> {
+        if session.name.is_some() {
+            self.require(SESSION_NAMES, "session names")?;
+        }
         let working_directory = match session.working_directory {
             Some(path) => path.into_os_string().into_string().map_err(|_| {
                 ClientError::Failed("the working directory is not valid Unicode".to_owned())
             })?,
             None => String::new(),
         };
+        let named = session.name.is_some();
         let request = SessionCreateRequest {
             command: session.command,
             working_directory,
-            ..SessionCreateRequest::default()
+            name: session.name.unwrap_or_default(),
+            reuse_existing: session.reuse_existing,
         };
         match self.call(request::Body::SessionCreate(request)).await? {
+            // A session without a name is always new.
             response::Result::SessionCreate(created) => created
+                .session
+                .map(|session| (Session::from(session), created.created || !named))
+                .ok_or_else(|| ClientError::invalid_reply("the response has no session")),
+            _ => Err(unexpected_result()),
+        }
+    }
+
+    /// Gives the session `id` the name `name`, or removes its name for
+    /// `None`. Returns the session with its new name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::NotFound`] if no session has the identifier
+    /// or if the command of the session ended, and [`ClientError::Failed`]
+    /// if the name is not valid or in use, or if the daemon has no session
+    /// names.
+    pub async fn rename_session(
+        &mut self,
+        id: &str,
+        name: Option<&str>,
+    ) -> Result<Session, ClientError> {
+        self.require(SESSION_NAMES, "session names")?;
+        let request = SessionRenameRequest {
+            id: id.to_owned(),
+            name: name.unwrap_or_default().to_owned(),
+        };
+        match self.call(request::Body::SessionRename(request)).await? {
+            response::Result::SessionRename(renamed) => renamed
                 .session
                 .map(Session::from)
                 .ok_or_else(|| ClientError::invalid_reply("the response has no session")),
             _ => Err(unexpected_result()),
         }
+    }
+
+    /// The session that `target` names: its identifier, its name, or a
+    /// unique prefix of one of them. [`resolve_session`](crate::resolve_session)
+    /// has the rule.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError::NotFound`] if no session matches, and
+    /// [`ClientError::AmbiguousTarget`] if the target can be more than one
+    /// session.
+    pub async fn find_session(&mut self, target: &str) -> Result<Session, ClientError> {
+        let sessions = self.list_sessions(true).await?;
+        crate::resolve_session(sessions, target)
     }
 
     /// Lists the sessions of the host, in the sequence of their identifiers:

@@ -80,12 +80,7 @@ impl<'a> TreeDocument<'a> {
         with_children: bool,
         workspace: Option<&'a WorkspaceTree>,
     ) -> Self {
-        let command = |id: &str| {
-            sessions
-                .iter()
-                .find(|session| session.id == id)
-                .map_or(&[][..], |session| session.command.as_slice())
-        };
+        let session_of = |id: &str| sessions.iter().find(|session| session.id == id);
         Self {
             attention: tree
                 .attention
@@ -97,7 +92,13 @@ impl<'a> TreeDocument<'a> {
             sessions: tree
                 .runs
                 .iter()
-                .map(|run| RunDocument::new(run, Some(command(&run.session_id)), with_children))
+                .map(|run| {
+                    RunDocument::new(
+                        run,
+                        Some(RunSessionDocument::of(session_of(&run.session_id))),
+                        with_children,
+                    )
+                })
                 .collect(),
             workspace: workspace.map(|workspace| {
                 WorkspaceStatus::new(workspace, &tree.runs, sessions)
@@ -127,14 +128,32 @@ struct AttentionDocument<'a> {
 #[derive(Serialize)]
 struct RunDocument<'a> {
     id: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    command: Option<&'a [String]>,
+    /// Only in the tree.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    session: Option<RunSessionDocument<'a>>,
     status: StatusDocument<'a>,
     aggregate: StatusDocument<'a>,
     #[serde(skip_serializing_if = "Option::is_none")]
     children: Option<Vec<ChildDocument<'a>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     details: Option<DetailsDocument<'a>>,
+}
+
+/// The session of an Agent run in the tree.
+#[derive(Serialize)]
+struct RunSessionDocument<'a> {
+    name: Option<&'a str>,
+    command: &'a [String],
+}
+
+impl<'a> RunSessionDocument<'a> {
+    /// `None`: the session of the run is not in the list.
+    fn of(session: Option<&'a Session>) -> Self {
+        Self {
+            name: session.and_then(|session| session.name.as_deref()),
+            command: session.map_or(&[][..], |session| &session.command),
+        }
+    }
 }
 
 /// What the adapter of the agent tool says about the Agent run.
@@ -156,10 +175,15 @@ impl<'a> From<&'a AgentDetails> for DetailsDocument<'a> {
 }
 
 impl<'a> RunDocument<'a> {
-    fn new(run: &'a AgentRun, command: Option<&'a [String]>, with_children: bool) -> Self {
+    /// `session` is the session of the run in the tree, `None` elsewhere.
+    fn new(
+        run: &'a AgentRun,
+        session: Option<RunSessionDocument<'a>>,
+        with_children: bool,
+    ) -> Self {
         Self {
             id: &run.session_id,
-            command,
+            session,
             status: (&run.status).into(),
             aggregate: (&run.aggregate).into(),
             children: with_children.then(|| run.children.iter().map(ChildDocument::from).collect()),

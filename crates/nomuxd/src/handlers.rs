@@ -85,10 +85,9 @@ pub(crate) async fn handle(
             session::set_restore_policy(&request, context)
         }
         request::Body::SessionMemory(_) => session_memory::memory(context).await,
+        request::Body::SessionRename(request) => session::rename(request, context).await,
         // Requests of the protocol that this daemon does not do yet.
-        request::Body::SessionHibernate(_)
-        | request::Body::SessionSetPinned(_)
-        | request::Body::SessionRename(_) => Err(Error {
+        request::Body::SessionHibernate(_) | request::Body::SessionSetPinned(_) => Err(Error {
             code: ErrorCode::Failed.into(),
             message: "the daemon does not know this request".to_owned(),
         }),

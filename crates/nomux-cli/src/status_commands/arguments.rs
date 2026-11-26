@@ -3,6 +3,8 @@
 use clap::{Subcommand, ValueEnum};
 use nomux_client::{EventType, ReportedState};
 
+use crate::session_commands::Target;
+
 #[derive(Debug, Subcommand)]
 pub(crate) enum StatusCommand {
     /// Report the status of the session of this process. The command works
@@ -20,8 +22,8 @@ pub(crate) enum StatusCommand {
 pub(crate) enum AgentCommand {
     /// Show what each source says about the status of a session
     Explain {
-        /// The session identifier
-        id: String,
+        #[command(flatten)]
+        target: Target,
     },
 }
 
