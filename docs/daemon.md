@@ -554,7 +554,7 @@ The systemd unit, for a `nomuxd` in `/home/user/.local/bin`:
 ```ini
 [Unit]
 Description=nomux daemon
-Documentation=https://nomux.sh
+Documentation=https://nomux-sh.github.io/docs/
 
 [Service]
 ExecStart="/home/user/.local/bin/nomuxd" --replace

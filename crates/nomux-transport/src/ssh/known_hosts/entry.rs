@@ -89,16 +89,16 @@ mod tests {
 
     #[test]
     fn a_hashed_name_matches_only_its_host() {
-        // `ssh-keygen -H` made this line for the host `192.168.1.61`.
+        // `ssh-keygen -H` made this line for the host `192.0.2.61`.
         let entry = Entry::parse(
-            "|1|F1E1KeoE/eEWhi10WpGv4OdiO6Y=|3988QV0VE8wmZL7suNrYQLITLCg= ssh-ed25519 \
-             AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq454yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ",
+            "|1|Mro6G1AXl+HitwBWwHyej6Scd98=|RMQw28Lxbz5jnalYvyarQ3+uH0w= ssh-ed25519 \
+             AAAAC3NzaC1lZDI1NTE5AAAAIJG3OLmKvR+sGTLFUIGCan95CJPxX1xdaevc1zM4xZKU",
             1,
         )
         .unwrap();
 
-        assert!(entry.names("192.168.1.61"));
-        assert!(!entry.names("192.168.1.62"));
+        assert!(entry.names("192.0.2.61"));
+        assert!(!entry.names("192.0.2.62"));
     }
 
     #[test]
