@@ -12,6 +12,7 @@ Each line of this section has a test that fails if the line is not true any more
 
 - **G** is a golden test in [`tests/golden`](tests/golden): a text snapshot of the screen after one sequence.
 - **R** is a test of the redraw sequence in [`tests/redraw.rs`](tests/redraw.rs).
+- **H** is a test of the history in [`tests/history.rs`](tests/history.rs).
 - **O** is a test of the OSC sequences in [`tests/unhandled_osc.rs`](tests/unhandled_osc.rs).
 - **K** is a conformance case in [`tests/golden/cases`](tests/golden/cases), in the style of `vttest` and `esctest`: the sequence and the screen of xterm. The name of a file is the group. A case of a known gap also has the screen of `nomux-term` now.
 - **C** is a conformance case of the [VT library benchmark](../../bench/README.md), which `nomux-term` passes: 45 of 46 cases.
@@ -46,6 +47,7 @@ The fuzz targets in [`fuzz`](../../fuzz/README.md) give arbitrary output to the 
 | Full reset | RIS gives the modes of a new terminal | G `modes`, C |
 | OSC for the caller | The caller gets each OSC sequence that the library does not handle, for example OSC 9, 133, 777 and 7501 | O |
 | Program reports | `Osc::record` parses the program status (OSC 7501), the prompt marks (OSC 133) and the notifications (OSC 9, OSC 777) | The unit tests of `src/osc` |
+| History | `Terminal::with_history` keeps the rows that scroll out above the primary screen, up to a limit, with the cells and the styles. `Terminal::new` keeps no history. A resize reflows the primary screen and the history when the number of columns changes, and moves rows between the screen and the history when the number of rows changes. ED 3 clears the history. The alternate screen has no history | H |
 | Redraw sequence | The cells, the cursor, the modes, the kitty keyboard flags and the style of the next character. With the alternate screen, also the screen behind it | R |
 
 The library also handles the OSC sequences for the title, the palette colors, the hyperlinks (OSC 8) and the clipboard (OSC 52). `nomux-term` has no interface for them yet.

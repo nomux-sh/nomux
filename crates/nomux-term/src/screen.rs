@@ -1,9 +1,10 @@
-//! Read access to the visible screen of a terminal.
+//! Read access to the visible screen and the history of a terminal.
 
 use std::fmt;
 
 use alacritty_terminal::Term;
 use alacritty_terminal::event::VoidListener;
+use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::TermMode;
 
@@ -14,7 +15,7 @@ use crate::modes::Modes;
 use crate::size::Size;
 
 /// The visible screen of a [`Terminal`](crate::Terminal): the cells, the
-/// cursor and the modes.
+/// cursor and the modes, and the history rows above the screen.
 #[derive(Clone, Copy)]
 pub struct Screen<'a> {
     term: &'a Term<VoidListener>,
@@ -40,19 +41,47 @@ impl<'a> Screen<'a> {
     /// empty cell that keeps its style.
     #[must_use]
     pub fn cell(&self, position: Position) -> Option<Cell<'a>> {
-        let cell = self.library_cell(position)?;
+        if position.row >= self.size.rows() {
+            return None;
+        }
+        self.complete_cell(Line(i32::from(position.row)), position.column)
+    }
+
+    /// The number of history rows: the rows that the screen scrolled out
+    /// above its first row. It is 0 for a terminal without history and
+    /// while the alternate screen is visible.
+    #[must_use]
+    pub fn history_rows(&self) -> usize {
+        self.term.grid().history_size()
+    }
+
+    /// A cell of a history row, or `None` if the row or the column does not
+    /// exist. `rows_above` 1 is the row directly above the first row of the
+    /// screen, and [`history_rows`](Self::history_rows) is the oldest row.
+    ///
+    /// A history row has the columns of the screen. A half of a wide
+    /// character is an empty cell, as in [`cell`](Self::cell).
+    #[must_use]
+    pub fn history_cell(&self, rows_above: usize, column: u16) -> Option<Cell<'a>> {
+        if rows_above == 0 || rows_above > self.history_rows() {
+            return None;
+        }
+        let line = i32::try_from(rows_above).ok()?;
+        self.complete_cell(Line(-line), column)
+    }
+
+    /// The cell at `column` of `line`, with an empty cell for one half of a
+    /// wide character. The line is on the screen or in the history.
+    fn complete_cell(&self, line: Line, column: u16) -> Option<Cell<'a>> {
+        let cell = self.library_cell(line, column)?;
         let other_half = match cell.width {
             CellWidth::Single => return Some(cell),
-            CellWidth::Double => (position.column.checked_add(1), CellWidth::Continuation),
-            CellWidth::Continuation => (position.column.checked_sub(1), CellWidth::Double),
+            CellWidth::Double => (column.checked_add(1), CellWidth::Continuation),
+            CellWidth::Continuation => (column.checked_sub(1), CellWidth::Double),
         };
-        let (column, width) = other_half;
-        let other_cell = column.and_then(|column| {
-            self.library_cell(Position {
-                row: position.row,
-                column,
-            })
-        });
+        let (other_column, width) = other_half;
+        let other_cell =
+            other_column.and_then(|other_column| self.library_cell(line, other_column));
         if other_cell.is_some_and(|other_cell| other_cell.width == width) {
             Some(cell)
         } else {
@@ -61,12 +90,12 @@ impl<'a> Screen<'a> {
     }
 
     /// The cell as the VT library keeps it.
-    fn library_cell(&self, position: Position) -> Option<Cell<'a>> {
-        if position.row >= self.size.rows() || position.column >= self.size.columns() {
+    fn library_cell(&self, line: Line, column: u16) -> Option<Cell<'a>> {
+        if column >= self.size.columns() {
             return None;
         }
-        let row = &self.term.grid()[Line(i32::from(position.row))];
-        Some(conversion::cell(&row[Column(usize::from(position.column))]))
+        let row = &self.term.grid()[line];
+        Some(conversion::cell(&row[Column(usize::from(column))]))
     }
 
     /// The cursor.
