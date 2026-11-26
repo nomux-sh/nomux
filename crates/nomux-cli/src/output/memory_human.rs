@@ -3,8 +3,9 @@
 
 use nomux_client::{MemoryMeasure, Session, SessionMemory};
 
-use super::human::{column_width, state_name};
+use super::human::state_name;
 use super::memory_size::memory_size;
+use super::table::{Cell, Table};
 use crate::session_memory::{MemoryTotal, memory_of};
 
 const HEADERS: [&str; 7] = [
@@ -18,21 +19,20 @@ const HEADERS: [&str; 7] = [
 ];
 const ABSENT: &str = "-";
 
-pub(super) fn session_table(sessions: &[Session], memory: &[SessionMemory]) -> String {
-    let rows: Vec<[String; 7]> = sessions
-        .iter()
-        .map(|session| row(session, memory_of(memory, &session.id)))
-        .collect();
-    let widths: Vec<usize> = (0..HEADERS.len())
-        .map(|column| column_width(HEADERS[column], rows.iter().map(|row| row[column].as_str())))
-        .collect();
-
-    let mut table = line(&HEADERS, &widths);
-    for row in &rows {
-        table.push_str(&line(row, &widths));
+pub(super) fn session_table(
+    sessions: &[Session],
+    memory: &[SessionMemory],
+    width: Option<usize>,
+) -> String {
+    const COMMAND: usize = 6;
+    let mut table = Table::new(&HEADERS).shorten(&[COMMAND]);
+    for session in sessions {
+        let row = row(session, memory_of(memory, &session.id));
+        table.push(row.into_iter().map(Cell::new).collect());
     }
-    table.push_str(&total_line(&MemoryTotal::of(memory)));
-    table
+    let mut text = table.render(width);
+    text.push_str(&total_line(&MemoryTotal::of(memory)));
+    text
 }
 
 fn row(session: &Session, memory: Option<&SessionMemory>) -> [String; 7] {
@@ -66,16 +66,6 @@ fn row(session: &Session, memory: Option<&SessionMemory>) -> [String; 7] {
         measure,
         command,
     ]
-}
-
-/// The cells with two spaces between them. The last cell has no padding.
-fn line(cells: &[impl AsRef<str>], widths: &[usize]) -> String {
-    let padded: Vec<String> = cells
-        .iter()
-        .zip(widths)
-        .map(|(cell, width)| format!("{:<width$}", cell.as_ref()))
-        .collect();
-    format!("{}\n", padded.join("  ").trim_end())
 }
 
 fn total_line(total: &MemoryTotal) -> String {
@@ -153,7 +143,7 @@ mod tests {
         let memory = [memory("ab", 512 * MEBIBYTE, MemoryMeasure::Proportional)];
 
         assert_eq!(
-            session_table(&sessions, &memory),
+            session_table(&sessions, &memory, None),
             "ID  STATE    MEMORY     PROCESSES  HOLDER   MEASURE  COMMAND\n\
              ab  running  512.0 MiB  3          2.0 MiB  pss      claude\n\
              cd  dormant  -          -          -        -        vim notes.txt\n\
@@ -172,7 +162,7 @@ mod tests {
             memory("cd", MEBIBYTE, MemoryMeasure::Resident),
         ];
 
-        let table = session_table(&sessions, &memory);
+        let table = session_table(&sessions, &memory, None);
 
         assert_eq!(
             table.lines().last(),
@@ -181,7 +171,7 @@ mod tests {
             )
         );
         assert_eq!(
-            session_table(&sessions[..1], &[]).lines().last(),
+            session_table(&sessions[..1], &[], None).lines().last(),
             Some("total: no session has a process")
         );
     }

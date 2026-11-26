@@ -1,16 +1,14 @@
 //! The text form of the report of a hook command.
 
-use std::fmt::Write;
-
 use nomux_client::HooksState;
 
-use super::human::column_width;
+use super::table::{Cell, Table};
 use crate::hook_commands::{HookToolStatus, HooksAction, HooksReport};
 
 /// The mark of an empty cell of a table.
 const NONE: &str = "-";
 
-pub(super) fn report(report: &HooksReport) -> String {
+pub(super) fn report(report: &HooksReport, width: Option<usize>) -> String {
     match report {
         HooksReport::Answered { .. } => String::new(),
         HooksReport::Changed {
@@ -50,7 +48,7 @@ pub(super) fn report(report: &HooksReport) -> String {
         HooksReport::Statuses(statuses) if statuses.is_empty() => {
             "no tool has an adapter or installed hooks\n".to_owned()
         }
-        HooksReport::Statuses(statuses) => status_table(statuses),
+        HooksReport::Statuses(statuses) => status_table(statuses, width),
     }
 }
 
@@ -66,29 +64,21 @@ pub(super) fn quiet_report(report: &HooksReport) -> String {
     }
 }
 
-fn status_table(statuses: &[HookToolStatus]) -> String {
-    let tool_width = column_width("TOOL", statuses.iter().map(|status| status.tool.as_str()));
-    let adapters = statuses
-        .iter()
-        .map(|status| status.adapter.as_deref().unwrap_or(NONE));
-    let adapter_width = column_width("ADAPTER", adapters);
-    let mut text = format!(
-        "{:<tool_width$}  {:<adapter_width$}  HOOKS\n",
-        "TOOL", "ADAPTER"
-    );
+fn status_table(statuses: &[HookToolStatus], width: Option<usize>) -> String {
+    const HOOKS: usize = 2;
+    let mut table = Table::new(&["TOOL", "ADAPTER", "HOOKS"]).shorten(&[HOOKS]);
     for status in statuses {
         let hooks = match &status.hooks {
             Ok(hooks) => format!("{} in {}", state_name(hooks.state), hooks.path.display()),
             Err(problem) => format!("not known: {problem}"),
         };
-        let _ = writeln!(
-            text,
-            "{:<tool_width$}  {:<adapter_width$}  {hooks}",
-            status.tool,
-            status.adapter.as_deref().unwrap_or(NONE)
-        );
+        table.push(vec![
+            Cell::new(&status.tool),
+            Cell::new(status.adapter.as_deref().unwrap_or(NONE)),
+            Cell::new(hooks),
+        ]);
     }
-    text
+    table.render(width)
 }
 
 pub(super) fn state_name(state: HooksState) -> &'static str {

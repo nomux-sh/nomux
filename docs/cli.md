@@ -11,6 +11,7 @@ The code is in `crates/nomux-cli`. The CLI is a thin client: it reads the comman
 - Without `--host`, a command uses the daemon of the local host. With `--host <name>`, it uses the daemon of the remote host `<name>` of `nomux host ls`, through SSH: see "`--host`".
 - A command that needs the daemon starts it when no daemon answers. The CLI runs `nomuxd --detach` and waits for 5 seconds at most until the socket answers. The `daemon` commands start no daemon.
 - The text output has colour only for the state of a session or of its status, only when the standard output is a terminal, and only when the `NO_COLOR` variable is not set. The JSON output and the quiet output never have colour.
+- On a terminal, a table of the text output fits the width of the terminal. The command column is shortened first, and then the column of the note, the message or the reason; an ellipsis (`…`) marks the cut, and a shortened column keeps the width of its header. Thus the state and the message stay visible. The width is the display width of the text: a wide character has two columns and is not cut. When the standard output is not a terminal, and in the JSON output, nothing is shortened.
 
 ## Commands
 

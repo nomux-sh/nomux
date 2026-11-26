@@ -53,6 +53,7 @@ toml = { version = "1.2.3", default-features = false, features = ["std", "parse"
 toml_edit = { version = "0.25.21", default-features = false, features = ["parse", "display"] }
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt"] }
+unicode-width = "0.2.3"
 
 # Lint policy. Each crate opts in with `[lints] workspace = true`.
 # CI runs clippy with `-D warnings`, thus each `warn` below fails the build.

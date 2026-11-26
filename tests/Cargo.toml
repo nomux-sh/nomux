@@ -114,6 +114,10 @@ name = "status"
 path = "status.rs"
 
 [[test]]
+name = "table_width"
+path = "table_width.rs"
+
+[[test]]
 name = "version_mismatch"
 path = "version_mismatch.rs"
 

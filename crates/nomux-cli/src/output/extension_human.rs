@@ -4,6 +4,8 @@ use std::fmt::Write;
 
 use nomux_client::{Extension, ExtensionPackage, ExtensionPermissions, ExtensionState};
 
+use super::table::{Cell, Table};
+
 use crate::extension_commands::{
     ExtensionReport, ManifestCheck, ManifestProblem, permission_items,
 };
@@ -11,12 +13,12 @@ use crate::extension_commands::{
 /// The mark of an empty cell of a table.
 const NONE: &str = "-";
 
-pub(super) fn report(report: &ExtensionReport) -> String {
+pub(super) fn report(report: &ExtensionReport, width: Option<usize>) -> String {
     match report {
         ExtensionReport::Listed(extensions) if extensions.is_empty() => {
             "no extensions\n".to_owned()
         }
-        ExtensionReport::Listed(extensions) => extension_table(extensions),
+        ExtensionReport::Listed(extensions) => extension_table(extensions, width),
         ExtensionReport::Installed(extension) => installed(extension),
         ExtensionReport::Removed { id } => format!("extension {id} removed\n"),
         ExtensionReport::Enabled(extension) => format!("extension {} enabled\n", extension.id),
@@ -95,25 +97,15 @@ fn manifest_problems(problems: &[ManifestProblem]) -> String {
 
 /// One line for each extension. The last column says why an extension is
 /// disabled or how its process failed.
-fn extension_table(extensions: &[Extension]) -> String {
-    const HEADER: [&str; 6] = ["ID", "NAME", "VERSION", "STATE", "PERMISSIONS", "REASON"];
-    let rows: Vec<[String; 6]> = extensions.iter().map(table_row).collect();
-    let widths: [usize; 6] = std::array::from_fn(|column| {
-        let cells = rows.iter().map(|row| row[column].chars().count());
-        cells.fold(HEADER[column].len(), usize::max)
-    });
-
-    let mut table = String::new();
-    let header = HEADER.map(str::to_owned);
-    for row in std::iter::once(&header).chain(&rows) {
-        let mut line = String::new();
-        for (cell, width) in row.iter().zip(widths) {
-            let _ = write!(line, "{cell:<width$}  ");
-        }
-        table.push_str(line.trim_end());
-        table.push('\n');
+fn extension_table(extensions: &[Extension], width: Option<usize>) -> String {
+    const PERMISSIONS: usize = 4;
+    const REASON: usize = 5;
+    let mut table = Table::new(&["ID", "NAME", "VERSION", "STATE", "PERMISSIONS", "REASON"])
+        .shorten(&[REASON, PERMISSIONS]);
+    for extension in extensions {
+        table.push(table_row(extension).into_iter().map(Cell::new).collect());
     }
-    table
+    table.render(width)
 }
 
 fn table_row(extension: &Extension) -> [String; 6] {
@@ -163,7 +155,7 @@ mod tests {
         );
 
         assert_eq!(
-            extension_table(&[echo, git]),
+            extension_table(&[echo, git], None),
             "ID          NAME  VERSION  STATE     PERMISSIONS                      REASON\n\
              nomux.echo  Git   1.0.0    running   -\n\
              nomux.git   Git   1.0.0    disabled  process=git,scope=sessions:read  the extension failed: the process ended: exit status: 7\n"
