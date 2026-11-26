@@ -8,14 +8,16 @@
 //! records at most with a limit for each field, the adapter source and the
 //! resolver keep [`nomux_status::MAX_CHILD_WORK`] Child work at most, and a
 //! text has [`MAX_MESSAGE_LENGTH`](super::holder_sources::MAX_MESSAGE_LENGTH)
-//! bytes at most. Only a session of the session registry gets an entry,
-//! and [`MAX_KEPT_RUNS`] ended sessions keep one at most.
+//! bytes at most. Only a session of the session registry and a session
+//! whose holder the daemon starts now get an entry, and [`MAX_KEPT_RUNS`]
+//! ended sessions keep one at most.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use nomux_holder_protocol::SessionId;
 use nomux_holder_protocol::program_reports::ProgramReports;
+use nomux_holder_protocol::wire::SessionToken;
 use nomux_proto::wire::v1::{
     AgentDetails, AgentExplainResponse, AgentRunChanged, AgentRunRemoved, AgentTreeResponse, event,
 };
@@ -56,8 +58,13 @@ pub(crate) struct StatusRegistry {
 /// The status of one session.
 struct Entry {
     run: AgentRun,
-    /// The holder of the session. `None` if the session has no process.
+    /// The holder of the session. `None` if the daemon has no connection
+    /// to the holder of a process of the session.
     holder: Option<HolderFacts>,
+    /// The token that the daemon gave to the holder that it starts now.
+    /// The command of the session can report with it before the daemon has
+    /// a connection to the holder.
+    starting: Option<SessionToken>,
     /// When the command of the session ended. `Some` only for the kept run
     /// of an ended session.
     ended: Option<Timestamp>,
@@ -85,18 +92,48 @@ impl StatusRegistry {
         }
     }
 
+    /// The daemon starts a holder for the session `id` and gives it
+    /// `token`. This is a new process: its sources start empty, and from
+    /// now a request with the token comes from the session.
+    pub(crate) fn starting(&self, id: &SessionId, token: SessionToken) {
+        self.change(id, |entry| {
+            entry.sources = Sources::default();
+            entry.holder = None;
+            entry.starting = Some(token);
+        });
+    }
+
+    /// The holder that the daemon started for the session `id` did not
+    /// start: its token proves nothing.
+    pub(crate) fn not_started(&self, id: &SessionId) {
+        if let Some(entry) = self.entries().get_mut(id) {
+            entry.starting = None;
+        }
+    }
+
+    /// `true` while the daemon starts a holder for the session `id` and has
+    /// no connection to it.
+    pub(crate) fn is_starting(&self, id: &SessionId) -> bool {
+        self.entries()
+            .get(id)
+            .is_some_and(|entry| entry.starting.is_some())
+    }
+
     /// The status task of the session `id` has a connection to its holder.
     /// A different holder than before is a new process: its sources start
-    /// empty, and the status comes from them.
+    /// empty, and the status comes from them. The holder that the daemon
+    /// started has the sources since its start.
     pub(crate) fn connected(&self, id: &SessionId, facts: HolderFacts) {
         self.change(id, |entry| {
             let same_process = entry.holder.is_some_and(|known| {
                 known.child_pid == facts.child_pid && known.token == facts.token
             });
-            if !same_process {
+            let started = entry.starting.is_some() && entry.starting == facts.token;
+            if !same_process && !started {
                 entry.sources = Sources::default();
             }
             entry.holder = Some(facts);
+            entry.starting = None;
         });
     }
 
@@ -342,7 +379,7 @@ impl StatusRegistry {
         let mut entries = self.entries();
         let entry = entries
             .get_mut(id)
-            .filter(|entry| entry.holder.is_some())
+            .filter(|entry| entry.holder.is_some() || entry.starting.is_some())
             .ok_or(AdapterReportRefused::NoProcess)?;
         let details_before = entry.sources.details.clone();
         change(&mut entry.sources)?;
@@ -377,8 +414,11 @@ impl StatusRegistry {
     }
 
     fn check_token(entry: &Entry, token: &str) -> Result<(), TokenRefused> {
-        let holder = entry.holder.ok_or(TokenRefused::NoProcess)?;
-        let known = holder.token.ok_or(TokenRefused::HolderWithoutToken)?;
+        let known = match (entry.holder, entry.starting) {
+            (Some(holder), _) => holder.token.ok_or(TokenRefused::HolderWithoutToken)?,
+            (None, Some(starting)) => starting,
+            (None, None) => return Err(TokenRefused::NoProcess),
+        };
         if !known.matches(token) {
             return Err(TokenRefused::WrongToken);
         }
@@ -414,6 +454,7 @@ impl Entry {
         Self {
             run: AgentRun::unreported(clock::now()),
             holder: None,
+            starting: None,
             ended: None,
             sources: Sources::default(),
         }
@@ -431,6 +472,7 @@ impl Entry {
     /// continues the work of the lost process.
     fn keep_what_stays(&mut self) {
         self.holder = None;
+        self.starting = None;
         self.sources = Sources {
             carried_over: carried_over(&self.run),
             details: self.sources.details.take(),
@@ -501,7 +543,6 @@ fn changed(id: &SessionId, entry: &Entry) -> event::Body {
 #[cfg(test)]
 mod tests {
     use nomux_holder_protocol::program_reports::{InputLine, ProgramState, ProgramStatus};
-    use nomux_holder_protocol::wire::SessionToken;
     use nomux_proto::wire::v1::{AgentState, StatusSource};
     use nomux_status::State;
 

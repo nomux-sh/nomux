@@ -15,6 +15,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use nomux_client::{AttachOptions, Client, ClientKind};
 use nomux_end_to_end::{Sandbox, binary, kill_process, process_runs, wait_for};
+use nomux_holder_protocol::discovery::{HolderState, scan_pooled};
 use rustix::process::{Pid, Signal, kill_process as send_signal};
 use serde_json::Value;
 
@@ -369,6 +370,111 @@ fn only_a_process_of_the_session_can_report_its_status() {
     ] {
         assert!(!sandbox.nomux_ok(arguments).stdout.contains(&token));
     }
+}
+
+/// The sessions of the first-instruction test, and the threads that start
+/// them at the same time.
+const FIRST_REPORT_SESSIONS: usize = 200;
+const FIRST_REPORT_STARTERS: usize = 10;
+
+/// The exit code of each `nomux status set` that wrote it into `directory`,
+/// for the identifier of its session. Waits until `count` wrote it.
+fn wait_for_exit_codes(directory: &Path, count: usize) -> Vec<(String, String)> {
+    wait_for(&format!("{count} sessions wrote their exit code"), || {
+        let codes: Vec<(String, String)> = fs::read_dir(directory)
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                let code = fs::read_to_string(entry.path()).unwrap();
+                (entry.file_name().into_string().unwrap(), code)
+            })
+            .filter(|(_, code)| code.ends_with('\n'))
+            .collect();
+        (codes.len() == count).then_some(codes)
+    })
+}
+
+/// Each session of `codes` reported `working` with exit code 0, and the
+/// daemon keeps the report after its connection to the holder.
+fn assert_each_report_accepted(sandbox: &Sandbox, codes: &[(String, String)]) {
+    let refused: Vec<_> = codes.iter().filter(|(_, code)| code != "0\n").collect();
+    assert!(refused.is_empty(), "refused reports: {refused:?}");
+    let tree = status_tree(sandbox);
+    for (id, _) in codes {
+        let run = run_of(&tree, id);
+        assert_eq!(run["status"]["source"], "self_report", "{run}");
+        assert_eq!(run["status"]["state"], "working", "{run}");
+    }
+}
+
+#[test]
+fn a_command_can_report_its_status_with_its_first_instruction() {
+    let sandbox = Sandbox::new();
+    let codes = sandbox.home().join("codes");
+    fs::create_dir(&codes).unwrap();
+    let nomux = binary("nomux");
+    let script = r#""$0" status set working; echo $? > "$1/$NOMUX_SESSION_ID"; exec sleep 60"#;
+    let arguments = [
+        "new",
+        "--quiet",
+        "--",
+        "sh",
+        "-c",
+        script,
+        nomux.to_str().unwrap(),
+        codes.to_str().unwrap(),
+    ];
+    thread::scope(|scope| {
+        for _ in 0..FIRST_REPORT_STARTERS {
+            scope.spawn(|| {
+                for _ in 0..FIRST_REPORT_SESSIONS / FIRST_REPORT_STARTERS {
+                    let _ = sandbox.nomux_ok(&arguments);
+                }
+            });
+        }
+    });
+    let codes = wait_for_exit_codes(&codes, FIRST_REPORT_SESSIONS);
+    assert_each_report_accepted(&sandbox, &codes);
+}
+
+#[test]
+fn a_pooled_shell_can_report_its_status_before_its_first_prompt() {
+    const SESSIONS: usize = 50;
+    let mut sandbox = Sandbox::new();
+    sandbox.set_variable("SHELL", "/bin/bash");
+    let codes = sandbox.home().join("codes");
+    fs::create_dir(&codes).unwrap();
+    // The shell reports when it shows its first prompt: right after the
+    // assignment gives it the directory of the session.
+    let start_file = format!(
+        "PROMPT_COMMAND='{} status set working; echo $? > \"{}/$NOMUX_SESSION_ID\"; PROMPT_COMMAND='\n",
+        binary("nomux").display(),
+        codes.display()
+    );
+    fs::write(sandbox.home().join(".bashrc"), start_file).unwrap();
+    // The pool fills after the first request of a client.
+    let _ = sandbox.nomux_ok(&["ls"]);
+    for _ in 0..SESSIONS {
+        // The pool starts one holder at a time: with two live holders, the
+        // first one is ready for a session.
+        let pooled = wait_for("the pool has its two holders", || {
+            let live: Vec<String> = scan_pooled(&sandbox.runtime_directory())
+                .unwrap()
+                .into_iter()
+                .filter(|holder| holder.state == HolderState::Live)
+                .map(|holder| holder.session_id.to_string())
+                .collect();
+            (live.len() == 2).then_some(live)
+        });
+        let id = sandbox
+            .nomux_ok(&["new", "--quiet"])
+            .stdout
+            .trim()
+            .to_owned();
+        assert!(pooled.contains(&id), "session {id} took a pooled holder");
+    }
+    let codes = wait_for_exit_codes(&codes, SESSIONS);
+    assert_each_report_accepted(&sandbox, &codes);
 }
 
 fn assert_no_file_has(directory: &Path, text: &str) {

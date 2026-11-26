@@ -9,7 +9,7 @@ use prost::Message;
 use tracing::debug;
 
 use super::Context;
-use super::agent::find;
+use super::agent::find_reporting;
 use super::ext::{call_failure, failed, fitting_envelope};
 use crate::hooks::{PLAN_METHOD, adapter_of, adapters};
 
@@ -27,7 +27,7 @@ pub(super) fn event(
             request.payload.len()
         )));
     }
-    let id = find(context, &request.session_id)?;
+    let id = find_reporting(context, &request.session_id)?;
     context
         .status
         .authenticate(&id, &request.token)
