@@ -5,6 +5,8 @@ name: CI
 
 on:
   pull_request:
+  push:
+    branches: [main]
   schedule:
     # Each day at 03:17 UTC.
     - cron: "17 3 * * *"
@@ -94,7 +96,7 @@ jobs:
       - name: Test install.sh
         run: scripts/test-install.sh
 
-  # Nightly and manual runs: Linux and macOS.
+  # A push to main, nightly and manual runs: Linux and macOS.
   rust-all-hosts:
     name: rust (all hosts)
     if: github.event_name != 'pull_request'

@@ -10,7 +10,7 @@ edition = "2024"
 rust-version = "1.100"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/nomux-sh/nomux"
-homepage = "https://nomux.sh"
+homepage = "https://nomux-sh.github.io/docs/"
 authors = ["The nomux Authors"]
 # No crate of this workspace is published to crates.io yet.
 publish = false

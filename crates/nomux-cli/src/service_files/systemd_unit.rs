@@ -34,7 +34,7 @@ pub(super) fn content(daemon: &Path) -> String {
     format!(
         "[Unit]\n\
          Description=nomux daemon\n\
-         Documentation=https://nomux.sh\n\
+         Documentation=https://nomux-sh.github.io/docs/\n\
          \n\
          [Service]\n\
          ExecStart={} --replace\n\
@@ -73,6 +73,16 @@ mod tests {
         assert!(unit.contains("\nKillMode=process\n"), "{unit}");
         assert!(
             unit.contains("\nExecStart=\"/opt/nomux/nomuxd\" --replace\n"),
+            "{unit}"
+        );
+    }
+
+    #[test]
+    fn the_unit_links_to_the_documentation_site() {
+        let unit = content(Path::new("/opt/nomux/nomuxd"));
+
+        assert!(
+            unit.contains("\nDocumentation=https://nomux-sh.github.io/docs/\n"),
             "{unit}"
         );
     }
