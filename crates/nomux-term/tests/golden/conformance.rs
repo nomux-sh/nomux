@@ -18,6 +18,12 @@
 //! `\xNN` for one byte and `\u{N}` for one character. `screen` is the
 //! snapshot of `snapshot.rs`.
 //!
+//! A case of a query has a `reply` line: the bytes that the terminal sends
+//! to the program, with the same escapes as `input`. In a `reply` line,
+//! `{version}` is the version of nomux and `{Pv}` is the version as one
+//! number: major × 10000 + minor × 100 + patch. A case without a `reply`
+//! line gets no answer.
+//!
 //! A known gap is a case where the VT library is different from xterm. The
 //! case has a `gap` line that says the difference. If the difference is on
 //! the screen, the case also has a `library` snapshot: the screen of
@@ -31,13 +37,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::snapshot::screen_after;
+use crate::snapshot::screen_and_replies_after;
 
 #[derive(Debug)]
 struct Case {
     file: String,
     name: String,
     input: Vec<u8>,
+    reply: Vec<u8>,
     gap: Option<String>,
     screen: String,
     library: Option<String>,
@@ -86,6 +93,7 @@ fn parse_case(file: &str, lines: &[&str]) -> Case {
     let mut name = None;
     let mut follows = None;
     let mut input = None;
+    let mut reply = Vec::new();
     let mut gap = None;
     let mut snapshots: Vec<(&str, String)> = Vec::new();
     for line in lines {
@@ -94,6 +102,7 @@ fn parse_case(file: &str, lines: &[&str]) -> Case {
             "case" => name = Some(value.to_owned()),
             "follows" => follows = Some(value),
             "input" => input = Some(unescape(value)),
+            "reply" => reply = unescape(&with_version(value)),
             "gap" => gap = Some(value.to_owned()),
             "screen" | "library" => snapshots.push((keyword, String::new())),
             _ => {
@@ -125,6 +134,7 @@ fn parse_case(file: &str, lines: &[&str]) -> Case {
     Case {
         file: file.to_owned(),
         input: input.unwrap_or_else(|| panic!("{context}: no `input`")),
+        reply,
         screen: snapshot("screen").unwrap_or_else(|| panic!("{context}: no `screen`")),
         library,
         gap,
@@ -172,9 +182,27 @@ fn unescape(text: &str) -> Vec<u8> {
     bytes
 }
 
+fn with_version(text: &str) -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    let number: u32 = version
+        .split('.')
+        .take(3)
+        .map(|part| part.parse::<u32>().expect("the version has numbers"))
+        .fold(0, |number, part| number * 100 + part);
+    text.replace("{version}", version)
+        .replace("{Pv}", &number.to_string())
+}
+
+/// The bytes with `\e` for the escape character, as in a case.
+fn escaped(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .replace('\x1b', "\\e")
+        .replace('\x07', "\\a")
+}
+
 /// The difference of one case, or `None` if the case passes.
 fn failure(case: &Case) -> Option<String> {
-    let screen = screen_after([case.input.as_slice()]);
+    let (screen, reply) = screen_and_replies_after([case.input.as_slice()]);
     let expected = case.library.as_ref().unwrap_or(&case.screen);
     let title = format!("{}: {}", case.file, case.name);
     if screen != *expected {
@@ -191,10 +219,23 @@ fn failure(case: &Case) -> Option<String> {
             "{title}\nthe library has the screen of xterm: remove the gap"
         ));
     }
-    let divided = screen_after(case.input.chunks(1));
+    if reply != case.reply {
+        return Some(format!(
+            "{title}\n--- expected reply\n{}\n--- reply\n{}",
+            escaped(&case.reply),
+            escaped(&reply)
+        ));
+    }
+    let (divided, divided_reply) = screen_and_replies_after(case.input.chunks(1));
     if divided != screen {
         return Some(format!(
             "{title}\n--- one call\n{screen}--- one byte in each call\n{divided}---"
+        ));
+    }
+    if divided_reply != reply {
+        return Some(format!(
+            "{title}\nthe reply with one byte in each call is {}",
+            escaped(&divided_reply)
         ));
     }
     None

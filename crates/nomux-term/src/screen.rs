@@ -2,8 +2,8 @@
 
 use std::fmt;
 
+use crate::reply::ReplyListener;
 use alacritty_terminal::Term;
-use alacritty_terminal::event::VoidListener;
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::TermMode;
@@ -18,12 +18,12 @@ use crate::size::Size;
 /// cursor and the modes, and the history rows above the screen.
 #[derive(Clone, Copy)]
 pub struct Screen<'a> {
-    term: &'a Term<VoidListener>,
+    term: &'a Term<ReplyListener>,
     size: Size,
 }
 
 impl<'a> Screen<'a> {
-    pub(crate) fn new(term: &'a Term<VoidListener>, size: Size) -> Self {
+    pub(crate) fn new(term: &'a Term<ReplyListener>, size: Size) -> Self {
         Self { term, size }
     }
 

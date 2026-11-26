@@ -5,16 +5,16 @@
 //! here. The four CSI states of the library are one state: they end at the
 //! same bytes.
 
-pub(super) const BELL: u8 = 0x07;
-pub(super) const CANCEL: u8 = 0x18;
-pub(super) const SUBSTITUTE: u8 = 0x1a;
-pub(super) const ESCAPE: u8 = 0x1b;
+pub(crate) const BELL: u8 = 0x07;
+pub(crate) const CANCEL: u8 = 0x18;
+pub(crate) const SUBSTITUTE: u8 = 0x1a;
+pub(crate) const ESCAPE: u8 = 0x1b;
 /// The string terminator as one byte. The library knows it only in the data
 /// of a DCS sequence.
 const STRING_TERMINATOR: u8 = 0x9c;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum State {
+pub(crate) enum State {
     /// Outside of a sequence.
     Ground,
     /// After ESC.
@@ -41,7 +41,7 @@ pub(super) enum State {
 
 impl State {
     /// The state of a parser that is in a sequence, after it takes `byte`.
-    pub(super) fn after(self, byte: u8) -> Self {
+    pub(crate) fn after(self, byte: u8) -> Self {
         match (self, byte) {
             (_, ESCAPE) => Self::Escape,
 

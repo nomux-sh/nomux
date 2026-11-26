@@ -4,15 +4,17 @@
 //! The VT library gives no access to the state of its parser, and it has no
 //! hook for the OSC codes that it does not know. Thus this module uses the
 //! rules of that parser for the start and the end of each sequence: the two
-//! always see the same sequences. The scanner gives three results:
+//! always see the same sequences. The scanner gives these results:
 //!
 //! - Each OSC sequence that ends.
 //! - The end of each erase in display above the cursor (ED 1), which the
 //!   terminal corrects after the library.
+//! - The end of each query that the library does not answer: the terminal
+//!   name and version (XTVERSION) and the setting request (DECRQSS).
 //! - The length of the incomplete tail: the bytes at the end of the output
 //!   that are a sequence or a UTF-8 character that is not complete.
 
-mod state;
+pub(crate) mod state;
 #[cfg(test)]
 mod tests;
 
@@ -29,7 +31,7 @@ const MAX_CHARACTER_BYTES: usize = 4;
 
 /// The scanner keeps this number of parameter bytes of a CSI sequence that
 /// the end of the output or a control character divides. Such an erase in
-/// display with more parameter bytes is not reported.
+/// display or a query with more parameter bytes is not reported.
 const MAX_CSI_PARAMETER_BYTES: usize = 8;
 
 /// A result of [`SequenceScanner::scan`].
@@ -40,6 +42,20 @@ pub(crate) enum Found<'a> {
     /// An erase in display above the cursor (`CSI 1 J`) ended at this
     /// offset of the bytes of the call.
     EraseAbove { end: usize },
+    /// A request for the name and the version of the terminal (`CSI > q`)
+    /// ended at this offset.
+    VersionQuery { end: usize },
+    /// A setting request (`DCS $ q Pt ST`) ended at this offset.
+    SettingRequest { end: usize },
+}
+
+/// A sequence that ended and that [`SequenceScanner::scan`] reports with
+/// its offset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ended {
+    EraseAbove,
+    VersionQuery,
+    SettingRequest,
 }
 
 /// Finds the sequences in a byte stream. A sequence can start in one call of
@@ -61,7 +77,11 @@ pub(crate) struct SequenceScanner {
     /// The number of parameter bytes of the CSI sequence in progress, also
     /// the bytes that `csi_parameters` does not keep.
     csi_parameters_length: usize,
-    erase_above_ended: bool,
+    /// The DCS sequence in progress is a setting request.
+    in_setting_request: bool,
+    /// The byte after `ESC P` of the DCS sequence in progress.
+    first_dcs_byte: u8,
+    ended: Option<Ended>,
 }
 
 impl SequenceScanner {
@@ -75,7 +95,9 @@ impl SequenceScanner {
             osc_too_long: false,
             csi_parameters: [0; MAX_CSI_PARAMETER_BYTES],
             csi_parameters_length: 0,
-            erase_above_ended: false,
+            in_setting_request: false,
+            first_dcs_byte: 0,
+            ended: None,
         }
     }
 
@@ -89,8 +111,8 @@ impl SequenceScanner {
     }
 
     /// Takes the next bytes of the output. Calls `found` for each OSC
-    /// sequence and each erase in display above the cursor that ends in
-    /// `bytes`.
+    /// sequence, each erase in display above the cursor and each query that
+    /// ends in `bytes`.
     pub(crate) fn scan(&mut self, bytes: &[u8], mut found: impl FnMut(Found<'_>)) {
         let mut rest = bytes;
         if self.partial_character_length != 0 {
@@ -103,10 +125,12 @@ impl SequenceScanner {
                 State::Csi => self.csi(rest),
                 _ => self.sequence(rest),
             };
-            if self.erase_above_ended {
-                self.erase_above_ended = false;
-                found(Found::EraseAbove {
-                    end: bytes.len() - rest.len(),
+            if let Some(ended) = self.ended.take() {
+                let end = bytes.len() - rest.len();
+                found(match ended {
+                    Ended::EraseAbove => Found::EraseAbove { end },
+                    Ended::VersionQuery => Found::VersionQuery { end },
+                    Ended::SettingRequest => Found::SettingRequest { end },
                 });
             }
         }
@@ -162,8 +186,8 @@ impl SequenceScanner {
         };
         if !(0x40..=0x7e).contains(byte) {
             self.keep_csi_parameters(&bytes[..parameters]);
-        } else if *byte == b'J' {
-            self.erase_above_ended = self.ends_erase_above(&bytes[..parameters]);
+        } else if matches!(*byte, b'J' | b'q') {
+            self.ended = self.ended_csi(*byte, &bytes[..parameters]);
         }
         self.take(*byte);
         &bytes[parameters + 1..]
@@ -178,15 +202,23 @@ impl SequenceScanner {
         self.csi_parameters_length += parameters.len();
     }
 
-    /// `true` if the `J` sequence with the `last` parameter bytes is an
-    /// erase in display above the cursor.
-    fn ends_erase_above(&mut self, last: &[u8]) -> bool {
-        if self.csi_parameters_length == 0 {
-            return is_erase_above(last);
+    /// The sequence that the CSI sequence with the `final_byte` and the
+    /// `last` parameter bytes is, if the scanner reports it.
+    fn ended_csi(&mut self, final_byte: u8, last: &[u8]) -> Option<Ended> {
+        let parameters = if self.csi_parameters_length == 0 {
+            last
+        } else {
+            self.keep_csi_parameters(last);
+            if self.csi_parameters_length > MAX_CSI_PARAMETER_BYTES {
+                return None;
+            }
+            &self.csi_parameters[..self.csi_parameters_length]
+        };
+        match final_byte {
+            b'J' if is_erase_above(parameters) => Some(Ended::EraseAbove),
+            b'q' if is_version_query(parameters) => Some(Ended::VersionQuery),
+            _ => None,
         }
-        self.keep_csi_parameters(last);
-        self.csi_parameters_length <= MAX_CSI_PARAMETER_BYTES
-            && is_erase_above(&self.csi_parameters[..self.csi_parameters_length])
     }
 
     /// The bytes of a sequence that is not a CSI sequence or an OSC
@@ -195,6 +227,7 @@ impl SequenceScanner {
         for (index, byte) in bytes.iter().enumerate() {
             let before = self.state;
             self.take(*byte);
+            self.follow_setting_request(before, *byte);
             if self.state != before {
                 return &bytes[index + 1..];
             }
@@ -243,6 +276,27 @@ impl SequenceScanner {
         }
     }
 
+    /// A setting request is `ESC P $ q`, its data, and the string
+    /// terminator: an escape character or ST as one byte. CAN and SUB
+    /// cancel the request.
+    fn follow_setting_request(&mut self, before: State, byte: u8) {
+        match (before, self.state) {
+            (State::DcsEntry, _) => self.first_dcs_byte = byte,
+            (State::DcsIntermediate, State::DcsPassthrough) => {
+                self.in_setting_request =
+                    byte == b'q' && self.first_dcs_byte == b'$' && self.sequence_length == 4;
+            }
+            (State::DcsPassthrough, State::DcsPassthrough) => {}
+            (State::DcsPassthrough, _) => {
+                let is_request = std::mem::take(&mut self.in_setting_request);
+                if is_request && !matches!(byte, CANCEL | SUBSTITUTE) {
+                    self.ended = Some(Ended::SettingRequest);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn push_osc(&mut self, byte: u8) {
         if self.osc.len() < MAX_OSC_BYTES {
             self.osc.push(byte);
@@ -274,6 +328,15 @@ fn is_erase_above(parameters: &[u8]) -> bool {
     let mut groups = parameters.split(|byte| matches!(byte, b';' | b':'));
     let first = groups.next().unwrap_or_default();
     first.iter().skip_while(|digit| **digit == b'0').eq(b"1")
+}
+
+/// `true` if the library reads a `q` sequence with these parameters as a
+/// request for the name and the version of the terminal: `>`, and no
+/// parameter or the parameter 0.
+fn is_version_query(parameters: &[u8]) -> bool {
+    parameters
+        .strip_prefix(b">")
+        .is_some_and(|rest| rest.iter().all(|byte| *byte == b'0'))
 }
 
 /// The bytes at the end of `text` that are the start of one UTF-8 character

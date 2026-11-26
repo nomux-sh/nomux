@@ -1,10 +1,10 @@
 # Queries: the program asks the terminal, and the terminal answers on the input side.
-# nomux-term answers no query. Each case shows that the query puts nothing on the screen.
+# Each case shows that the query puts nothing on the screen, and the answer of nomux-term.
 
 case primary device attributes
-follows xterm ctlseqs "CSI Ps c"
+follows xterm ctlseqs "CSI Ps c"; nomux is a VT220 (62) with ANSI colors (22)
 input \e[c
-gap No answer. xterm answers \e[?Pl;Pa...c: its terminal level and its attributes
+reply \e[?62;22c
 screen
 |                    |
 |                    |
@@ -14,9 +14,9 @@ screen
 cursor 0,0
 
 case secondary device attributes
-follows xterm ctlseqs "CSI > Ps c"
-input \e[>c
-gap No answer. xterm answers \e[>41;Pv;0c
+follows xterm ctlseqs "CSI > Ps c"; nomux answers 1 (VT220), its version as one number and 0
+input \e[>c\e[>0c
+reply \e[>1;{Pv};0c\e[>1;{Pv};0c
 screen
 |                    |
 |                    |
@@ -28,7 +28,7 @@ cursor 0,0
 case DECRQM of a DEC private mode and of an ANSI mode
 follows xterm ctlseqs "CSI ? Ps $ p" and "CSI Ps $ p"
 input \e[?2004h\e[?2004$p\e[4$p
-gap No answer. xterm answers \e[?2004;1$y and \e[4;2$y
+reply \e[?2004;1$y\e[4;2$y
 screen
 |                    |
 |                    |
@@ -39,9 +39,9 @@ cursor 0,0
 modes +BRACKETED_PASTE
 
 case DECRQM of DEC mode 2026
-follows Synchronized output: a program asks with DECRQM if the terminal has the mode
+follows Synchronized output: a program asks with DECRQM if the terminal has the mode; a terminal with the mode answers 2
 input \e[?2026$p
-gap No answer. A terminal with the mode answers \e[?2026;2$y; xterm answers \e[?2026;0$y
+reply \e[?2026;2$y
 screen
 |                    |
 |                    |
@@ -53,7 +53,7 @@ cursor 0,0
 case device status report
 follows ECMA-48 8.3.35 DSR; xterm ctlseqs "CSI 5 n"
 input \e[5n
-gap No answer. xterm answers \e[0n
+reply \e[0n
 screen
 |                    |
 |                    |
@@ -65,7 +65,7 @@ cursor 0,0
 case cursor position report
 follows ECMA-48 8.3.35 DSR; xterm ctlseqs "CSI 6 n"
 input \e[2;3H\e[6n
-gap No answer. xterm answers \e[2;3R
+reply \e[2;3R
 screen
 |                    |
 |                    |
@@ -77,7 +77,7 @@ cursor 1,2
 case kitty keyboard flags query
 follows kitty "progressive enhancement": CSI ? u
 input \e[>1u\e[?u
-gap No answer. kitty answers \e[?1u
+reply \e[?1u
 screen
 |                    |
 |                    |
@@ -88,9 +88,21 @@ cursor 0,0
 modes +KEYBOARD_DISAMBIGUATE
 
 case color queries of the foreground, the background and the cursor
-follows xterm ctlseqs "OSC Ps ; Pt BEL", Ps = 10, 11, 12 and Pt = ?
-input \e]10;?\a\e]11;?\a\e]12;?\a
-gap No answer. xterm answers \e]10;rgb:RRRR/GGGG/BBBB\e\\ and the same for OSC 11 and OSC 12
+follows xterm ctlseqs "OSC Ps ; Pt BEL", Ps = 10, 11, 12 and Pt = ?; the answer has the end of the query
+input \e]10;?\a\e]11;?\e\\\e]12;?\a
+reply \e]10;rgb:e5e5/e5e5/e5e5\a\e]11;rgb:0000/0000/0000\e\\\e]12;rgb:e5e5/e5e5/e5e5\a
+screen
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,0
+
+case color queries after the program set the colors
+follows xterm ctlseqs "OSC 4 ; c ; spec" and "OSC 10 ; spec": the answer has the color that the program set
+input \e]4;1;#102030\a\e]10;rgb:ff/80/00\a\e]4;1;?;2;?\a\e]10;?\a
+reply \e]4;1;rgb:1010/2020/3030\a\e]4;2;rgb:0000/cdcd/0000\a\e]10;rgb:ffff/8080/0000\a
 screen
 |                    |
 |                    |
@@ -100,9 +112,9 @@ screen
 cursor 0,0
 
 case text area size queries
-follows xterm ctlseqs "CSI Ps t", Ps = 18 and Ps = 14
+follows xterm ctlseqs "CSI Ps t", Ps = 18 and Ps = 14; nomux knows no pixel size and answers 0
 input \e[18t\e[14t
-gap No answer. xterm answers \e[8;5;20t and \e[4;height;widtht
+reply \e[8;5;20t\e[4;0;0t
 screen
 |                    |
 |                    |
@@ -114,7 +126,7 @@ cursor 0,0
 case XTVERSION
 follows xterm ctlseqs "CSI > Ps q"
 input \e[>q
-gap No answer. xterm answers \eP>|XTerm(Pv)\e\\
+reply \eP>|nomux({version})\e\\
 screen
 |                    |
 |                    |
@@ -126,7 +138,31 @@ cursor 0,0
 case DECRQSS of the SGR
 follows xterm ctlseqs "DCS $ q Pt ST"
 input \eP$qm\e\\
-gap No answer. xterm answers \eP1$r0m\e\\
+reply \eP0$r\e\\
+gap nomux answers that it does not know the setting. xterm answers \eP1$r0m\e\\
+screen
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,0
+
+case a setting request that CAN cancels
+follows ECMA-48 8.3.6 CAN: the sequence ends without an effect, thus the terminal does not answer
+input \eP$qm\x18
+screen
+|                    |
+|                    |
+|                    |
+|                    |
+|                    |
+cursor 0,0
+
+case answers in the order of the queries
+follows each query gets one answer in the order of the queries, also for the queries that nomux-term answers itself
+input \e[>q\e[5n\eP$qr\e\\\e[c
+reply \eP>|nomux({version})\e\\\e[0n\eP0$r\e\\\e[?62;22c
 screen
 |                    |
 |                    |

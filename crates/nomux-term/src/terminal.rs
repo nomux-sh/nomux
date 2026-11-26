@@ -4,14 +4,15 @@ use std::fmt;
 use std::time::Duration;
 
 use alacritty_terminal::Term;
-use alacritty_terminal::event::VoidListener;
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::Line;
 use alacritty_terminal::term::{Config, TermMode};
 use alacritty_terminal::vte::ansi::{Processor, Timeout};
 
 use crate::osc::Osc;
+use crate::palette::Palette;
 use crate::redraw;
+use crate::reply::{self, Replies, ReplyListener};
 use crate::screen::Screen;
 use crate::sequence_scanner::{Found, SequenceScanner};
 use crate::size::Size;
@@ -22,10 +23,11 @@ const LIBRARY_OSC_CODES: [u32; 14] = [0, 2, 4, 8, 10, 11, 12, 22, 50, 52, 104, 1
 
 /// A terminal: it takes the output of a program and keeps the screen state.
 pub struct Terminal {
-    term: Term<VoidListener>,
+    term: Term<ReplyListener>,
     parser: Processor<ImmediateUpdate>,
     scanner: SequenceScanner,
     size: Size,
+    replies: Replies,
 }
 
 impl Terminal {
@@ -48,12 +50,32 @@ impl Terminal {
             kitty_keyboard: true,
             ..Config::default()
         };
+        let listener = ReplyListener::default();
         Self {
-            term: Term::new(config, &size, VoidListener),
+            term: Term::new(config, &size, listener.clone()),
             parser: Processor::new(),
             scanner: SequenceScanner::new(),
             size,
+            replies: Replies::new(listener),
         }
+    }
+
+    /// Sets the colors with which the terminal answers a color query. The
+    /// default is [`Palette::default`].
+    pub fn set_palette(&mut self, palette: Palette) {
+        self.replies.palette = palette;
+    }
+
+    /// Takes the answers to the queries in the output since the last call,
+    /// in the order of the queries: the bytes that the terminal of the
+    /// program sends to its input. The table "Answers" in the README of
+    /// the crate has the answer to each query.
+    ///
+    /// The terminal keeps at most 4096 bytes of answers. A terminal that is
+    /// not the terminal of the program, for example the copy of a client,
+    /// does not take them.
+    pub fn take_replies(&mut self) -> Vec<u8> {
+        self.replies.take()
     }
 
     /// Gives output of the program to the terminal. A sequence can start in
@@ -63,6 +85,9 @@ impl Terminal {
     /// the VT library does not handle, for example OSC 9, 133, 777 and 7501.
     /// A sequence without a decimal code or with more than 4096 bytes is
     /// ignored.
+    ///
+    /// [`take_replies`](Self::take_replies) gives the answers to the queries
+    /// in `bytes`.
     pub fn feed(&mut self, bytes: &[u8], mut unhandled_osc: impl FnMut(Osc<'_>)) {
         let mut parsed = 0;
         self.scanner.scan(bytes, |found| match found {
@@ -76,8 +101,21 @@ impl Terminal {
                 parsed = end;
                 erase_the_first_row_from_the_second_row(&mut self.term);
             }
+            Found::VersionQuery { end } => {
+                self.parser.advance(&mut self.term, &bytes[parsed..end]);
+                parsed = end;
+                self.replies.collect(self.term.colors());
+                self.replies.push(reply::terminal_version().as_bytes());
+            }
+            Found::SettingRequest { end } => {
+                self.parser.advance(&mut self.term, &bytes[parsed..end]);
+                parsed = end;
+                self.replies.collect(self.term.colors());
+                self.replies.push(reply::SETTING_NOT_KNOWN);
+            }
         });
         self.parser.advance(&mut self.term, &bytes[parsed..]);
+        self.replies.collect(self.term.colors());
         self.end_wrap_before_the_last_column();
     }
 
@@ -169,7 +207,7 @@ impl Terminal {
 /// Completes an erase in display above the cursor (ED 1) of the VT library.
 /// The library erases the rows above the cursor only if the cursor is below
 /// the second row: <https://github.com/alacritty/alacritty/issues/9096>.
-fn erase_the_first_row_from_the_second_row(term: &mut Term<VoidListener>) {
+fn erase_the_first_row_from_the_second_row(term: &mut Term<ReplyListener>) {
     if term.grid().cursor.point.line == Line(1) {
         term.grid_mut().reset_region(..Line(1));
     }
