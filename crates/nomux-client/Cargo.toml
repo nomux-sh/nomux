@@ -11,6 +11,7 @@ authors.workspace = true
 publish.workspace = true
 
 [dependencies]
+flate2.workspace = true
 nomux-core.workspace = true
 nomux-status.workspace = true
 nomux-proto.workspace = true

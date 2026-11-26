@@ -120,7 +120,7 @@ fn checksum_of(output: &str, name: &str) -> Option<String> {
 }
 
 /// A name part that two installations at the same time do not share.
-fn unique_suffix() -> String {
+pub(crate) fn unique_suffix() -> String {
     let nanoseconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |time| time.subsec_nanos());

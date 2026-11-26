@@ -13,8 +13,8 @@ use std::os::unix::process::ExitStatusExt;
 use std::process::{Command, Stdio};
 
 use nomux_end_to_end::{
-    Impairment, ProcessGuard, RemoteHost, TerminalClient, binary, generate_key, process_runs,
-    public_key, wait_for,
+    Impairment, ProcessGuard, RemoteHost, TerminalClient, binary, extension_package, generate_key,
+    process_runs, public_key, release_archive, release_target, wait_for,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -441,4 +441,36 @@ fn a_server_that_refuses_connections_to_unix_sockets_gives_an_error_that_names_t
     assert_eq!(run.code, 1, "{run:?}");
     assert!(run.stderr.contains("AllowStreamLocalForwarding"), "{run:?}");
     assert_eq!(remote.nomux_ok(&["host", "ls"]).stdout, "no hosts\n");
+}
+
+#[test]
+fn an_extension_archive_of_the_client_is_installed_on_the_host() {
+    let Some(remote) = RemoteHost::start() else {
+        return;
+    };
+    remote.add_as_vps();
+    let releases = remote.client.home().join("releases");
+    let name = format!("nomux-test-1.0.0-{}", release_target());
+    let package = extension_package(&releases, "test.remote", "process = [\"git\"]");
+    fs::rename(&package, releases.join(&name)).unwrap();
+    release_archive(&releases, &name);
+    let archive = releases.join(format!("{name}.tar.gz"));
+
+    let _ = remote.nomux_ok(&[
+        "--host",
+        "vps",
+        "ext",
+        "install",
+        archive.to_str().unwrap(),
+        "--grant-all",
+        "--yes",
+    ]);
+
+    let listed = remote
+        .nomux_ok(&["--host", "vps", "ext", "ls", "--json"])
+        .json();
+    assert_eq!(listed["extensions"][0]["id"], "test.remote", "{listed}");
+    // The package was written on the host and is gone after the install.
+    let downloads = remote.host.home().join(".nomux").join("downloads");
+    assert_eq!(fs::read_dir(&downloads).unwrap().count(), 0);
 }

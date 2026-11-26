@@ -42,6 +42,27 @@ pub(super) fn check(directory: &Path) -> Result<ManifestCheck, ClientError> {
     Ok(validate(&text))
 }
 
+/// The package of the manifest `text` of a release archive.
+pub(super) fn package_of(text: &str, source: &str) -> Result<ExtensionPackage, ClientError> {
+    match validate(text) {
+        ManifestCheck::Valid(package) => Ok(package),
+        ManifestCheck::NotValid(problems) => {
+            let problems: Vec<String> = problems
+                .iter()
+                .map(|problem| match &problem.path {
+                    Some(path) => format!("{path}: {}", problem.problem),
+                    None => problem.problem.clone(),
+                })
+                .collect();
+            Err(ClientError::Failed(format!(
+                "the {MANIFEST_FILE} of the archive {source} is not valid: {}. Nothing was \
+                 installed",
+                problems.join("; ")
+            )))
+        }
+    }
+}
+
 fn validate(text: &str) -> ManifestCheck {
     match text.parse::<Manifest>() {
         Ok(manifest) => ManifestCheck::Valid(ExtensionPackage {

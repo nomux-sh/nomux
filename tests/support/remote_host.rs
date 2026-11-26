@@ -166,20 +166,8 @@ impl RemoteHost {
         for binary_name in BINARIES {
             fs::copy(binary(binary_name), content.join(binary_name)).expect("a binary is copied");
         }
-        let archive = format!("{name}.tar.gz");
-        run(Command::new("tar")
-            .args(["-czf", &archive, &name])
-            .current_dir(&release));
+        release_archive(&release, &name);
         fs::remove_dir_all(&content).expect("the copy can be removed");
-        let checksum_program = if Path::new("/usr/bin/sha256sum").is_file() {
-            "sha256sum"
-        } else {
-            "shasum -a 256"
-        };
-        run(Command::new("sh")
-            .arg("-c")
-            .arg(format!("{checksum_program} {archive} > SHA256SUMS"))
-            .current_dir(&release));
         format!("file://{}", releases.display())
     }
 
@@ -243,12 +231,39 @@ impl RemoteHost {
 
 /// The release target of this computer, as `install.sh` and the client
 /// name it.
-fn release_target() -> String {
+/// The release target of this computer.
+#[must_use]
+pub fn release_target() -> String {
     let processor = std::env::consts::ARCH;
     match std::env::consts::OS {
         "macos" => format!("{processor}-apple-darwin"),
         _ => format!("{processor}-unknown-linux-musl"),
     }
+}
+
+/// Packs the directory `name` of `directory` into `<name>.tar.gz`, and
+/// writes its checksum into the file `SHA256SUMS` of `directory`. The
+/// format is `ustar`: the `tar` of macOS writes the extended attributes of
+/// a file into pax headers in its default format, and a release archive of
+/// an extension has none.
+///
+/// # Panics
+///
+/// Panics if `tar` or the checksum program fails.
+pub fn release_archive(directory: &Path, name: &str) {
+    let archive = format!("{name}.tar.gz");
+    run(Command::new("tar")
+        .args(["--format=ustar", "-czf", &archive, name])
+        .current_dir(directory));
+    let checksum_program = if Path::new("/usr/bin/sha256sum").is_file() {
+        "sha256sum"
+    } else {
+        "shasum -a 256"
+    };
+    run(Command::new("sh")
+        .arg("-c")
+        .arg(format!("{checksum_program} {archive} > SHA256SUMS"))
+        .current_dir(directory));
 }
 
 fn current_user() -> String {

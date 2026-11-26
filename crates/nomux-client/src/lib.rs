@@ -75,6 +75,7 @@ mod doctor;
 mod error;
 mod events;
 mod extension;
+mod extension_archive;
 mod extension_requests;
 mod hibernation;
 mod hook_install;
@@ -108,6 +109,9 @@ pub use extension::{
     Extension, ExtensionCallError, ExtensionErrorCode, ExtensionPackage, ExtensionPermissions,
     ExtensionState,
 };
+pub use extension_archive::{
+    ArchiveSource, ChecksumCheck, ExtensionArchive, fetch_extension_archive,
+};
 pub use hibernation::{Hibernation, HibernationReason};
 pub use hook_install::{
     HooksState, SettingsChange, ToolHooks, hooks_of_tool, plan_hook_install, plan_hook_uninstall,
@@ -116,7 +120,7 @@ pub use hook_install::{
 pub use hooks::{
     HookAdapter, HookEvent, HookInstallPlan, HookPlatform, SettingsEntry, SettingsPath,
 };
-pub use host::Host;
+pub use host::{Host, StagedPackage};
 pub use host_info::{HostInfo, MemoryLimitSupport};
 pub use nomux_core::configuration::RestorePolicy;
 pub use nomux_core::workspace_tree::{Node, NodeKind, TreeError, WorkspaceTree};

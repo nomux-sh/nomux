@@ -26,6 +26,9 @@ nomux-transport = { path = "crates/nomux-transport", version = "0.4.0" }
 
 base64 = "0.23.1"
 clap = { version = "4.6.10", features = ["derive"] }
+# The gzip decoder of a release archive of an extension. The default backend
+# `miniz_oxide` is pure Rust.
+flate2 = "1.1.11"
 getrandom = "0.4.3"
 hmac = "0.13.0"
 libc = "0.2.191"

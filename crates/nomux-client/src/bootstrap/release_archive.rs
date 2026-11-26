@@ -106,7 +106,17 @@ fn verify_checksum(
     let read = |file: &Path| {
         std::fs::read(file).map_err(|error| local_failure(&file.display().to_string(), &error))
     };
-    let checksums = String::from_utf8_lossy(&read(checksums)?).into_owned();
+    check_sha256(&read(archive)?, archive_name, &read(checksums)?)
+}
+
+/// Compares the SHA-256 checksum of `archive` with the line of
+/// `archive_name` in the text of a `SHA256SUMS` file.
+pub(crate) fn check_sha256(
+    archive: &[u8],
+    archive_name: &str,
+    checksums: &[u8],
+) -> Result<(), ClientError> {
+    let checksums = String::from_utf8_lossy(checksums);
     let expected = checksums
         .lines()
         .filter_map(|line| line.split_once(char::is_whitespace))
@@ -117,7 +127,7 @@ fn verify_checksum(
                 "{CHECKSUM_FILE} has no checksum for {archive_name}"
             ))
         })?;
-    let actual = sha256_hex(&read(archive)?);
+    let actual = sha256_hex(archive);
     if actual == expected {
         Ok(())
     } else {

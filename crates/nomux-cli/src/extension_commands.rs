@@ -1,5 +1,6 @@
 //! The `ext` commands: the extensions of a host.
 
+mod archive_install;
 mod arguments;
 mod grant;
 mod manifest_check;
@@ -8,7 +9,7 @@ mod report;
 
 use std::path::{self, PathBuf};
 
-use nomux_client::{Client, ClientError};
+use nomux_client::{ArchiveSource, Client, ClientError};
 
 pub(crate) use arguments::ExtCommand;
 pub(crate) use grant::permission_items;
@@ -39,12 +40,22 @@ pub(crate) async fn run(
     let report = match command {
         ExtCommand::Ls => ExtensionReport::Listed(client.list_extensions().await?),
         ExtCommand::Install {
-            directory,
+            source,
             grant,
             grant_all,
+            yes,
         } => {
-            let directory = package_directory(directory, host_name.is_some())?;
-            install(&mut client, &directory, grant, grant_all).await?
+            if let Some(archive) = ArchiveSource::parse(&source) {
+                let approval = archive_install::Approval {
+                    grants: grant,
+                    grant_all,
+                    yes,
+                };
+                archive_install::install(&host, &mut client, &archive, approval, format).await?
+            } else {
+                let directory = package_directory(PathBuf::from(source), host_name.is_some())?;
+                install(&mut client, &directory, grant, grant_all).await?
+            }
         }
         ExtCommand::Rm { id } => {
             client.remove_extension(&id).await?;
