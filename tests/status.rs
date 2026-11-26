@@ -233,6 +233,7 @@ fn each_step_of_a_program_report_has_its_source_and_its_order() {
     assert_eq!(
         explained_sources(&sandbox, &agent),
         [
+            ("adapter", false),
             ("program_status", true),
             ("self_report", false),
             ("session_restore", false),

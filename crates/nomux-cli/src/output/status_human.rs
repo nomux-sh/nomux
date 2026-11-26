@@ -58,6 +58,14 @@ pub(super) fn event_line(event: &HostEvent) -> String {
             format!("{}\n", line.trim_end())
         }
         EventBody::AgentRunRemoved { session_id } => format!("{seq} {session_id} removed\n"),
+        EventBody::ExtensionEvent {
+            extension_id,
+            name,
+            payload,
+        } => format!(
+            "{seq} extension {extension_id}: {name} ({} bytes)\n",
+            payload.len()
+        ),
         EventBody::Snapshot => format!("{seq} snapshot: the status of each session follows\n"),
         EventBody::Unknown => format!("{seq} an event that this client does not know\n"),
     }
@@ -189,6 +197,19 @@ fn explained(explanation: &AgentExplanation) -> String {
         text.push_str("\nchild work:\n");
         child_lines(&run.children, 1, &mut text);
     }
+    if let Some(details) = &run.details {
+        text.push_str("\nfrom the adapter:\n");
+        let parts = [
+            ("model", &details.model),
+            ("tool session", &details.provider_session_id),
+            ("resume", &details.resume_command),
+        ];
+        for (name, value) in parts {
+            if let Some(value) = value {
+                let _ = writeln!(text, "  {name}: {value}");
+            }
+        }
+    }
     text
 }
 
@@ -270,6 +291,7 @@ pub(super) fn state_name(state: AgentState) -> &'static str {
 fn source_name(source: StatusSource) -> &'static str {
     match source {
         StatusSource::None => "no source",
+        StatusSource::Adapter => "adapter",
         StatusSource::ProgramStatus => "program status",
         StatusSource::SelfReport => "self-report",
         StatusSource::SessionRestore => "session restore",
@@ -374,6 +396,7 @@ mod tests {
             aggregate: status.clone(),
             status,
             children,
+            details: None,
         }
     }
 

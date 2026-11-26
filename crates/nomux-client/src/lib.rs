@@ -26,6 +26,12 @@
 //!   comes from ([`StatusSource`]).
 //! - [`Client::subscribe_events`]: the events of a host as an
 //!   [`EventStream`] of [`HostEvent`] values.
+//! - [`Client::send_hook_event`], [`Client::hook_install_plan`] and
+//!   [`Client::hook_adapters`]: the hooks of the agent tools
+//!   ([`HookEvent`], [`HookInstallPlan`], [`HookAdapter`]).
+//! - [`plan_hook_install`], [`plan_hook_uninstall`] and [`hooks_of_tool`]:
+//!   the hooks of a tool in its settings file on this computer, as a
+//!   [`SettingsChange`] with a diff that writes only when it is applied.
 //! - [`ClientError`]: why a connection or a request failed.
 //! - [`Client::capture`] and [`Client::capture_lines`]: the scrollback of a
 //!   session, without an attach.
@@ -60,6 +66,9 @@ mod error;
 mod events;
 mod extension;
 mod extension_requests;
+mod hook_install;
+mod hook_requests;
+mod hooks;
 mod host;
 mod host_info;
 mod local_host;
@@ -72,8 +81,8 @@ mod terminal;
 mod window_size;
 
 pub use agent::{
-    AgentExplanation, AgentRun, AgentState, AgentStatus, AgentTree, ChildWork, NeedsYouKind,
-    ReportedState, SourceExplanation, Sourced, StatusSource,
+    AgentDetails, AgentExplanation, AgentRun, AgentState, AgentStatus, AgentTree, ChildWork,
+    NeedsYouKind, ReportedState, SourceExplanation, Sourced, StatusSource,
 };
 pub use bootstrap::{BinarySource, BootstrapStep, Installation};
 pub use client::Client;
@@ -84,6 +93,13 @@ pub use events::{EventBody, EventStream, EventType, HostEvent};
 pub use extension::{
     Extension, ExtensionCallError, ExtensionErrorCode, ExtensionPackage, ExtensionPermissions,
     ExtensionState,
+};
+pub use hook_install::{
+    HooksState, SettingsChange, ToolHooks, hooks_of_tool, plan_hook_install, plan_hook_uninstall,
+    tools_with_installed_hooks,
+};
+pub use hooks::{
+    HookAdapter, HookEvent, HookInstallPlan, HookPlatform, SettingsEntry, SettingsPath,
 };
 pub use host::Host;
 pub use host_info::HostInfo;

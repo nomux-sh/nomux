@@ -9,6 +9,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use nomux_client::RestorePolicy;
 
 use crate::extension_commands::ExtCommand;
+use crate::hook_commands::HooksCommand;
 use crate::status_commands::{AgentCommand, EventTypeArgument, StatusCommand};
 
 /// Sessions that stay alive on the host when the client disconnects.
@@ -212,6 +213,19 @@ pub(crate) enum Command {
     Ext {
         #[command(subcommand)]
         command: ExtCommand,
+    },
+    /// Send one event of an agent tool to the daemon of the session. A tool calls this command
+    /// from its hooks: it reads the data of the event from the standard input
+    Hook {
+        /// The name of the tool, as its adapter extension names it
+        tool: String,
+        /// The name of the event
+        event: String,
+    },
+    /// Install, remove and show the hooks of an agent tool in its settings file
+    Hooks {
+        #[command(subcommand)]
+        command: HooksCommand,
     },
     /// Print the version
     Version,

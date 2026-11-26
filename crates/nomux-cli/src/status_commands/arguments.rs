@@ -54,6 +54,8 @@ pub(crate) enum EventTypeArgument {
     AgentRunChanged,
     /// A session ended or was removed
     AgentRunRemoved,
+    /// The daemon part of an extension sent an event
+    ExtensionEvent,
 }
 
 impl From<EventTypeArgument> for EventType {
@@ -61,6 +63,7 @@ impl From<EventTypeArgument> for EventType {
         match kind {
             EventTypeArgument::AgentRunChanged => Self::AgentRunChanged,
             EventTypeArgument::AgentRunRemoved => Self::AgentRunRemoved,
+            EventTypeArgument::ExtensionEvent => Self::ExtensionEvent,
         }
     }
 }

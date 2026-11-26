@@ -2,16 +2,12 @@
 //! in. The holder of the session gives each process of it the variables
 //! that the request needs.
 
-use std::env;
 use std::path::PathBuf;
 
 use nomux_client::{Client, ClientError, ReportedState};
 
 use crate::commands::KIND;
-
-const SESSION_ID: &str = "NOMUX_SESSION_ID";
-const DAEMON_SOCKET: &str = "NOMUX_SOCK";
-const TOKEN: &str = "NOMUX_TOKEN";
+use crate::session_environment::{DAEMON_SOCKET, SESSION_ID, TOKEN};
 
 /// Reports `state` and `message` for the session of this process. Returns
 /// the session identifier.
@@ -27,12 +23,9 @@ pub(super) async fn set(state: ReportedState, message: &str) -> Result<String, C
 /// A variable that only a process of a session has. Without it, the
 /// command cannot prove which session it is in.
 fn variable(name: &str) -> Result<String, ClientError> {
-    env::var(name)
-        .ok()
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            ClientError::PermissionDenied(format!(
-                "{name} is not set: `nomux status set` works only inside a nomux session"
-            ))
-        })
+    crate::session_environment::variable(name).ok_or_else(|| {
+        ClientError::PermissionDenied(format!(
+            "{name} is not set: `nomux status set` works only inside a nomux session"
+        ))
+    })
 }

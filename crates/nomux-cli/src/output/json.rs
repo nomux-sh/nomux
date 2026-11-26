@@ -9,6 +9,7 @@ use nomux_client::{
 use serde::Serialize;
 
 use super::extension_json::ExtensionBody;
+use super::hooks_json::HooksBody;
 use super::human::state_name;
 use super::memory_json::SessionsMemoryBody;
 use super::status_json::StatusBody;
@@ -56,6 +57,10 @@ enum Body<'a> {
     /// command.
     #[serde(untagged)]
     Status(Box<StatusBody<'a>>),
+    /// The field of the document is the field of the body of the hook
+    /// command.
+    #[serde(untagged)]
+    Hooks(HooksBody<'a>),
 }
 
 #[derive(Serialize)]
@@ -331,6 +336,10 @@ pub(super) fn report(report: &Report) -> String {
         Report::Extension(report) => Body::Extension(report.into()),
         Report::Status(report) => match StatusBody::of(report) {
             Some(body) => Body::Status(Box::new(body)),
+            None => return String::new(),
+        },
+        Report::Hooks(report) => match HooksBody::of(report) {
+            Some(body) => Body::Hooks(body),
             None => return String::new(),
         },
         Report::Version => Body::Version(env!("CARGO_PKG_VERSION")),

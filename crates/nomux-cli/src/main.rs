@@ -48,11 +48,13 @@ mod attach;
 mod commands;
 mod exit_code;
 mod extension_commands;
+mod hook_commands;
 mod host_commands;
 mod output;
 mod report;
 mod selected_host;
 mod service_files;
+mod session_environment;
 mod session_memory;
 mod status_commands;
 

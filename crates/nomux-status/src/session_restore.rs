@@ -80,5 +80,6 @@ fn carried(status: &Status) -> Option<Observation> {
         title: value(&status.title),
         progress: None,
         tool: value(&status.tool),
+        soft: false,
     })
 }

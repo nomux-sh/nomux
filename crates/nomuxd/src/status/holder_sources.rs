@@ -96,6 +96,7 @@ fn observation(status: &ProgramStatus) -> Observation {
         title: status.title.clone(),
         progress: status.progress,
         tool: status.app.clone(),
+        soft: false,
     }
 }
 

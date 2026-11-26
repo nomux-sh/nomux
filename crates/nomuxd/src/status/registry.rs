@@ -5,10 +5,10 @@
 //! run again, and each change of the Agent run goes to the event log.
 //!
 //! The memory of an entry has a limit: the holder keeps 64 program status
-//! records at most with a limit for each field, the resolver keeps
-//! [`nomux_status::MAX_CHILD_WORK`] Child work at most, and a message has
-//! [`MAX_MESSAGE_LENGTH`](super::holder_sources::MAX_MESSAGE_LENGTH) bytes
-//! at most. Only a session of the session registry gets an entry.
+//! records at most with a limit for each field, the adapter source and the
+//! resolver keep [`nomux_status::MAX_CHILD_WORK`] Child work at most, and a
+//! text has [`MAX_MESSAGE_LENGTH`](super::holder_sources::MAX_MESSAGE_LENGTH)
+//! bytes at most. Only a session of the session registry gets an entry.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -16,16 +16,18 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use nomux_holder_protocol::SessionId;
 use nomux_holder_protocol::program_reports::ProgramReports;
 use nomux_proto::wire::v1::{
-    AgentExplainResponse, AgentRunChanged, AgentRunRemoved, AgentTreeResponse, event,
+    AgentDetails, AgentExplainResponse, AgentRunChanged, AgentRunRemoved, AgentTreeResponse, event,
 };
 use nomux_status::{
-    AgentRun, Observation, Source, SourceReport, carried_over, most_urgent, resolve,
+    AdapterSource, AgentRun, Observation, Source, SourceReport, carried_over, most_urgent, resolve,
 };
 
+use super::adapter_report::{AdapterReportRefused, ChildReport, RunReport};
 use super::foreground;
 use super::holder_sources::{program_status, prompt_marks};
 use super::message;
-use super::self_report::{SelfReport, SelfReportRefused};
+use super::self_report::SelfReport;
+use super::token_check::TokenRefused;
 use crate::clock;
 use crate::events::EventLog;
 use crate::holder::HolderFacts;
@@ -48,6 +50,9 @@ struct Entry {
 /// program: the daemon reads it when it resolves.
 #[derive(Default)]
 struct Sources {
+    adapter: AdapterSource,
+    /// What the adapter says about the Agent run beyond its status.
+    details: Option<AgentDetails>,
     program_status: Option<SourceReport>,
     prompt_marks: Option<SourceReport>,
     self_report: Option<Observation>,
@@ -85,6 +90,18 @@ impl StatusRegistry {
         });
     }
 
+    /// Examines if `token` proves that a request comes from a process of
+    /// the session `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason if the token does not prove it.
+    pub(crate) fn authenticate(&self, id: &SessionId, token: &str) -> Result<(), TokenRefused> {
+        let entries = self.entries();
+        let entry = entries.get(id).ok_or(TokenRefused::NoProcess)?;
+        Self::check_token(entry, token)
+    }
+
     /// A program reports the status of the session `id` with the token
     /// `token`.
     ///
@@ -97,20 +114,53 @@ impl StatusRegistry {
         id: &SessionId,
         token: &str,
         report: SelfReport,
-    ) -> Result<(), SelfReportRefused> {
+    ) -> Result<(), TokenRefused> {
         let mut entries = self.entries();
-        let entry = entries.get_mut(id).ok_or(SelfReportRefused::NoProcess)?;
-        let holder = entry.holder.ok_or(SelfReportRefused::NoProcess)?;
-        let known = holder.token.ok_or(SelfReportRefused::HolderWithoutToken)?;
-        if !known.matches(token) {
-            return Err(SelfReportRefused::WrongToken);
-        }
+        let entry = entries.get_mut(id).ok_or(TokenRefused::NoProcess)?;
+        Self::check_token(entry, token)?;
         entry.sources.self_report = match report {
             SelfReport::Status(observation) => Some(observation),
             SelfReport::Withdrawn => None,
         };
         self.resolve_and_publish(id, entry);
         Ok(())
+    }
+
+    /// An adapter extension reports the Agent run of the session `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason if the session has no process.
+    pub(crate) fn adapter_run(
+        &self,
+        id: &SessionId,
+        report: RunReport,
+    ) -> Result<(), AdapterReportRefused> {
+        self.change_adapter(id, |sources| {
+            sources.adapter.report_run(report.observation);
+            if report.details.is_some() {
+                sources.details = report.details;
+            }
+            Ok(())
+        })
+    }
+
+    /// An adapter extension reports a Child work of the session `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason if the session has no process or if the report
+    /// does not fit its Child work.
+    pub(crate) fn adapter_child(
+        &self,
+        id: &SessionId,
+        report: ChildReport,
+    ) -> Result<(), AdapterReportRefused> {
+        self.change_adapter(id, |sources| {
+            let adapter = &mut sources.adapter;
+            let reported = adapter.report_child(&report.id, report.change, report.observation);
+            reported.map_err(AdapterReportRefused::Refused)
+        })
     }
 
     /// The session `id` lost the process of the holder `facts` and is
@@ -127,8 +177,11 @@ impl StatusRegistry {
             return;
         }
         entry.holder = None;
+        // The details stay: a resume command continues the work of the
+        // lost process.
         entry.sources = Sources {
             carried_over: carried_over(&entry.run),
+            details: entry.sources.details.take(),
             ..Sources::default()
         };
         self.resolve_and_publish(id, entry);
@@ -150,7 +203,7 @@ impl StatusRegistry {
         if let Some(entry) = entries.get_mut(id)
             && entry.run.mark_seen()
         {
-            self.publish_changed(id, &entry.run);
+            self.publish_changed(id, entry);
         }
     }
 
@@ -158,17 +211,17 @@ impl StatusRegistry {
     /// them.
     pub(crate) fn tree(&self, ids: &[SessionId], include_children: bool) -> AgentTreeResponse {
         let mut entries = self.entries();
-        let runs: Vec<(&SessionId, AgentRun)> = ids
-            .iter()
-            .map(|id| (id, Self::read(&mut entries, id).run.clone()))
-            .collect();
-        let attention = most_urgent(runs.iter().map(|(id, run)| (*id, &run.aggregate)));
+        for id in ids {
+            Self::read(&mut entries, id);
+        }
+        let runs: Vec<(&SessionId, &Entry)> = ids.iter().map(|id| (id, &entries[id])).collect();
+        let attention = most_urgent(runs.iter().map(|(id, entry)| (*id, &entry.run.aggregate)));
         AgentTreeResponse {
             attention_session_id: attention.map_or_default(|(id, _)| id.to_string()),
             aggregate: attention.map(|(_, status)| message::status(status)),
             runs: runs
                 .iter()
-                .map(|(id, run)| message::agent_run(id, run, include_children))
+                .map(|(id, entry)| entry.message(id, include_children))
                 .collect(),
         }
     }
@@ -178,7 +231,7 @@ impl StatusRegistry {
         let mut entries = self.entries();
         let entry = Self::read(&mut entries, id);
         AgentExplainResponse {
-            run: Some(message::agent_run(id, &entry.run, true)),
+            run: Some(entry.message(id, true)),
             sources: entry.reports().iter().map(message::source_report).collect(),
         }
     }
@@ -193,10 +246,7 @@ impl StatusRegistry {
         let last_seq = self.events.last_seq();
         let runs = ids
             .iter()
-            .map(|id| {
-                let run = &Self::read(&mut entries, id).run;
-                changed(id, run)
-            })
+            .map(|id| changed(id, Self::read(&mut entries, id)))
             .collect();
         (last_seq, runs)
     }
@@ -222,16 +272,48 @@ impl StatusRegistry {
         self.resolve_and_publish(id, entry);
     }
 
+    /// Changes the adapter source of the session `id` with `change`, and
+    /// resolves its Agent run again. A change of the details alone is a
+    /// change too.
+    fn change_adapter(
+        &self,
+        id: &SessionId,
+        change: impl FnOnce(&mut Sources) -> Result<(), AdapterReportRefused>,
+    ) -> Result<(), AdapterReportRefused> {
+        let mut entries = self.entries();
+        let entry = entries
+            .get_mut(id)
+            .filter(|entry| entry.holder.is_some())
+            .ok_or(AdapterReportRefused::NoProcess)?;
+        let details_before = entry.sources.details.clone();
+        change(&mut entry.sources)?;
+        let run = resolve(&entry.reports(), Some(&entry.run), clock::now());
+        if run != entry.run || entry.sources.details != details_before {
+            entry.run = run;
+            self.publish_changed(id, entry);
+        }
+        Ok(())
+    }
+
+    fn check_token(entry: &Entry, token: &str) -> Result<(), TokenRefused> {
+        let holder = entry.holder.ok_or(TokenRefused::NoProcess)?;
+        let known = holder.token.ok_or(TokenRefused::HolderWithoutToken)?;
+        if !known.matches(token) {
+            return Err(TokenRefused::WrongToken);
+        }
+        Ok(())
+    }
+
     fn resolve_and_publish(&self, id: &SessionId, entry: &mut Entry) {
         let run = resolve(&entry.reports(), Some(&entry.run), clock::now());
         if run != entry.run {
             entry.run = run;
-            self.publish_changed(id, &entry.run);
+            self.publish_changed(id, entry);
         }
     }
 
-    fn publish_changed(&self, id: &SessionId, run: &AgentRun) {
-        self.events.publish(changed(id, run));
+    fn publish_changed(&self, id: &SessionId, entry: &Entry) {
+        self.events.publish(changed(id, entry));
     }
 
     fn entries(&self) -> MutexGuard<'_, HashMap<SessionId, Entry>> {
@@ -241,6 +323,12 @@ impl StatusRegistry {
 }
 
 impl Entry {
+    /// The Agent run of the session `id` as a message.
+    fn message(&self, id: &SessionId, include_children: bool) -> nomux_proto::wire::v1::AgentRun {
+        let details = self.sources.details.as_ref();
+        message::agent_run(id, &self.run, details, include_children)
+    }
+
     fn unreported() -> Self {
         Self {
             run: AgentRun::unreported(clock::now()),
@@ -263,6 +351,7 @@ impl Entry {
             no_process
         };
         vec![
+            self.sources.adapter.report(),
             held(
                 &self.sources.program_status,
                 Source::ProgramStatus,
@@ -302,9 +391,9 @@ impl Entry {
     }
 }
 
-fn changed(id: &SessionId, run: &AgentRun) -> event::Body {
+fn changed(id: &SessionId, entry: &Entry) -> event::Body {
     event::Body::AgentRunChanged(Box::new(AgentRunChanged {
-        run: Some(message::agent_run(id, run, true)),
+        run: Some(entry.message(id, true)),
     }))
 }
 
@@ -371,19 +460,19 @@ mod tests {
         let id = session();
         assert_eq!(
             registry.self_report(&id, "", report(State::Working)),
-            Err(SelfReportRefused::NoProcess)
+            Err(TokenRefused::NoProcess)
         );
 
         registry.connected(&id, holder(None, NO_PROCESS));
         assert_eq!(
             registry.self_report(&id, "", report(State::Working)),
-            Err(SelfReportRefused::HolderWithoutToken)
+            Err(TokenRefused::HolderWithoutToken)
         );
 
         registry.connected(&id, holder(Some(token(1)), NO_PROCESS));
         assert_eq!(
             registry.self_report(&id, token(2).as_str(), report(State::Working)),
-            Err(SelfReportRefused::WrongToken)
+            Err(TokenRefused::WrongToken)
         );
         assert_eq!(
             registry.self_report(&id, token(1).as_str(), report(State::Working)),
@@ -399,7 +488,7 @@ mod tests {
         registry.connected(&id, holder(Some(token(3)), NO_PROCESS - 1));
         assert_eq!(
             registry.self_report(&id, token(1).as_str(), report(State::Done)),
-            Err(SelfReportRefused::WrongToken)
+            Err(TokenRefused::WrongToken)
         );
         assert_eq!(
             state_of(&registry, &id),
@@ -422,7 +511,7 @@ mod tests {
         );
         assert_eq!(
             registry.self_report(&id, token(1).as_str(), report(State::Working)),
-            Err(SelfReportRefused::NoProcess)
+            Err(TokenRefused::NoProcess)
         );
 
         // A restore: the new process reports, then the status task of the
@@ -435,6 +524,46 @@ mod tests {
             state_of(&registry, &id),
             (AgentState::NeedsYou, StatusSource::ProgramStatus)
         );
+    }
+
+    #[test]
+    fn an_adapter_report_needs_a_process_and_its_details_stay_after_the_process_is_lost() {
+        let registry = registry();
+        let id = session();
+        let working = || RunReport {
+            observation: Observation::of(State::Working),
+            details: Some(AgentDetails {
+                resume_command: "testtool --resume 1".to_owned(),
+                ..AgentDetails::default()
+            }),
+        };
+        assert_eq!(
+            registry.adapter_run(&id, working()),
+            Err(AdapterReportRefused::NoProcess)
+        );
+
+        let old = holder(Some(token(1)), NO_PROCESS);
+        registry.connected(&id, old);
+        registry.adapter_run(&id, working()).unwrap();
+        assert_eq!(
+            state_of(&registry, &id),
+            (AgentState::Working, StatusSource::Adapter)
+        );
+
+        registry.lost_process(&id, old);
+        let run = registry.explain(&id).run.unwrap();
+        assert_eq!(run.status.unwrap().source(), StatusSource::SessionRestore);
+        assert_eq!(run.details.unwrap().resume_command, "testtool --resume 1");
+        assert_eq!(
+            registry.adapter_run(&id, working()),
+            Err(AdapterReportRefused::NoProcess),
+            "a session without a process has no adapter report"
+        );
+
+        // A new process has no report and no details of the old one.
+        registry.connected(&id, holder(Some(token(2)), NO_PROCESS - 1));
+        let run = registry.explain(&id).run.unwrap();
+        assert_eq!(run.details, None);
     }
 
     #[test]

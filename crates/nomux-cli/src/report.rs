@@ -9,6 +9,7 @@ use nomux_core::configuration::HostEntry;
 
 use crate::exit_code;
 use crate::extension_commands::ExtensionReport;
+use crate::hook_commands::HooksReport;
 use crate::status_commands::StatusReport;
 
 #[derive(Debug)]
@@ -56,6 +57,7 @@ pub(crate) enum Report {
     },
     HostsChecked(Vec<HostDiagnosis>),
     Extension(ExtensionReport),
+    Hooks(HooksReport),
     Status(StatusReport),
     ServiceFile(ServiceFileReport),
     Version,

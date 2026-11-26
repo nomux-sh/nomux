@@ -3,6 +3,8 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use crate::extension_event::ExtensionEvent;
+
 /// The error of one call: a code of the extension protocol and a message.
 ///
 /// A host service answers with it, and a method of an extension answers with
@@ -33,4 +35,11 @@ pub trait HostServices: Send + Sync + 'static {
     /// The host drops the result when the extension cancels the call or
     /// when its process ends.
     fn call(&self, extension_id: &str, method: &str, payload: Vec<u8>) -> ServiceReply;
+
+    /// Takes one event of an extension, also when no one subscribed to the
+    /// events of the host. The host calls it in the task of the extension:
+    /// it must not block. The default drops the event.
+    fn event(&self, event: &ExtensionEvent) {
+        let _ = event;
+    }
 }

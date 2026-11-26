@@ -4,6 +4,7 @@
 //! The host starts no process and no task here. The first call of a method
 //! of an extension starts the process of that extension.
 
+mod agent_services;
 mod data_directory;
 mod host_services;
 
@@ -14,22 +15,30 @@ use std::time::Duration;
 
 use nomux_ext_host::{ExtensionHost, HostConfig};
 
+use crate::events::EventLog;
 use crate::sessions::Sessions;
+use crate::status::StatusRegistry;
 use host_services::DaemonServices;
 
 /// The variable with the idle time of an extension in seconds.
 const IDLE_VARIABLE: &str = "NOMUX_EXTENSION_IDLE_SECONDS";
 
 /// Makes the extension host of the daemon with the installed extensions of
-/// the user. The extensions get the host services of the daemon.
-pub(crate) fn open(sessions: Arc<Sessions>) -> io::Result<ExtensionHost> {
+/// the user. The extensions get the host services of the daemon, and their
+/// events go to `events`.
+pub(crate) fn open(
+    sessions: Arc<Sessions>,
+    status: Arc<StatusRegistry>,
+    events: Arc<EventLog>,
+) -> io::Result<ExtensionHost> {
     let directory = data_directory::locate()?;
     data_directory::prepare(&directory)?;
     let mut config = HostConfig::new(directory);
     if let Some(idle) = idle_time_of_environment()? {
         config.limits.idle = idle;
     }
-    ExtensionHost::open(config, Arc::new(DaemonServices::new(sessions)))
+    let services = DaemonServices::new(sessions, status, events);
+    ExtensionHost::open(config, Arc::new(services))
 }
 
 /// The idle time that the environment of the daemon sets. `None` if the

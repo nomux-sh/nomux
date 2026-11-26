@@ -16,6 +16,10 @@ pub struct Observation {
     pub progress: Option<u8>,
     /// The name of the tool that runs.
     pub tool: Option<String>,
+    /// `true` for a [`State::Working`] that the source only infers, for
+    /// example from the event of one tool. Such a state does not decide
+    /// when a later source reports [`State::NeedsYou`] for the same item.
+    pub soft: bool,
 }
 
 impl Observation {
@@ -28,7 +32,14 @@ impl Observation {
             title: None,
             progress: None,
             tool: None,
+            soft: false,
         }
+    }
+
+    /// `true` if the observation is a soft [`State::Working`].
+    #[must_use]
+    pub fn is_soft_working(&self) -> bool {
+        self.soft && self.state == State::Working
     }
 }
 

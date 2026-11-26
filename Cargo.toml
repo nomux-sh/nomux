@@ -32,17 +32,20 @@ libc = "0.2.191"
 # The safe encoder and the safe decoder, without the frame format: the journal has
 # its own framing.
 lz4_flex = { version = "0.14.2", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
-nomux-extension = { version = "0.1.0", features = ["manifest"] }
-nomux-proto = "0.7.0"
+nomux-extension = { version = "0.1.1", features = ["manifest"] }
+nomux-proto = "0.8.0"
 prost = "0.14.6"
 # The SSH client. The `ring` backend has a license that `deny.toml` permits;
 # the default backend (`aws-lc-rs`) does not. Without `flate2`: no compression.
 russh = { version = "0.65.4", default-features = false, features = ["ring", "rsa"] }
 rustix = "1.1.6"
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.154"
+# `preserve_order`: a settings file that `nomux hooks install` changes keeps
+# the order of its keys.
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
 sha1 = "0.11.0"
 sha2 = "0.11.2"
+similar = { version = "3.2.1", default-features = false, features = ["text"] }
 signal-hook = { version = "0.4.6", default-features = false }
 tempfile = "3.27.0"
 tokio = { version = "1.54.1", default-features = false }
@@ -96,4 +99,5 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+
 

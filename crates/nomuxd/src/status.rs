@@ -11,16 +11,26 @@
 //! - `foreground`: the foreground program of the terminal as a source
 //!   report.
 //! - `self_report`: what a program in a session can report with a request.
+//! - `adapter_report`: what an adapter extension reports with a host
+//!   service.
+//! - `token_check`: why a request did not prove that it comes from a
+//!   session.
+//! - `report_text`: the rule for a reported text.
 //! - `message`: the form of a status in the control protocol.
 
+mod adapter_report;
 mod foreground;
 mod holder_sources;
 mod message;
 mod registry;
+mod report_text;
 mod self_report;
+mod token_check;
 mod watcher;
 
+pub(crate) use adapter_report::{AdapterReportRefused, ChildReport, RunReport};
 pub(crate) use message::reported_state;
 pub(crate) use registry::StatusRegistry;
-pub(crate) use self_report::{SelfReport, SelfReportRefused};
+pub(crate) use self_report::SelfReport;
+pub(crate) use token_check::TokenRefused;
 pub(crate) use watcher::watch;
