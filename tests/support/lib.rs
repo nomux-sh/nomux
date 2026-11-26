@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 use nomux_holder_protocol::discovery::{
     DiscoveredHolder, HolderState, PID_FILE, ProcessIdentity, scan,
 };
+use nomux_holder_protocol::session_state::session_state_directory;
 use rustix::process::{Pid, Signal};
 use serde_json::Value;
 use tempfile::TempDir;
@@ -208,6 +209,62 @@ impl Sandbox {
     pub fn set_variable(&mut self, name: &str, value: impl Into<OsString>) {
         self.variables.retain(|(existing, _)| existing != name);
         self.variables.push((name.into(), value.into()));
+    }
+
+    /// Writes `text` as the global configuration file of this home
+    /// directory. A daemon reads the file at its start.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the file cannot be written.
+    pub fn write_configuration(&mut self, text: &str) {
+        let directory = self.home.path().join("config");
+        std::fs::create_dir_all(directory.join("nomux")).expect("the directory can be made");
+        std::fs::write(directory.join("nomux").join("config.toml"), text)
+            .expect("the configuration file can be written");
+        self.set_variable("XDG_CONFIG_HOME", directory);
+    }
+
+    /// The state directory of the session `id` in this home directory: the
+    /// session metadata and the journal.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `id` is not a session identifier.
+    #[must_use]
+    pub fn session_state_directory(&self, id: &str) -> PathBuf {
+        let state_home = if cfg!(target_os = "macos") {
+            "Library/Application Support"
+        } else {
+            ".local/state"
+        };
+        let id = id.parse().expect("a session identifier");
+        session_state_directory(&self.home.path().join(state_home).join("nomux"), &id)
+    }
+
+    /// Stops each holder and the daemon of this home directory with
+    /// `SIGKILL`, as a restart of the host does: no process writes a last
+    /// byte. Returns when the processes are gone.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a process does not end.
+    pub fn kill_each_process(&self) {
+        let mut processes = vec![self.daemon_pid()];
+        for holder in self.holders() {
+            if holder.state == HolderState::Live {
+                processes.push(self.holder_pid(holder.session_id.as_str()));
+            }
+        }
+        for pid in &processes {
+            kill_process(*pid);
+        }
+        wait_for("the daemon and the holders are gone", || {
+            processes
+                .iter()
+                .all(|pid| !process_runs(*pid))
+                .then_some(())
+        });
     }
 
     /// The runtime directory in this home directory.

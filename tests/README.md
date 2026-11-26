@@ -9,8 +9,11 @@ This directory is the package `nomux-end-to-end`: the end-to-end tests of the co
 | `attach.rs` | `nomux attach` in a pseudoterminal: the screen of a session that already drew, the keys and their echo, the window size, detach and a second attach with the same screen, two clients, `nomux detach`, `SIGKILL` of the daemon during an attach, a flood of output for a client that takes no output, the exit status of the session, `new --attach`, and the command after `--` |
 | `extensions.rs` | The `nomux ext` commands and the extension host of the daemon, with the test extension of `nomux-ext-host`: an install without an approval installs nothing, the first call starts the process and the idle process stops, the `sessions.list` service with and without its scope, a process that fails and starts again, an extension that the daemon disables after failures, an attach to a session while a call of an extension that hangs waits, the stop of the daemon, `ext rm`, and `ext validate` |
 | `attach_protocol.rs` | The attach of the client library: a client that attaches again gets only the output that it does not have, also after a restart of the daemon, and the screen when the daemon no longer has that output. The errors of `Session.Resize` and `Session.Input` |
+| `daemon_service.rs` | `nomux daemon install-service` and `uninstall-service`: the service file is written and removed only in the configuration directory of the user, a dry run changes nothing, and no daemon starts |
+| `journal.rs` | The journal through the daemon: a client that attaches again with a position that left the ring buffer gets each missing byte one time and then the output that the command writes, a client learns that output before the oldest journal segment is gone and gets the oldest screen and the output after it, and `nomux capture` gives the last lines also when they left the ring buffer |
 | `remote_host.rs` | A remote host through SSH, with an `sshd` that each test starts: `host add` installs the binaries from a release archive, the session commands and an attach with `--host`, an attach that continues after the connection was cut with each byte one time, a host key that is not known or that changed, a daemon without a common protocol version that is replaced while its session continues, `host doctor` for a good host and for a wrong permission, ssh-agent, `ProxyJump`, and a server that refuses connections to Unix sockets |
-| `session_lifecycle.rs` | The CLI starts the daemon and a session. The session continues after `SIGKILL` of the daemon, after `SIGKILL` of the process group of the daemon, after `nomux daemon stop` and after `nomuxd --replace`, and a new daemon finds it. A holder that does not run leaves the list. Exit codes |
+| `restore.rs` | Sessions without a process. After `SIGKILL` for each holder and the daemon, as a restart of the host does it, a new daemon lists the sessions as dormant with their description and starts no process; an attach shows the old output, the mark and a new shell in the directory of the session; the policy `auto` starts a session at the start of the daemon and `manual` only with `nomux start`. An ended session leaves with its state directory after the retention time, also across a restart of the daemon. A damaged `session` file, a damaged journal segment and a FIFO in the place of a file give a listed session with the reason and a daemon that works |
+| `session_lifecycle.rs` | The CLI starts the daemon and a session. The session continues after `SIGKILL` of the daemon, after `SIGKILL` of the process group of the daemon, after `nomux daemon stop` and after `nomuxd --replace`, and a new daemon finds it. A holder that does not run leaves the runtime directory, and its session is dormant. Exit codes |
 | `single_writer_lease.rs` | A daemon that lost the lease of a holder does not write to it and stops |
 | `version_mismatch.rs` | The CLI and a daemon without a common protocol version: exit code 5 |
 | `support/lib.rs` | The library of the tests: a private home directory for each test, the CLI and the processes |
@@ -23,6 +26,7 @@ This directory is the package `nomux-end-to-end`: the end-to-end tests of the co
 | `support/key_latency.rs` | The measurement of the time from a key to its echo |
 | `measurements/attach.rs` | Not a test: the program that measures the attach path |
 | `measurements/remote.rs` | Not a test: the program that measures a remote host |
+| `measurements/restore.rs` | Not a test: the program that measures the start of the daemon with dormant sessions that each have a full journal |
 
 Each test uses its own home directory in `/tmp`. Thus the tests run in parallel and do not touch `~/.nomux`.
 
@@ -71,3 +75,12 @@ cargo run --release -p nomux-end-to-end --example remote_measurements
 ```
 
 A run takes approximately 2 minutes.
+
+`measurements/restore.rs` measures the start of the daemon after a restart of the host. It starts sessions that each fill their journal to the size limit of 32 MiB, stops each holder and the daemon with `SIGKILL`, and measures the time of one `nomux ls --json` command when no daemon runs: the start of the daemon, the read of the state directories and the list. The argument is the number of sessions. [docs/daemon.md](../docs/daemon.md) has the result.
+
+```sh
+cargo build --release --workspace
+cargo run --release -p nomux-end-to-end --example restore_measurements -- 50
+```
+
+A run with 50 sessions takes approximately 1 minute and needs 1.6 GiB in `/tmp`.
