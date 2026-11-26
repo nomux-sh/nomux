@@ -30,6 +30,10 @@ path = "measurements/attach.rs"
 name = "remote_measurements"
 path = "measurements/remote.rs"
 
+[[example]]
+name = "restore_measurements"
+path = "measurements/restore.rs"
+
 [[test]]
 name = "attach"
 path = "attach.rs"
@@ -39,12 +43,24 @@ name = "attach_protocol"
 path = "attach_protocol.rs"
 
 [[test]]
+name = "daemon_service"
+path = "daemon_service.rs"
+
+[[test]]
 name = "extensions"
 path = "extensions.rs"
 
 [[test]]
+name = "journal"
+path = "journal.rs"
+
+[[test]]
 name = "remote_host"
 path = "remote_host.rs"
+
+[[test]]
+name = "restore"
+path = "restore.rs"
 
 [[test]]
 name = "session_lifecycle"
