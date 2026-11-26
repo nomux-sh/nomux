@@ -2,7 +2,10 @@
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use std::ffi::OsString;
+
+use clap::error::ErrorKind;
+use clap::{CommandFactory, Parser, Subcommand};
 use nomux_client::RestorePolicy;
 
 use crate::extension_commands::ExtCommand;
@@ -35,7 +38,43 @@ pub(crate) struct Arguments {
     command: Option<Command>,
 }
 
+/// What ends the options of `nomux` in the second form of a command.
+const SEPARATOR: &str = "--";
+
 impl Arguments {
+    /// Reads the command line `arguments`, with the name of the program
+    /// first.
+    ///
+    /// # Errors
+    ///
+    /// Returns the usage error of a command line that is not valid.
+    pub(crate) fn from_command_line(
+        arguments: impl IntoIterator<Item = OsString>,
+    ) -> Result<Self, clap::Error> {
+        let arguments = Self::try_parse_from(arguments)?;
+        // `--cmd` takes each argument after it, thus the parser does not
+        // see a separator there as the second form.
+        if let Some(Command::New { command, .. }) = &arguments.command
+            && command.iter().any(|word| word == SEPARATOR)
+        {
+            // The usage line of the message is the one of `new`.
+            let mut nomux = Self::command();
+            nomux.build();
+            let new = nomux
+                .find_subcommand_mut("new")
+                .expect("the new command exists");
+            return Err(new.error(
+                ErrorKind::ArgumentConflict,
+                "the argument '--cmd <COMMAND>...' cannot be used with '--': nomux cannot know \
+                 where the command of the session starts. Give the command in one form: \
+                 `nomux new --cmd <command> [argument...]` or \
+                 `nomux new -- <command> [argument...]`. For a command that has `--` as an \
+                 argument, use the second form",
+            ));
+        }
+        Ok(arguments)
+    }
+
     /// The command to run. `--version` is the `version` command. Returns
     /// `None` if the command line has no command.
     pub(crate) fn requested_command(self) -> Option<Command> {
@@ -202,7 +241,7 @@ mod tests {
     /// The parts of a `new` command line: `--json`, `--attach`, and the
     /// command of the session.
     fn new_session(arguments: &[&str]) -> (bool, bool, Vec<String>) {
-        let arguments = Arguments::try_parse_from([&["nomux", "new"], arguments].concat()).unwrap();
+        let arguments = command_line(&[&["new"], arguments].concat()).unwrap();
         let json = arguments.json;
         let Some(Command::New {
             attach,
@@ -214,6 +253,11 @@ mod tests {
             panic!("not the new command");
         };
         (json, attach, [command, command_after_separator].concat())
+    }
+
+    fn command_line(arguments: &[&str]) -> Result<Arguments, clap::Error> {
+        let program = std::iter::once("nomux");
+        Arguments::from_command_line(program.chain(arguments.iter().copied()).map(OsString::from))
     }
 
     fn words(words: &[&str]) -> Vec<String> {
@@ -239,8 +283,34 @@ mod tests {
             (false, false, words(&["sleep", "300", "--json", "--attach"]))
         );
         assert_eq!(
-            new_session(&["--cmd", "sh", "--json", "--", "-c", "true"]),
-            (false, false, words(&["sh", "--json", "--", "-c", "true"]))
+            new_session(&["--cmd", "sh", "--json", "-c", "true"]),
+            (false, false, words(&["sh", "--json", "-c", "true"]))
         );
+        // After the separator, a second separator is an argument of the
+        // command.
+        assert_eq!(
+            new_session(&["--", "git", "log", "--", "notes.txt"]),
+            (false, false, words(&["git", "log", "--", "notes.txt"]))
+        );
+    }
+
+    #[test]
+    fn the_two_forms_of_the_command_in_one_command_line_are_a_usage_error() {
+        for arguments in [
+            &["new", "--cmd", "sh", "--", "-c", "true"][..],
+            &["new", "--cmd", "sh", "--"],
+            &["new", "--attach", "--cmd", "--", "sh"],
+        ] {
+            let error = command_line(arguments).unwrap_err();
+            assert_eq!(error.kind(), ErrorKind::ArgumentConflict, "{arguments:?}");
+            assert!(error.use_stderr());
+            let message = error.to_string();
+            assert!(
+                message.contains("'--cmd <COMMAND>...' cannot be used with '--'"),
+                "{message}"
+            );
+        }
+        // The rule is for `new` only: a different command has no `--cmd`.
+        assert!(command_line(&["ext", "call", "a.b", "m", "--payload", "--"]).is_ok());
     }
 }

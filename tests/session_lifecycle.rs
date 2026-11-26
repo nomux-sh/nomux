@@ -217,6 +217,28 @@ fn a_session_that_cannot_start_is_an_error_and_leaves_nothing() {
 }
 
 #[test]
+fn the_two_forms_of_the_command_in_one_command_line_are_refused_and_nothing_starts() {
+    let sandbox = Sandbox::new();
+
+    let run = sandbox.nomux(&["new", "--cmd", "sh", "--", "-c", "true"]);
+
+    assert_eq!(run.code, 1, "{run:?}");
+    assert_eq!(run.stdout, "");
+    assert!(
+        run.stderr.starts_with(
+            "error: the argument '--cmd <COMMAND>...' cannot be used with '--': nomux cannot \
+             know where the command of the session starts."
+        ),
+        "{run:?}"
+    );
+    assert!(run.stderr.contains("Usage: nomux new"), "{run:?}");
+    assert!(
+        !sandbox.runtime_directory().exists(),
+        "a command line that is not valid must not start a daemon"
+    );
+}
+
+#[test]
 fn the_command_gets_its_arguments_and_the_working_directory() {
     let sandbox = Sandbox::new();
     let work = tempfile::tempdir().unwrap();

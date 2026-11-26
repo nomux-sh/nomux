@@ -52,14 +52,14 @@ mod service_files;
 use std::io;
 use std::process::ExitCode;
 
+use clap::CommandFactory;
 use clap::error::ErrorKind;
-use clap::{CommandFactory, Parser};
 
 use crate::arguments::Arguments;
 use crate::output::Format;
 
 fn main() -> ExitCode {
-    let arguments = match Arguments::try_parse() {
+    let arguments = match Arguments::from_command_line(std::env::args_os()) {
         Ok(arguments) => arguments,
         Err(error) => {
             // clap exits with status 2 for a usage error. That status means
