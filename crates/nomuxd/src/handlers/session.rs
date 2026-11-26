@@ -31,6 +31,7 @@ pub(super) async fn create(
         .await?;
     Ok(response::Result::SessionCreate(SessionCreateResponse {
         session: Some(session.into()),
+        created: true,
     }))
 }
 

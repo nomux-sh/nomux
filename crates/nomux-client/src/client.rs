@@ -119,6 +119,7 @@ impl Client {
         let request = SessionCreateRequest {
             command: session.command,
             working_directory,
+            ..SessionCreateRequest::default()
         };
         match self.call(request::Body::SessionCreate(request)).await? {
             response::Result::SessionCreate(created) => created

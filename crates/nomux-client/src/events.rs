@@ -172,7 +172,15 @@ impl From<wire::Event> for HostEvent {
                 change: change_of(changed.change),
             },
             Some(event::Body::Snapshot(_)) => EventBody::Snapshot,
-            None => EventBody::Unknown,
+            // The events of the hibernation: this client does not read them
+            // yet.
+            Some(
+                event::Body::SessionHibernated(_)
+                | event::Body::SessionWoken(_)
+                | event::Body::SessionWakeFailed(_)
+                | event::Body::SessionMemoryLimitReached(_),
+            )
+            | None => EventBody::Unknown,
         };
         Self {
             seq: event.seq,

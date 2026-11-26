@@ -250,7 +250,8 @@ fn needs_you_kind(kind: i32) -> Option<NeedsYouKind> {
         wire::NeedsYouKind::Permission => Some(NeedsYouKind::Permission),
         wire::NeedsYouKind::Question => Some(NeedsYouKind::Question),
         wire::NeedsYouKind::Auth => Some(NeedsYouKind::Auth),
-        wire::NeedsYouKind::Unspecified => None,
+        // A kind that this client does not show yet.
+        wire::NeedsYouKind::Prompt | wire::NeedsYouKind::Unspecified => None,
     }
 }
 

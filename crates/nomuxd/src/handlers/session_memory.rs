@@ -28,6 +28,7 @@ impl From<SessionMemory> for WireSessionMemory {
             command_processes: u32::try_from(memory.command_processes).unwrap_or(u32::MAX),
             holder_bytes: memory.holder_bytes,
             measure: measure.into(),
+            limit_bytes: 0,
         }
     }
 }
